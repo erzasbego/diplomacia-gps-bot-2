@@ -8,6 +8,7 @@ Temel kurallar:
 """
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import hashlib
 import json
@@ -88,6 +89,12 @@ class PartiEklemeSonucu:
     yeni_eklenen: int = 0
     zaten_takipte: int = 0
     engelli: int = 0
+    # Başlangıç özeti (YALNIZ komut yanıtında gösterilir; bildirim değildir):
+    ilk_veri_alinan: int = 0  # ilk verisi (bölge/vatandaşlık/gözlem zamanı) komutta alınan yeni üye sayısı
+    ilk_veri_bekleyen: int = 0  # ayrıntısı ilk taramaya kalan yeni üye sayısı
+    bolge_bilinen: int = 0  # alınanlar arasında bölgesi dolu olan
+    vatandaslik_bilinen: int = 0  # alınanlar arasında vatandaşlık ülkesi dolu olan
+    ilk_veri_notu: str | None = None  # ayrıntı eksik kaldıysa kısa neden
 
 
 @dataclass(frozen=True)
@@ -470,11 +477,16 @@ class TakipServisi:
         self._tam_liste(snap, parti_id)
         if not snap.ad:
             raise EksikVeri("parti adı yok")
-        # Komut içinde üye başına fetch_player YAPILMAZ (büyük partide bloklar): yeni üyeler
-        # baseline_tamam=0 ile eklenir; ayrıntı/uid/bölge/vatandaşlık ilk taramada bildirimsiz oturur.
-        detay: dict = {}
+        # Yeni üyelerin ilk verisi (bölge, vatandaşlık, uid) SINIRLI eşzamanlılık, üst sınır ve süre bütçesiyle
+        # alınır (büyük parti/hız sınırı komutu bloke etmez). Alınamayanlar baseline_tamam=0 ile eklenir ve
+        # ilk taramada bildirimsiz tamamlanır. Transaction'dan ÖNCE yapılır (await boyunca DB açık kalmaz).
+        adaylar = [
+            u.oyuncu_id for u in snap.uyeler
+            if not self._takipte_mi(group_id, u.oyuncu_id) and not self._engelli_mi(group_id, u.oyuncu_id)
+        ]
+        detay, ilk_not = await self._uye_ilk_verileri(adaylar, kaynak)
         simdi = self.saat()
-        yeni = zaten = engelli = 0
+        yeni = zaten = engelli = alinan = bolge_b = vatandas_b = 0
         with islem(self.conn):
             self._onay_sart(group_id)  # await sırasında onay kaldırılmış olabilir
             cur = self.conn.execute(
@@ -494,9 +506,60 @@ class TakipServisi:
                 elif self._engelli_mi(group_id, u.oyuncu_id):
                     engelli += 1
                 else:
-                    self._otomatik_ekle(group_id, u.oyuncu_id, u.ad, detay.get(u.oyuncu_id), simdi)
-                    yeni += 1
-        return PartiEklemeSonucu("eklendi", parti_id, snap.ad, len(snap.uyeler), yeni, zaten, engelli)
+                    p = detay.get(u.oyuncu_id)
+                    if self._otomatik_ekle(group_id, u.oyuncu_id, u.ad, p, simdi):
+                        yeni += 1
+                        if p is not None:
+                            alinan += 1
+                            bolge_b += p.bolge is not None
+                            vatandas_b += p.vatandaslik_ulkesi is not None
+        return PartiEklemeSonucu(
+            "eklendi", parti_id, snap.ad, len(snap.uyeler), yeni, zaten, engelli,
+            ilk_veri_alinan=alinan, ilk_veri_bekleyen=yeni - alinan, bolge_bilinen=bolge_b,
+            vatandaslik_bilinen=vatandas_b, ilk_veri_notu=ilk_not if yeni > alinan else None,
+        )
+
+    async def _uye_ilk_verileri(self, ids: list[str], kaynak: DiplomaciaSource) -> tuple[dict, str | None]:
+        """Yeni üyelerin oyuncu verisini alır: en çok PARTI_EKLE_ILK_VERI_UST üye, PARTI_EKLE_ESZAMANLI eşzamanlılık,
+        PARTI_EKLE_ILK_VERI_SURE_SN toplam süre. Token/istek sınırı/erişim reddi veya süre dolunca kalan istekler
+        ATILMAZ. Hiçbir hata yükseltilmez: alınamayan üye ilk taramaya kalır. Dönüş: ({id: OyuncuAnlik}, neden)."""
+        if not ids:
+            return {}, None
+        hedef = ids[: config.PARTI_EKLE_ILK_VERI_UST]
+        sonuc: dict[str, OyuncuAnlik] = {}
+        durum = {"dur": None}
+        sem = asyncio.Semaphore(max(1, config.PARTI_EKLE_ESZAMANLI))
+
+        async def al(oid: str) -> None:
+            async with sem:
+                if durum["dur"]:
+                    return
+                try:
+                    sonuc[oid] = self._oyuncu_temiz(await kaynak.fetch_player(oid), oid)
+                except TokenGecersiz:
+                    durum["dur"] = "token sorunu"
+                except IstekSiniri:
+                    durum["dur"] = "istek sınırı"
+                except ErisimReddedildi:
+                    durum["dur"] = "erişim reddedildi"
+                except (KaynakHatasi, EksikVeri):
+                    pass  # bu üye ilk taramaya kalır
+
+        gorevler = [asyncio.ensure_future(al(o)) for o in hedef]
+        try:
+            _, bekleyen = await asyncio.wait(gorevler, timeout=config.PARTI_EKLE_ILK_VERI_SURE_SN)
+        except BaseException:
+            for g in gorevler:
+                g.cancel()
+            raise
+        for g in bekleyen:
+            g.cancel()
+        if bekleyen:
+            await asyncio.gather(*bekleyen, return_exceptions=True)
+            durum["dur"] = durum["dur"] or "süre bütçesi doldu"
+        if durum["dur"] is None and len(ids) > len(hedef):
+            durum["dur"] = f"komutta en çok {config.PARTI_EKLE_ILK_VERI_UST} üyenin verisi istenir"
+        return sonuc, durum["dur"]
 
     def _engelli_mi(self, group_id, oyuncu_id) -> bool:
         return (
@@ -506,11 +569,12 @@ class TakipServisi:
             is not None
         )
 
-    def _otomatik_ekle(self, group_id, oyuncu_id, ad, p, simdi) -> None:
-        """Partiden otomatik ekleme. Bildirim yok; p varsa baseline hazır, yoksa ilk gözlem bekler."""
+    def _otomatik_ekle(self, group_id, oyuncu_id, ad, p, simdi) -> bool:
+        """Partiden otomatik ekleme. Bildirim yok; p varsa baseline hazır, yoksa ilk gözlem bekler.
+        Dönüş: eklendi mi (aynı UUID başka numarayla zaten takipteyse False: mükerrer yok)."""
         if p is not None and self._uid_baska_kayit(group_id, p.uid, oyuncu_id) is not None:
-            return  # aynı UUID başka numarayla zaten takipte: mükerrer yok
-        self.conn.execute(
+            return False
+        cur = self.conn.execute(
             "INSERT OR IGNORE INTO takip_oyuncular(group_id, oyuncu_id, ad, bolge, vatandaslik_ulkesi,"
             " son_gozlem, baseline_tamam, elle_eklendi, eklendi, uid) VALUES(?,?,?,?,?,?,?,0,?,?)",
             (
@@ -525,6 +589,7 @@ class TakipServisi:
                 p.uid if p else None,
             ),
         )
+        return cur.rowcount == 1
 
     def _parti_uygula(self, group_id: int, parti_id: str, snap: PartiAnlik) -> int:
         """Doğrulanmış (tam) üye listesini uygular. Dönüş: üretilen bildirim sayısı."""

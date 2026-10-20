@@ -460,12 +460,26 @@ class Arayuz:
                     f"Üye sayısı: {s.uye_sayisi}",
                     f"Takibe yeni alınan: {s.yeni_eklenen}; zaten takipte: {s.zaten_takipte}; "
                     f"engelli (otomatik eklenmedi): {s.engelli}",
-                    "<i>Bu bir başlangıç durumudur; katılım bildirimi üretilmez.</i>",
-                    "Üyelerin ayrıntıları ilk taramada okunacak.",
+                    *self._ilk_veri_satirlari(s),
+                    "<i>Bu bir başlangıç özetidir (tek mesaj): üye girişleri, bölge ve vatandaşlık için "
+                    "bildirim gönderilmez. Bundan sonra yalnızca gerçek değişiklikler bildirilir.</i>",
                 ]
             ),
             [[Dugme("👥 Partiler", "pl:0"), Dugme("🏠 Ana menü", "m")]],
         )
+
+    @staticmethod
+    def _ilk_veri_satirlari(s) -> list[str]:
+        if not s.yeni_eklenen:
+            return []
+        satirlar = [
+            f"İlk veri alınan üye: {s.ilk_veri_alinan} (bölgesi bilinen: {s.bolge_bilinen}, "
+            f"vatandaşlık ülkesi bilinen: {s.vatandaslik_bilinen})"
+        ]
+        if s.ilk_veri_bekleyen:
+            neden = f" ({esc(s.ilk_veri_notu)})" if s.ilk_veri_notu else ""
+            satirlar.append(f"Ayrıntısı ilk taramada tamamlanacak: {s.ilk_veri_bekleyen} üye{neden}")
+        return satirlar
 
     async def _k_partiler(self, o: Olay) -> Yanit:
         g, r = self._grup_gerekli(o)

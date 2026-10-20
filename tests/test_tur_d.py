@@ -98,17 +98,21 @@ def test_c6a_durum_toplu_bulunamiyor_ozeti(ui, conn, servis, src):
 
 
 # ---------------------------------------------------------------- C2
-def test_c2_parti_ekle_uye_basina_fetch_player_yapmaz(conn, servis, src):
+def test_c2_parti_ekle_uye_ilk_verisini_sinirli_alir_bloke_etmez(conn, servis, src):
+    """BİLİNÇLİ DEĞİŞİKLİK (kullanıcı talimatı: parti eklerken ilk oyuncu verileri): önceki davranış üye başına
+    HİÇ fetch_player yapmıyordu. Artık en çok PARTI_EKLE_ILK_VERI_UST üye için, sınırlı eşzamanlılıkla ilk veri
+    alınır; kalanı ilk taramaya bırakılır (ayrıntı: tests/test_ilk_gozlem.py)."""
     uyeler = [(str(100 + i), f"U{i}") for i in range(40)]
     for oid, ad in uyeler:
         src.oyuncu(oid, ad)
     src.parti("5830", "TEKNO", uyeler)
     s = run(servis.parti_ekle(G1, "5830", src))
-    assert src.cagri_say("oyuncu") == 0 and src.cagri_say("parti") == 1
+    assert src.cagri_say("oyuncu") == 40 <= config.PARTI_EKLE_ILK_VERI_UST and src.cagri_say("parti") == 1
     assert (s.durum, s.uye_sayisi, s.yeni_eklenen, s.zaten_takipte) == ("eklendi", 40, 40, 0)
+    assert (s.ilk_veri_alinan, s.ilk_veri_bekleyen) == (40, 0)
     assert len(takipte(conn, G1)) == 40
     assert bildirimler(conn) == []
-    # ilk tarama: ayrıntılar okunur, bildirim yok
+    # ilk veri zaten alındı: ilk tarama değişiklik/bildirim üretmez
     r = run(servis.oyuncular_tara(G1, src))
     assert r.ok and bildirimler(conn) == []
     assert conn.execute(
