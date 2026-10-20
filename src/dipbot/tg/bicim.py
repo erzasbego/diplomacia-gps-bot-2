@@ -48,6 +48,59 @@ def tur_etiketi(tur) -> str | None:
     return _TUR_ETIKET.get(tur) or esc(tur)
 
 
+# Emoji anlamları (tutarlı): TÜR emojisi satır başında TEK emoji; DURUM metinle yazılır, ayrıntıda emoji alır.
+#   ⚔️ standart savaş (tür bilinmiyorsa/tanınmıyorsa da genel savaş)   🔥 ayaklanma   🏳️ bağımsızlık
+#   Ayrıntıda: ⚔️ saldıran taraf · 🛡️ savunan taraf · ⏳ hazırlık · 🟢 aktif · ❔ durum bilinmiyor/tanınmıyor
+TUR_EMOJI = {"standard": "⚔️", "rebellion": "🔥", "independence": "🏳️"}
+GENEL_SAVAS_EMOJI = "⚔️"
+DURUM_EMOJI = {"preparing": "⏳", "active": "🟢"}
+SAVAS_EMOJI_LEJANDI = "⚔️ standart · 🔥 ayaklanma · 🏳️ bağımsızlık"
+AD_AZAMI = 40  # liste satırı/buton için taraf adı üst sınırı (Telegram sınırlarına pay)
+
+
+def tur_emoji(tur) -> str:
+    return TUR_EMOJI.get(tur or "", GENEL_SAVAS_EMOJI)
+
+
+def durum_emoji(durum) -> str:
+    return DURUM_EMOJI.get(durum or "", "❔")
+
+
+def kisalt(metin, n: int = AD_AZAMI) -> str | None:
+    """Boşsa None; n karakteri aşarsa '…' ile keser (HTML kaçışından ÖNCE uygulanır)."""
+    if metin is None:
+        return None
+    m = str(metin).strip()
+    if not m:
+        return None
+    return m if len(m) <= n else m[: n - 1].rstrip() + "…"
+
+
+def savas_kisa_ad(saldiran, savunan, ad, war_number, savas_id) -> str:
+    """DÜZ METİN (kaçışsız; düğme etiketi için): 'Saldıran – Savunan', yoksa savaş adı, yoksa '#numara'/kimlik."""
+    sad, sav = kisalt(saldiran), kisalt(savunan)
+    if sad and sav:
+        return f"{sad} – {sav}"
+    if kisalt(ad, 60):
+        return kisalt(ad, 60)
+    if savas_baglantisi(war_number):
+        return f"Savaş #{war_number}"
+    return kisalt(savas_id, 12) or "Savaş"
+
+
+def savas_liste_satiri(sira: int, s) -> str:
+    """Sade liste satırı: '<sıra>. <tür emojisi> <Saldıran – Savunan> · <Durum> · #<numara>' (ayrıntı detayda).
+    Numara geçerliyse başlık savaşa tıklanabilir bağlantıdır."""
+    govde = esc(savas_kisa_ad(s.attacker_name, s.defender_name, s.ad, s.war_number, s.savas_id))
+    url = savas_baglantisi(s.war_number)
+    if url:
+        govde = f'<a href="{esc(url)}">{govde}</a>'
+    parcalar = [f"{sira}. {tur_emoji(s.tur)} {govde}", durum_etiketi(s.durum) if s.durum else "durum bilinmiyor"]
+    if url:
+        parcalar.append(f"#{s.war_number}")
+    return " · ".join(parcalar)
+
+
 def savas_baslik(ad, war_number, saldiran, savunan, savas_id) -> str:
     """Kaçışlı görünen ad: war_name; yoksa 'Saldıran – Savunan (#numara)'; yoksa '#numara'; yoksa kimlik."""
     sayi = f" (#{war_number})" if savas_baglantisi(war_number) else ""
@@ -197,7 +250,7 @@ def _parti_uyelik(v: dict) -> str:
 
 def _yeni_savas(v: dict) -> str:
     satirlar = [
-        _b("⚔️ Yeni savaş tespit edildi"),
+        _b(f"{tur_emoji(v.get('tur'))} Yeni savaş tespit edildi"),
         "Savaş: " + savas_baglantili(
             v.get("ad"), v.get("war_number"), v.get("attacker_name"), v.get("defender_name"), v.get("savas_id")
         ),

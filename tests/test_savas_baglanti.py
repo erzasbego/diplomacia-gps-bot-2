@@ -99,10 +99,12 @@ def test_liste_baglanti_etiket_ve_kacis(ui, src):
     ]
     m = run(ui.komut(grup_komut("savaslar"))).metin
     assert 'href="https://diplomacia.com.tr/wars/war/5333"' in m
-    assert "&lt;b&gt;Ali&lt;/b&gt; &amp; Ortakları – مملكة (#5333)" in m  # yedek ad: Saldıran – Savunan (#no)
-    assert "Hazırlık" in m and "Aktif" in m and "Ayaklanma" in m
+    # BİLİNÇLİ DEĞİŞİKLİK (sade liste): 'Saldıran – Savunan · Durum · #numara'; tür yalnız emoji (ayrıntıda metin)
+    assert "&lt;b&gt;Ali&lt;/b&gt; &amp; Ortakları – مملكة</a> · Hazırlık · #5333" in m
+    assert "🔥" in m and "Ayaklanma" not in m  # ayaklanma = 🔥
+    assert "Hazırlık" in m and "Aktif" in m
     assert 'href="https://diplomacia.com.tr/wars/war/7"' in m and "Adlı &lt;Savaş&gt;" in m
-    assert "yeni&lt;durum&gt;" in m and "x&amp;y" in m and "yeni<durum>" not in m
+    assert "yeni&lt;durum&gt;" in m and "yeni<durum>" not in m
     assert m.count("wars/war/") == 2  # yalnız geçerli numaralılar
     assert 'href="https://diplomacia.com.tr/wars"' in m  # liste bağlantısı kalır
     assert UUID5333 not in m.split("wars/war/5333")[1][:5]  # id ile numara karışmaz
@@ -116,7 +118,7 @@ def test_detay_guc_none_ve_sifir_ayri_ve_baglanti(ui, src):
     )
     m = run(ui.buton(grup_dugme("sd:s1"))).metin
     assert 'href="https://diplomacia.com.tr/wars/war/5333"' in m
-    assert "Durum: Hazırlık" in m and "Bağımsızlık" in m
+    assert "Durum: ⏳ Hazırlık" in m and "Bağımsızlık" in m and m.startswith("🏳️")
     assert "A — Güç: 1.234.567" in m and "B — Güç: veri yok" in m and "C — Güç: 0" in m
     # 'hasar' yalnız C1c güvence notunda ("hasar olduğu doğrulanmadı") geçebilir; hasar iddiası yok.
     assert "hasar" not in m.lower().replace("hasar olduğu doğrulanmadı", "")
