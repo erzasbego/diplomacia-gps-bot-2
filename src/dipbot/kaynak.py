@@ -108,6 +108,8 @@ class OyuncuAnlik:
 class PartiUyesi:
     oyuncu_id: str
     ad: str | None = None
+    # Üyenin XP'si (yanıttaki `xp`). None = eksik/geçersiz -> XP BİLİNMİYOR (otomatik takibe ALINMAZ; 0 değildir).
+    xp: int | None = None
 
 
 @dataclass(frozen=True)
@@ -115,7 +117,14 @@ class PartiAnlik:
     parti_id: str
     ad: str | None
     uyeler: tuple[PartiUyesi, ...]
-    uyeler_tamam: bool  # tüm sayfalar okundu mu
+    uyeler_tamam: bool  # tüm sayfalar okundu mu (SINIRLI listede False)
+    # KISMİ OKUMA: büyük partide API tek istekte yalnız 100 üye döndürür (gözlem: günlüklerde 100/329, 100/129);
+    # gerçek sayfalama yöntemi DOĞRULANMADI. kismi=True "geçerli ama EKSİK" demektir: liste bozuk/mükerrer/sayfalamalı
+    # DEĞİL ve len(uyeler) < toplam_uye. Bu liste partinin TÜM üyeleriyle EŞDEĞER sayılmaz: ondan ayrılma/katılma
+    # çıkarılmaz, okunmayan üyeler hakkında hiçbir şey bilinmez.
+    kismi: bool = False
+    toplam_uye: int | None = None  # partinin gerçek üye sayısı (member_count)
+    xp_sirali: bool | None = None  # yanıttaki xp alanları azalmayan sırada mı (None: doğrulanamadı)
 
 
 @dataclass(frozen=True)

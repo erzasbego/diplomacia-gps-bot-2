@@ -19,7 +19,7 @@
 | 1.3 | `systemd-analyze verify /etc/systemd/system/dipbot.service` | Çıktı boş / uyarısız | |
 | 1.4 | `timedatectl` | `System clock synchronized: yes`, `NTP service: active` | |
 | 1.5 | `sudo -u dipbot env -i PYTHONPATH=/opt/dipbot/src /opt/dipbot/.venv/bin/python -m dipbot; echo $?` | Yapılandırma hatası mesajı, çıkış kodu **2** (ağ yok) | |
-| 1.6 | `cd /opt/dipbot && PYTHONPATH=src .venv/bin/python -m pytest -q` | Bulutta: `848 passed`. Sunucuda aynı sayı beklenir | |
+| 1.6 | `cd /opt/dipbot && PYTHONPATH=src .venv/bin/python -m pytest -q` | Bulutta: `978 passed`. Sunucuda aynı sayı beklenir | |
 
 ## 2. Diplomacia — salt okunur API doğrulaması
 
@@ -39,7 +39,8 @@ curl -sS -o /dev/null -w '%{http_code}\n' -H @/tmp/dip-hdr -H 'X-Client-Platform
 | 2.3 | Aynı istek **uydurma** Bearer (`Bearer SAHTE.SAHTE.SAHTE`) ile | 401 (sahte tokenın kabul edilmediğinin kanıtı) | |
 | 2.4 | Geçerli Bearer, `X-Client-Platform` **olmadan** | Davranışı kaydedin (zorunlu mu?) | |
 | 2.5 | `GET /api/players/<olmayan büyük numara>` | 404 (bot bunu "bulunamadı" sayar) | |
-| 2.6 | `GET /api/parties/5830`, `/api/parties/5830/members` | 200; üye listesi sayfalıysa **sayfalama alanlarını** kaydedin (bot şu an tam liste varsayar; sayfalı ise `tamam=False` davranışı gözden geçirilmeli) | |
+| 2.6 | `GET /api/parties/5830`, `/api/parties/5830/members`; ayrıca ≥101 üyeli bir parti (örn. 1319, 5170) | 200. Üye listesi sayfalıysa **sayfalama alanlarını** kaydedin. **Büyük partide:** `members` uzunluğu (beklenen 100), `party.member_count` (beklenen toplam), üyelerdeki `xp` değerlerinin **azalan sırada** olup olmadığı, **gerçek sayfalama yöntemi** (tarayıcı DevTools Network'te parti sayfasının kaç `/members` isteği attığı, parametreleri, `Link`/`X-Total-Count` başlıkları) — kaydedin; bot ek sayfa İSTEMEZ, parametre uydurmaz; `journalctl -u dipbot | grep "KISMİ okundu"` tanılama satırını da ekleyin | |
+| 2.6b | ≥101 üyeli partinin `members` yanıtında `xp` alanı | Her üyede tamsayı `xp`; kaç üyenin ≥ 1.500.000 olduğu (özetteki sayıyla karşılaştırın); eksik/farklı tür `xp` var mı (bot bunları 'bilinmiyor' sayar ve eklemez) | |
 | 2.7 | `GET /api/wars` ve `/api/wars/ended` | 200; sayfalama var mı, `status`/`war_type` değerleri, `attacker_power` anlamı ("hasar" mı?) | |
 | 2.8 | Token JWT'sinin `exp` alanı (yalnızca süreyi okuyun, değeri paylaşmayın) | Gerçek ömrü kaydedin (haftalık hatırlatma varsayımını doğrular/değiştirir) | |
 | 2.9 | Oyun içinde yeniden giriş yapınca eski token düşüyor mu? | Kaydedin (token yenileme akışının riski) | |

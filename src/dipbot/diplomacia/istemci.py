@@ -167,6 +167,10 @@ def _retry_after(deger: str | None) -> float | None:
     return float(min(int(deger.strip()), RETRY_AFTER_UST_SINIR))
 
 
+_SIR_BASLIKLARI = frozenset({"set-cookie", "cookie", "authorization", "proxy-authorization", "www-authenticate"})
+_SAYFALAMA_IPUCU = re.compile(r"link|total|count|page|pagination|range|next|cursor|offset|limit")
+
+
 class IstemciKaynagi:
     """DiplomaciaSource: oyuncu + parti gerçek; savaş reddedilir."""
 
@@ -206,7 +210,9 @@ class IstemciKaynagi:
         await self._http.aclose()
 
     # ---- HTTP ----
-    async def _getir(self, yol: str):
+    async def _getir(self, yol: str, *, yanit_basliklari: dict | None = None):
+        """GET; yanit_basliklari verilirse TANILAMA için yanıt başlıklarından yalnız sayfalamayla ilgili olabilecekler
+        (ad -> değer) ve diğer başlık ADLARI (değersiz) doldurulur. Sır taşıyan başlıklar (cookie/authorization) hiç alınmaz."""
         basliklar = self._kimlik.basliklar()  # yapılandırılmamışsa BURADA fırlar, istek yok
         hata = None
         try:
@@ -218,6 +224,12 @@ class IstemciKaynagi:
         if hata is not None:  # except dışında: __context__ zinciri httpx istisnasını taşımaz
             raise hata
         s = r.status_code
+        if s == 200 and yanit_basliklari is not None:
+            for ad, deger in r.headers.items():
+                k = ad.lower()
+                if k in _SIR_BASLIKLARI:
+                    continue
+                yanit_basliklari[k] = deger[:200] if _SAYFALAMA_IPUCU.search(k) else None
         if s == 200:
             if len(r.content) > MAKS_GOVDE_BAYT:
                 raise EksikVeri("yanıt beklenenden büyük")
@@ -254,14 +266,25 @@ class IstemciKaynagi:
         bilgi = ayristir.parti_ayristir(await self._getir(f"/api/parties/{n}"))
         if bilgi.parti_id != n:
             raise EksikVeri("yanıttaki parti numarası istekle uyuşmuyor")
-        uyeler = ayristir.uyeler_ayristir(
-            await self._getir(f"/api/parties/{n}/members"), bilgi.member_count
-        )
+        yanit_basliklari: dict = {}
+        govde = await self._getir(f"/api/parties/{n}/members", yanit_basliklari=yanit_basliklari)
+        uyeler = ayristir.uyeler_ayristir(govde, bilgi.member_count)
         self._uuid_denetle("t", n, bilgi.uuid)
         for no, uid in uyeler.uuidler.items():
             self._uuid_denetle("o", no, uid)
-        if not uyeler.tamam:
-            log.info("parti %s üye listesi tam değil: %s", n, uyeler.neden)
+        if uyeler.kismi or not uyeler.tamam:
+            # TANILAMA: gerçek sayfalama yöntemini sonraki günlükten öğrenmek için gövde anahtarları ve yanıt başlıkları
+            # (ad; sayfalama ipucu olanların değeri) yazılır. Ek sayfa İSTENMEZ, parametre UYDURULMAZ.
+            ipucu = {k: v for k, v in yanit_basliklari.items() if v is not None}
+            log.info(
+                "parti %s: üye listesi %s (okunan=%d toplam=%d%s); gövde anahtarları=%s; yanıt başlık adları=%s; "
+                "sayfalama ipucu başlıklar=%s; ek sayfa istenmedi",
+                n, "KISMİ okundu" if uyeler.kismi else f"tam değil ({uyeler.neden})", len(uyeler.uyeler),
+                bilgi.member_count, "" if not uyeler.kismi else "; XP sırası " + {
+                    True: "doğrulandı", False: "AZALAN DEĞİL", None: "doğrulanamadı"}[uyeler.xp_sirali],
+                sorted(govde) if isinstance(govde, dict) else type(govde).__name__,
+                sorted(yanit_basliklari), ipucu,
+            )
         return ayristir.parti_birlestir(bilgi, uyeler)
 
     async def _savas_kayitlari(self) -> savas.SavasKayitListesi:

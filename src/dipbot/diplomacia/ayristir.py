@@ -17,6 +17,7 @@ Alan kararları:
 """
 from __future__ import annotations
 
+import math
 import uuid as _uuid
 from dataclasses import dataclass
 
@@ -48,12 +49,23 @@ class PartiBilgi:
     member_count: int
 
 
+# Diplomacia /members uç noktası büyük partilerde TEK İSTEKTE 100 üye döndürür (gerçek VPS günlükleri: "100 != 329",
+# "100 != 129"). Bu bir OKUMA sınırıdır, takip politikası DEĞİLDİR: parti başına oyuncu sayısı SINIRLANMAZ (tek
+# kriter XP eşiği). Gerçek sayfalama yöntemi DOĞRULANMADI; kanıtlanmamış page/offset/limit parametresi
+# GÖNDERİLMEZ. 100 kayıt + member_count > 100 -> "kısmi okuma" (geçerli ama EKSİK; tam liste sayılmaz).
+# Sıralama (XP) varsayılmaz; yanıttaki xp alanları yalnız bilgi amaçlı denetlenir.
+API_UYE_OKUMA_BOYUTU = 100
+XP_UST = 10**12  # makul üst sınır; bunun üstü geçersiz sayılır
+
+
 @dataclass(frozen=True)
 class UyeListesi:
     uyeler: tuple[PartiUyesi, ...]
     uuidler: dict  # {player_number(str): player_id UUID}
     tamam: bool
     neden: str = ""
+    kismi: bool = False  # geçerli ama EKSİK (API tek istekte API_UYE_OKUMA_BOYUTU üye döndürdü)
+    xp_sirali: bool | None = None
 
 
 # ---- yardımcılar ----------------------------------------------------------
@@ -139,8 +151,10 @@ def parti_ayristir(govde) -> PartiBilgi:
 def uyeler_ayristir(govde, beklenen_sayi: int) -> UyeListesi:
     """`{"members":[...]}` gövdesi. Bozuk üye -> EksikVeri (sessizce atlanmaz).
 
-    tamam=True yalnız: sayfalama anahtarı yok, len==beklenen_sayi, player_number ve
-    player_id mükerrer değil. Aksi halde tamam=False (eksik liste çıkış sayılmamalı).
+    tamam=True yalnız: sayfalama anahtarı yok, len==beklenen_sayi (BOYUTA bakılmaksızın, KESİLMEZ), player_number
+    ve player_id mükerrer değil. kismi=True (tamam=False) yalnız: sayfalama anahtarı yok, mükerrer yok, TAM
+    API_UYE_OKUMA_BOYUTU kayıt var ve beklenen_sayi bundan büyük (okunmayan üyeler VAR). Başka her uyuşmazlık
+    tamam=False, kismi=False (açıklanamayan eksik liste reddedilir, çıkış sayılmaz).
     """
     g = _json_nesne(govde, "üye yanıtı")
     liste = _zorunlu(g, "members", "üye yanıtı")
@@ -150,6 +164,7 @@ def uyeler_ayristir(govde, beklenen_sayi: int) -> UyeListesi:
     uuidler: dict = {}
     gorulen_no: set = set()
     gorulen_uuid: set = set()
+    xp_listesi: list = []
     mukerrer = False
     for i, m in enumerate(liste):
         ne = f"members[{i}]"
@@ -161,20 +176,51 @@ def uyeler_ayristir(govde, beklenen_sayi: int) -> UyeListesi:
             mukerrer = True
         gorulen_no.add(no)
         gorulen_uuid.add(pid)
-        uyeler.append(PartiUyesi(oyuncu_id=str(no), ad=ad))
+        xp = _xp(m.get("xp"))
+        uyeler.append(PartiUyesi(oyuncu_id=str(no), ad=ad, xp=xp))
         uuidler[str(no)] = pid
+        xp_listesi.append(xp)
     neden = ""
+    kismi = False
     sayfalama = sorted(SAYFALAMA_ANAHTARLARI & set(g))
     if sayfalama:
         neden = f"sayfalama anahtarı var {sayfalama}: tamlık doğrulanamaz"
     elif mukerrer:
         neden = "mükerrer üye"
     elif len(liste) != beklenen_sayi:
-        neden = f"üye sayısı uyuşmuyor ({len(liste)} != {beklenen_sayi})"
-    return UyeListesi(tuple(uyeler), uuidler, tamam=not neden, neden=neden)
+        if len(liste) == API_UYE_OKUMA_BOYUTU and beklenen_sayi > API_UYE_OKUMA_BOYUTU:
+            kismi = True  # API tek istekte 100 üye döndürdü; kalanı için sayfa parametresi UYDURULMAZ
+        else:
+            neden = f"üye sayısı uyuşmuyor ({len(liste)} != {beklenen_sayi})"
+    return UyeListesi(
+        tuple(uyeler), uuidler, tamam=not neden and not kismi, neden=neden, kismi=kismi,
+        xp_sirali=_xp_sirali(xp_listesi) if kismi else None,
+    )
+
+
+def _xp(v) -> int | None:
+    """XP'yi güvenilir ayrıştırır: negatif olmayan tamsayı (veya tam sayı değerli sonlu kayan nokta) -> int.
+    Eksik, bool, metin ('1500000'), negatif, kesirli, NaN/inf, aşırı büyük -> None (BİLİNMİYOR; 0 sayılmaz)."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, float):
+        if not math.isfinite(v) or not v.is_integer():
+            return None
+        v = int(v)
+    if not isinstance(v, int) or v < 0 or v > XP_UST:
+        return None
+    return v
+
+
+def _xp_sirali(xp: list) -> bool | None:
+    """Tüm üyelerde tamsayı xp varsa azalmayan (büyükten küçüğe) sıra mı; eksik/bozuk xp -> None (bilinmiyor)."""
+    if not xp or any(isinstance(x, bool) or not isinstance(x, int) for x in xp):
+        return None
+    return all(xp[i] >= xp[i + 1] for i in range(len(xp) - 1))
 
 
 def parti_birlestir(bilgi: PartiBilgi, uyeler: UyeListesi) -> PartiAnlik:
     return PartiAnlik(
-        parti_id=bilgi.parti_id, ad=bilgi.ad, uyeler=uyeler.uyeler, uyeler_tamam=uyeler.tamam
+        parti_id=bilgi.parti_id, ad=bilgi.ad, uyeler=uyeler.uyeler, uyeler_tamam=uyeler.tamam,
+        kismi=uyeler.kismi, toplam_uye=bilgi.member_count, xp_sirali=uyeler.xp_sirali,
     )

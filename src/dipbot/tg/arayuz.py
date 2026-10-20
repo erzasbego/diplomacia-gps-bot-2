@@ -452,33 +452,50 @@ class Arayuz:
             return self._kaynak_hata("Parti eklenemedi", e)
         if s.durum == "zaten_takipte":
             return Yanit(f"Bu parti zaten takipte: {bicim.parti_link(pid)}", [[Dugme("👥 Partiler", "pl:0")]])
-        return Yanit(
-            "\n".join(
-                [
-                    "✅ <b>Parti takibe eklendi</b>",
-                    bicim.parti_link(pid, s.ad),
-                    f"Üye sayısı: {s.uye_sayisi}",
-                    f"Takibe yeni alınan: {s.yeni_eklenen}; zaten takipte: {s.zaten_takipte}; "
-                    f"engelli (otomatik eklenmedi): {s.engelli}",
-                    *self._ilk_veri_satirlari(s),
-                    "<i>Bu bir başlangıç özetidir (tek mesaj): üye girişleri, bölge ve vatandaşlık için "
-                    "bildirim gönderilmez. Bundan sonra yalnızca gerçek değişiklikler bildirilir.</i>",
-                ]
-            ),
-            [[Dugme("👥 Partiler", "pl:0"), Dugme("🏠 Ana menü", "m")]],
+        esik = f"{config.PARTI_XP_ESIGI:,}".replace(",", ".")
+        satirlar = [
+            "✅ <b>Parti takibe eklendi</b>",
+            bicim.parti_link(pid, s.ad),
+            f"Toplam üye: {s.toplam_uye or s.uye_sayisi}",
+            f"API'den incelenen: {s.incelenen or s.uye_sayisi}",
+            f"{esik}+ XP ile takibe alınan: {s.takip_edilen}",
+            f"XP sınırı altında: {s.xp_alti}",
+        ]
+        if s.xp_bilinmeyen:
+            satirlar.append(f"XP bilgisi eksik/geçersiz (takibe alınmadı): {s.xp_bilinmeyen}")
+        if s.engelli:
+            satirlar.append(f"Elle silindiği için eklenmeyen (engelli): {s.engelli}")
+        satirlar.append(f"İlk bilgisi alınan: {s.ilk_veri_alinan}")
+        satirlar.append(f"İlk taramayı bekleyen: {s.ilk_veri_bekleyen}" + (f" ({esc(s.ilk_veri_notu)})" if s.ilk_veri_bekleyen and s.ilk_veri_notu else ""))
+        satirlar += self._kismi_not(s)
+        satirlar.append(
+            "<i>Bu bir başlangıç özetidir (tek mesaj): üye girişleri, bölge ve vatandaşlık için bildirim "
+            "gönderilmez; oyuncular için ayrı mesaj gönderilmez. Bundan sonra yalnızca gerçek değişiklikler "
+            "bildirilir.</i>"
         )
+        return Yanit("\n".join(satirlar), [[Dugme("👥 Partiler", "pl:0"), Dugme("🏠 Ana menü", "m")]])
 
     @staticmethod
-    def _ilk_veri_satirlari(s) -> list[str]:
-        if not s.yeni_eklenen:
+    def _kismi_not(s) -> list[str]:
+        """KISMİ okuma (API tek istekte 100 üye döndürdü): liste EKSİKTİR, tam liste sayılmaz. Okunmayan üyelerin XP'si
+        bilinmez. Gerçek sayfalama yöntemi doğrulanmadığı için ek sayfa istenmez."""
+        if not s.kismi:
             return []
+        kalan = max((s.toplam_uye or 0) - (s.incelenen or 0), 0)
         satirlar = [
-            f"İlk veri alınan üye: {s.ilk_veri_alinan} (bölgesi bilinen: {s.bolge_bilinen}, "
-            f"vatandaşlık ülkesi bilinen: {s.vatandaslik_bilinen})"
+            f"⚠️ <b>Üye listesi EKSİK okundu: {s.incelenen}/{s.toplam_uye}.</b> API tek istekte {s.incelenen} üye döndürdü; "
+            f"diğer {kalan} üye okunamadı (XP'leri bilinmiyor, takibe alınamadı). Sayfalama yöntemi doğrulanmadı, "
+            "ek sayfa istenmedi.",
         ]
-        if s.ilk_veri_bekleyen:
-            neden = f" ({esc(s.ilk_veri_notu)})" if s.ilk_veri_notu else ""
-            satirlar.append(f"Ayrıntısı ilk taramada tamamlanacak: {s.ilk_veri_bekleyen} üye{neden}")
+        if s.min_xp is not None and s.min_xp >= config.PARTI_XP_ESIGI:
+            satirlar.append("Okunan üyelerin hepsi eşiğin üstünde: okunamayan üyeler arasında da uygun oyuncu olabilir.")
+        else:
+            satirlar.append(
+                "Okunan en düşük XP eşiğin altında; ancak sıralamaya güvenilmediği için okunamayan üyelerin de eşiğin "
+                "altında olduğu doğrulanamaz."
+            )
+        xp = {True: "azalan sırada görünüyor", False: "azalan sırada DEĞİL", None: "sırası doğrulanamadı"}[s.xp_sirali]
+        satirlar.append(f"Bilgi: okunan üyelerde XP {xp} (sıralamaya güvenilmez; her üyenin XP'si ayrı denetlendi).")
         return satirlar
 
     async def _k_partiler(self, o: Olay) -> Yanit:
@@ -778,8 +795,8 @@ class Arayuz:
     # ---- partiler
     def _parti_liste(self, g: int, sayfa: int) -> Yanit:
         satirlar_db = self.conn.execute(
-            "SELECT t.parti_id, t.ad, (SELECT COUNT(*) FROM parti_uyeleri u WHERE u.group_id=t.group_id"
-            " AND u.parti_id=t.parti_id) AS uye FROM takip_partiler t WHERE t.group_id=?"
+            "SELECT t.parti_id, t.ad, t.kismi, t.toplam_uye, (SELECT COUNT(*) FROM parti_uyeleri u"
+            " WHERE u.group_id=t.group_id AND u.parti_id=t.parti_id) AS uye FROM takip_partiler t WHERE t.group_id=?"
             " ORDER BY lower(COALESCE(t.ad, '')), t.parti_id",
             (g,),
         ).fetchall()
@@ -794,7 +811,8 @@ class Arayuz:
         klavye: Klavye = []
         for i, r in enumerate(satirlar_db[bas : bas + SAYFA_BOYUTU], start=bas + 1):
             metin.append(
-                f"{i}. {bicim.parti_link(r['parti_id'], r['ad'])} (#{esc(r['parti_id'])}) — {r['uye']} üye"
+                f"{i}. {bicim.parti_link(r['parti_id'], r['ad'])} (#{esc(r['parti_id'])}) — "
+                + (f"{r['uye']}/{r['toplam_uye']} üye" if r["kismi"] and r["toplam_uye"] else f"{r['uye']} üye")
             )
             d = _dg(f"{i}. {r['ad'] or r['parti_id']} #{r['parti_id']}", f"pd:{r['parti_id']}")
             if d:
@@ -817,6 +835,10 @@ class Arayuz:
             f"Bilinen üye sayısı: {uye}",
             f"Son doğrulama: {bicim.tarih(r['son_dogrulama'])}",
         ]
+        if r["kismi"]:
+            metin.insert(2, f"Toplam üye: {r['toplam_uye'] or '?'} — son taramada yalnız {uye} üye OKUNABİLDİ "
+                            "(liste eksik; okunmayanlar izlenemez, görünmeme üyelik değişikliği sayılmaz).")
+        metin.insert(2, f"Otomatik takip: {config.PARTI_XP_ESIGI:,} XP ve üzeri".replace(",", "."))
         klavye: Klavye = []
         sil = _dg("🗑 Parti takibini kaldır", f"ps:{pid}")
         if sil:
@@ -845,7 +867,8 @@ class Arayuz:
             satirlar.append("⚠️ Üyelik onay sırasında değişti; güncel özeti yeniden onaylayın.")
         satirlar += [
             f"Parti: {bicim.parti_link(on.parti_id, on.parti_ad)} (#{esc(on.parti_id)})",
-            f"Güncel üye sayısı: {on.uye_sayisi}",
+            f"Güncel üye sayısı: {on.uye_sayisi}" if not on.kismi else
+            f"Toplam üye: {on.toplam_uye} (liste EKSİK: yalnız {on.uye_sayisi} üye okunabildi)",
             f"Bu grubun takibinden çıkarılacak oyuncu: <b>{len(on.etkilenen)}</b>",
         ]
         for oid, ad in adlar.items():
@@ -856,6 +879,11 @@ class Arayuz:
             "Partiden önceden ayrılmış oyuncuların takibi sürer; diğer gruplar etkilenmez. "
             "Elle eklenmiş olsalar da şu anki üyeler çıkarılır."
         )
+        if on.kismi:
+            satirlar.append(
+                "⚠️ Büyük parti: üye listesi eksik okundu; okunamayan üyeler (elle eklenmiş olsalar bile) bu işlemle "
+                "takipten çıkarılmaz."
+            )
         return self._onay_yaniti(
             o, "parti_sil", g, {"parti_id": on.parti_id, "ozet": on.ozet_anahtari}, "\n".join(satirlar)
         )
