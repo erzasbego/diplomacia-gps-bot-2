@@ -12,7 +12,7 @@ from pathlib import Path
 from . import config
 
 SEMA_SURUMU = 6  # 2: takip_oyuncular.uid; 3: grup_gocleri; 4: onayli_gruplar.donem + outbox.onay_donemi (D7);
-#                 5: takip_partiler.sinirli/toplam_uye/xp_sirali (büyük parti: ilk 100 üye);
+#                 5: takip_partiler.kismi/toplam_uye/xp_sirali (büyük parti: ilk 100 üye);
 #                 6: parti_uyeleri.xp + takip_oyuncular.xp_alti_sayac/xp_onayli (XP süzgeci)
 
 
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS takip_partiler(
     baseline_tamam INTEGER NOT NULL DEFAULT 1,
     son_dogrulama TEXT,
     eklendi TEXT NOT NULL,
-    sinirli INTEGER NOT NULL DEFAULT 0,  -- 1: üye listesi API'nin döndürdüğü İLK 100 (geçerli ama kısmi)
+    kismi INTEGER NOT NULL DEFAULT 0,  -- 1: üye listesi API'nin döndürdüğü İLK 100 (geçerli ama kısmi)
     toplam_uye INTEGER,                  -- partinin gerçek üye sayısı (member_count); eski kayıtlarda NULL
     xp_sirali INTEGER,                   -- sınırlı listede xp alanları azalan mıydı: 1 / 0 / NULL (bilinmiyor)
     PRIMARY KEY(group_id, parti_id)
@@ -185,7 +185,7 @@ def _goc(conn: sqlite3.Connection) -> None:
         _donem_goc(conn)
     if surum < 5:  # additive: mevcut kayıtlar korunur, yeni sütunlar güvenli varsayılanla gelir
         sutunlar = {r[1] for r in conn.execute("PRAGMA table_info(takip_partiler)")}
-        for ad, tanim in (("sinirli", "INTEGER NOT NULL DEFAULT 0"), ("toplam_uye", "INTEGER"), ("xp_sirali", "INTEGER")):
+        for ad, tanim in (("kismi", "INTEGER NOT NULL DEFAULT 0"), ("toplam_uye", "INTEGER"), ("xp_sirali", "INTEGER")):
             if ad not in sutunlar:
                 conn.execute(f"ALTER TABLE takip_partiler ADD COLUMN {ad} {tanim}")
     if surum < 6:  # additive: mevcut kayıtlar korunur; eski otomatik kayıtlar XP kuralına tabi olmaz (xp_onayli=0)

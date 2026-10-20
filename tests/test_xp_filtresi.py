@@ -1,4 +1,4 @@
-"""Parti üyeleri için XP süzgeci (>= 1.500.000): ayrıştırma, otomatik takip, kademeli çıkarma, korumalar,
+"""Parti üyeleri için XP süzgeci (>= 2.000.000): ayrıştırma, otomatik takip, kademeli çıkarma, korumalar,
 bildirimler, başlangıç özeti ve şema v6. MOCK; gerçek Diplomacia davranışı DOĞRULANMADI."""
 import copy
 import json
@@ -18,7 +18,7 @@ from dipbot.tg.arayuz import Arayuz
 from fakes import SahteKaynak, SahteSaat
 
 FX = json.loads((Path(__file__).parent / "fixtures" / "diplomacia_ornek.json").read_text(encoding="utf-8"))
-ESIK = 1_500_000
+ESIK = 2_000_000
 
 
 def test_esik_yapilandirmasi():
@@ -42,11 +42,11 @@ def _govde(xp_listesi):
 
 
 @pytest.mark.parametrize("ham,beklenen", [
-    (1_500_000, 1_500_000), (0, 0), (1_499_999, 1_499_999), (2_214_953, 2_214_953),
-    (1_500_000.0, 1_500_000),                        # tam sayı değerli kayan nokta
-    ("YOK", None), (None, None), ("", None), ("1500000", None), ("abc", None),
-    (True, None), (False, None), (-1, None), (-1_500_000, None),
-    (1_500_000.5, None), (float("nan"), None), (float("inf"), None), (10**15, None),
+    (2_000_000, 2_000_000), (0, 0), (1_999_999, 1_999_999), (2_214_953, 2_214_953),
+    (2_000_000.0, 2_000_000),                        # tam sayı değerli kayan nokta
+    ("YOK", None), (None, None), ("", None), ("2000000", None), ("abc", None),
+    (True, None), (False, None), (-1, None), (-2_000_000, None),
+    (2_000_000.5, None), (float("nan"), None), (float("inf"), None), (10**15, None),
     ([], None), ({}, None),
 ])
 def test_xp_ayristirma_gecerli_ve_gecersiz_degerler(ham, beklenen):
@@ -55,8 +55,8 @@ def test_xp_ayristirma_gecerli_ve_gecersiz_degerler(ham, beklenen):
 
 
 def test_xp_ayristirma_diger_uyeleri_etkilemez_ve_sira_korunur():
-    u = a.uyeler_ayristir(_govde([3_000_000, "YOK", 1_000, "x", 1_500_000]), 5)
-    assert [m.xp for m in u.uyeler] == [3_000_000, None, 1_000, None, 1_500_000]
+    u = a.uyeler_ayristir(_govde([3_000_000, "YOK", 1_000, "x", 2_000_000]), 5)
+    assert [m.xp for m in u.uyeler] == [3_000_000, None, 1_000, None, 2_000_000]
     assert u.tamam is True, "XP eksikliği üye listesini bozuk saymaz (yalnız oyuncu o an 'bilinmiyor')"
 
 
@@ -88,8 +88,8 @@ def _tara(servis, src, g=G1):
 
 
 # ============================================================ C) sınır değerleri ve eksik/geçersiz XP
-@pytest.mark.parametrize("xp,takipte_mi", [(1_499_999, False), (1_500_000, True), (1_500_001, True)])
-def test_xp_siniri_1_499_999_1_500_000_1_500_001(conn, servis, xp, takipte_mi):
+@pytest.mark.parametrize("xp,takipte_mi", [(1_999_999, False), (2_000_000, True), (2_000_001, True)])
+def test_xp_siniri_1_999_999_2_000_000_2_000_001(conn, servis, xp, takipte_mi):
     src = _src([(1, xp)])
     s = run(servis.parti_ekle(G1, "1244", src))
     assert (takipte(conn, G1) == {"1"}) is takipte_mi
@@ -108,13 +108,13 @@ def test_xp_eksik_veya_gecersiz_otomatik_eklenmez_bilinmiyor_sayilir(conn, servi
 
 def test_sirali_oldugu_varsayilmaz_dusuk_xp_arkasindaki_nitelikliler_de_eklenir(conn, servis):
     # sıra bozuk: düşük XP'ler başta, nitelikliler sonda
-    src = _src([(1, 10), (2, 1_499_999), (3, 1_500_000), (4, 5), (5, 9_000_000)])
+    src = _src([(1, 10), (2, 1_999_999), (3, 2_000_000), (4, 5), (5, 9_000_000)])
     run(servis.parti_ekle(G1, "1244", src))
     assert takipte(conn, G1) == {"3", "5"}
 
 
 def test_yalniz_nitelikli_yeni_uyelerin_ilk_verisi_cekilir(conn, servis):
-    src = _src([(1, 2_000_000), (2, 100), (3, None), (4, 1_500_000)])
+    src = _src([(1, 2_000_000), (2, 100), (3, None), (4, 2_000_000)])
     s = run(servis.parti_ekle(G1, "1244", src))
     assert {c[1] for c in src.cagrilar if c[0] == "oyuncu"} == {"1", "4"}
     assert (s.yeni_eklenen, s.ilk_veri_alinan, s.ilk_veri_bekleyen) == (2, 2, 0)
@@ -178,7 +178,7 @@ def test_tek_gecici_dusuk_xp_yaniti_oyuncuyu_silmez_sayac_sifirlanir(conn, servi
 
 def test_ardisik_n_tarama_esigin_altinda_ise_otomatik_oyuncu_takipten_cikar(conn, servis):
     src = _kur_tek(conn, servis)
-    _xp_ayarla(src, 1_499_999)
+    _xp_ayarla(src, 1_999_999)
     for i in range(config.PARTI_XP_ALTI_ARDISIK_TARAMA):
         assert "1" in takipte(conn, G1), f"{i}. taramada henüz silinmemeli"
         _tara(servis, src)
@@ -206,7 +206,7 @@ def test_sonradan_esige_ulasan_oyuncu_otomatik_takibe_alinir_ilk_gozlem_sessiz(c
     src.oyuncu("2", "U2", None, None)  # bölge/vatandaşlık henüz bilinmiyor
     run(servis.parti_ekle(G1, "1244", src))
     assert takipte(conn, G1) == {"1"}
-    _xp_ayarla(src, 1_500_000, oid="2")
+    _xp_ayarla(src, 2_000_000, oid="2")
     src.oyuncu("2", "U2", "Ankara", "TR")
     _tara(servis, src)
     assert "2" in takipte(conn, G1) and _satir(conn, "2")["baseline_tamam"] == 0
@@ -239,7 +239,7 @@ def test_otomatik_oyuncu_sonradan_elle_eklenirse_artik_korunur(conn, servis):
     assert "1" in takipte(conn, G1)
 
 
-def test_baska_takipli_partide_nitelikli_olan_oyuncu_korunur(conn, servis):
+def test_nitelikli_gozlem_esik_alti_sayacini_sifirlar_oyuncu_parti_degistirse_de_silinmez(conn, servis):
     src = _src([(1, 2_000_000)])
     src.parti("77", "DIGER", [("1", "U1", 2_500_000)])
     run(servis.parti_ekle(G1, "1244", src)); run(servis.parti_ekle(G1, "77", src))
@@ -249,7 +249,7 @@ def test_baska_takipli_partide_nitelikli_olan_oyuncu_korunur(conn, servis):
     assert "1" in takipte(conn, G1)
 
 
-def test_baska_partide_de_dusukse_korunmaz(conn, servis):
+def test_hicbir_listede_nitelikli_gorunmuyorsa_ardisik_n_taramada_cikar(conn, servis):
     src = _src([(1, 2_000_000)])
     src.parti("77", "DIGER", [("1", "U1", 2_500_000)])
     run(servis.parti_ekle(G1, "1244", src)); run(servis.parti_ekle(G1, "77", src))
@@ -343,11 +343,11 @@ def test_ozet_ornek_senaryo_gercek_sayilar_hesaplanir(conn, ui, src, monkeypatch
     y = run(ui.komut(grup_komut("partiekle", "1319")))
     m = y.metin
     for satir in ("✅ <b>Parti takibe eklendi</b>", "Toplam üye: 329", "API'den incelenen: 100",
-                  "1.500.000+ XP ile takibe alınan: 63", "XP sınırı altında: 37",
+                  "2.000.000+ XP ile takibe alınan: 63", "XP sınırı altında: 37",
                   "İlk bilgisi alınan: 40", "İlk taramayı bekleyen: 23"):
         assert satir in m, satir
     assert "Örnek Parti" in m
-    assert "229 üye" in m and "kontrol edilmedi" in m, "ilk 100 dışının kontrol edilmediği açıkça belirtilir"
+    assert "229 üye okunamadı" in m and "EKSİK" in m, "okunamayan üyeler açıkça belirtilir; tam liste sayılmaz"
     assert "bilgisi eksik" not in m
     assert m.count("Parti takibe eklendi") == 1
     assert conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0] == 0, "oyuncular için ayrı mesaj yok"
@@ -360,9 +360,9 @@ def test_ozet_bilinmeyen_xp_engelli_ve_75_uyeli_parti(conn, ui, src, servis):
     src.parti("1244", "P", [(str(i), f"U{i}", xp) for i, xp in uyeler])
     m = run(ui.komut(grup_komut("partiekle", "1244"))).metin
     assert "Toplam üye: 75" in m and "API'den incelenen: 75" in m
-    assert "1.500.000+ XP ile takibe alınan: 30" in m and "XP sınırı altında: 41" in m
+    assert "2.000.000+ XP ile takibe alınan: 30" in m and "XP sınırı altında: 41" in m
     assert "XP bilgisi eksik/geçersiz (takibe alınmadı): 4" in m
-    assert "kontrol edilmedi" not in m, "75 üyeli partide 'ilk 100 dışı' notu çıkmaz"
+    assert "okunamadı" not in m and "EKSİK" not in m, "75 üyeli tam listede eksik uyarısı çıkmaz"
 
 
 # ============================================================ I) şema v6: mevcut kayıtlar korunur

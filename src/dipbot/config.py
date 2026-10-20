@@ -56,9 +56,10 @@ SAAT_TUTARSIZLIK_TOLERANSI_SANIYE = 30.0
 TOKEN_PREV_OMRU_SANIYE = 24 * 3600
 TOKEN_PREV_KONTROL_ARALIGI_SANIYE = 300.0
 
-# Parti üyeleri arasından YALNIZ bu XP ve üzerindekiler (>=) otomatik takibe alınır. Her üyenin XP'si ayrı denetlenir
-# (API sıralamasına güvenilmez); XP eksik/geçersizse oyuncu eklenmez (bilinmiyor). Elle eklenenler etkilenmez.
-PARTI_XP_ESIGI = 1_500_000
+# TEK KRİTER: parti üyeleri arasından YALNIZ bu XP ve üzerindekiler (>=) otomatik takibe alınır; oyuncu SAYISI sınırlanmaz.
+# Her üyenin XP'si ayrı denetlenir (API sıralamasına güvenilmez); XP eksik/geçersizse oyuncu eklenmez (bilinmiyor).
+# Elle eklenenler etkilenmez.
+PARTI_XP_ESIGI = 2_000_000
 # Otomatik takipteki oyuncu eşiğin ALTINDA, art arda bu kadar taramada gözlenirse (geçerli XP ile) otomatik takipten
 # çıkarılır. Tek geçici/hatalı yanıt silmez. XP eksik/geçersiz yanıtlar sayacı değiştirmez.
 PARTI_XP_ALTI_ARDISIK_TARAMA = 3
@@ -66,7 +67,7 @@ PARTI_XP_ALTI_ARDISIK_TARAMA = 3
 # Parti eklenirken üyelerin ilk oyuncu verisi (bölge, vatandaşlık, gözlem zamanı): komut içinde SINIRLI iş yapılır;
 # kalan üyeler baseline_tamam=0 ile eklenir ve ilk taramada (bildirimsiz) tamamlanır.
 PARTI_EKLE_ESZAMANLI = 4  # aynı anda en çok bu kadar oyuncu isteği
-PARTI_EKLE_ILK_VERI_UST = 100  # komutta en çok bu kadar üyenin verisi istenir (parti başına takip üst sınırıyla aynı)
+PARTI_EKLE_ILK_VERI_UST = 300  # komutta en çok bu kadar üyenin ilk verisi istenir (takip sınırı DEĞİL; kalanı ilk taramada)
 PARTI_EKLE_ILK_VERI_SURE_SN = 20.0  # toplam süre bütçesi; dolunca bekleyen istekler iptal edilir
 
 # Zamanlayıcı.

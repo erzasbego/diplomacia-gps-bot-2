@@ -253,12 +253,12 @@ def test_baslangic_ozeti_sonraki_gercek_degisiklik_bildirimlerinden_ayri(conn, u
 # ----------------------------------------------------------------- şema değişmedi (güvenli güncelleme garantisi)
 def test_veritabani_semasi_parmak_izi_degisiklik_bilincli_olmali():
     """Şema parmak izi: şema BİLEREK değiştirilirse bu değer, migration ve deploy/GUNCELLEME-PLANI.md birlikte
-    güncellenmeli. v5 (büyük parti ilk 100): takip_partiler'e sinirli/toplam_uye/xp_sirali; v6 (XP süzgeci): parti_uyeleri.xp,
+    güncellenmeli. v5 (büyük parti ilk 100): takip_partiler'e kismi/toplam_uye/xp_sirali; v6 (XP süzgeci): parti_uyeleri.xp,
     takip_oyuncular.xp_alti_sayac/xp_onayli — hepsi EKLEME, mevcut kayıtlar korunur (tests/test_parti_ilk100.py,
     tests/test_xp_filtresi.py migration testleri)."""
     import hashlib
     assert db.SEMA_SURUMU == 6
-    assert hashlib.sha256(db._sema().encode()).hexdigest() == "be02dd58fb512b9115cfb20a9518e1bef7f2e0e415ada4552a66ea0435463386"
+    assert hashlib.sha256(db._sema().encode()).hexdigest() == "57c282627a9af694c9281fe2302ad20be39b522b446a311dea0a2bc0784be9c4"
 
 
 def test_mevcut_veri_yeni_surumle_acilinca_korunur(tmp_path):

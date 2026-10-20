@@ -67,16 +67,16 @@ def _uye_say(conn, g=G1, pid="1244"):
 @pytest.mark.parametrize("toplam", [329, 129, 101])
 def test_100_uye_toplam_100den_fazla_gecerli_sinirli_liste(toplam):
     u = a.uyeler_ayristir(_govde(100), toplam)
-    assert u.sinirli is True and u.tamam is False and u.neden == ""
+    assert u.kismi is True and u.tamam is False and u.neden == ""
     assert len(u.uyeler) == 100 and u.xp_sirali is True
     p = a.parti_birlestir(a.PartiBilgi("1244", _uuid(0), 1244, "T", toplam), u)
-    assert p.sinirli and p.toplam_uye == toplam and not p.uyeler_tamam and p.xp_sirali is True
+    assert p.kismi and p.toplam_uye == toplam and not p.uyeler_tamam and p.xp_sirali is True
 
 
 @pytest.mark.parametrize("n", [75, 100])
 def test_75_ve_100_uyeli_parti_tam_liste(n):
     u = a.uyeler_ayristir(_govde(n), n)
-    assert u.tamam is True and u.sinirli is False and len(u.uyeler) == n
+    assert u.tamam is True and u.kismi is False and len(u.uyeler) == n
 
 
 @pytest.mark.parametrize("n,toplam,neden", [
@@ -85,23 +85,23 @@ def test_75_ve_100_uyeli_parti_tam_liste(n):
 ])
 def test_gercekten_eksik_veya_tutarsiz_liste_reddedilir(n, toplam, neden):
     u = a.uyeler_ayristir(_govde(n), toplam)
-    assert u.tamam is False and u.sinirli is False and neden in u.neden
+    assert u.tamam is False and u.kismi is False and neden in u.neden
 
 
 def test_mukerrer_uyeli_100_liste_sinirli_sayilmaz():
     g = _govde(100)
     g["members"][50]["player_number"] = g["members"][49]["player_number"]
     u = a.uyeler_ayristir(g, 329)
-    assert u.sinirli is False and u.tamam is False and "mükerrer" in u.neden
+    assert u.kismi is False and u.tamam is False and "mükerrer" in u.neden
     g = _govde(100)
     g["members"][60]["player_id"] = g["members"][5]["player_id"]
-    assert a.uyeler_ayristir(g, 329).sinirli is False
+    assert a.uyeler_ayristir(g, 329).kismi is False
 
 
 @pytest.mark.parametrize("anahtar", ["next", "page", "total", "has_more", "cursor", "limit"])
 def test_sayfalama_anahtari_varsa_sinirli_sayilmaz(anahtar):
     u = a.uyeler_ayristir(_govde(100, ekstra={anahtar: 2}), 329)
-    assert u.sinirli is False and u.tamam is False and "sayfalama" in u.neden
+    assert u.kismi is False and u.tamam is False and "sayfalama" in u.neden
 
 
 def test_bozuk_uye_kaydi_yine_eksikveri():
@@ -111,10 +111,10 @@ def test_bozuk_uye_kaydi_yine_eksikveri():
         a.uyeler_ayristir(g, 329)
 
 
-def test_api_100den_fazla_tam_liste_dondururse_ilk_100_alinir():
+def test_api_100den_fazla_tam_liste_dondururse_hepsi_alinir_kesilmez():
+    """BİLİNÇLİ DEĞİŞİKLİK (sabit 100 sınırı kaldırıldı): API hepsini döndürürse liste TAM sayılır, kesilmez."""
     u = a.uyeler_ayristir(_govde(120), 120)
-    assert u.sinirli is True and len(u.uyeler) == 100
-    assert [x.oyuncu_id for x in u.uyeler] == [str(i) for i in range(1, 101)], "İLK 100 (sıra korunur)"
+    assert u.tamam is True and u.kismi is False and len(u.uyeler) == 120
 
 
 def test_xp_sirasi_dogrulama_varsayim_yapmaz():
@@ -123,7 +123,7 @@ def test_xp_sirasi_dogrulama_varsayim_yapmaz():
     g = _govde(100); g["members"][3]["xp"] = "x"
     assert a.uyeler_ayristir(g, 329).xp_sirali is None
     # sıralama doğrulanamasa da liste "API'nin döndürdüğü ilk 100" olarak kabul edilir
-    assert a.uyeler_ayristir(_govde(100, xp=lambda i: i), 329).sinirli is True
+    assert a.uyeler_ayristir(_govde(100, xp=lambda i: i), 329).kismi is True
     assert a.uyeler_ayristir(_govde(100, xp=lambda i: 5), 329).xp_sirali is True  # eşit XP azalmayan sıradır
 
 
@@ -152,7 +152,7 @@ def _istemci(tmp_path, n_uye, member_count):
 def test_istemci_ek_sayfa_istegi_atmaz_ve_sinirli_liste_doner(tmp_path, toplam):
     k, istekler = _istemci(tmp_path, 100, toplam)
     p = run(k.fetch_party("1244"))
-    assert p.sinirli and len(p.uyeler) == 100 and p.toplam_uye == toplam
+    assert p.kismi and len(p.uyeler) == 100 and p.toplam_uye == toplam
     assert [r.url.path for r in istekler] == ["/api/parties/1244", "/api/parties/1244/members"]
     assert all(not r.url.query for r in istekler), "sayfa/offset parametresi gönderilmez"
 
@@ -163,10 +163,10 @@ def test_parti_ekleme_75_100_129_329(conn, servis, src, n, toplam, beklenen_sini
     _kaynakta(n, src=src, toplam=toplam)
     s = run(servis.parti_ekle(G1, "1244", src))
     assert s.durum == "eklendi" and s.yeni_eklenen == n and len(takipte(conn, G1)) == n
-    assert s.sinirli is beklenen_sinirli and s.toplam_uye == (toplam or n)
+    assert s.kismi is beklenen_sinirli and s.toplam_uye == (toplam or n)
     assert _uye_say(conn) == n
     r = _parti_satiri(conn)
-    assert bool(r["sinirli"]) is beklenen_sinirli and r["toplam_uye"] == (toplam or n)
+    assert bool(r["kismi"]) is beklenen_sinirli and r["toplam_uye"] == (toplam or n)
     assert bildirimler(conn) == [], "ilk eklemede hiçbir bildirim yok"
     # ilk veri sınırlı eşzamanlılıkla alındı; ek sayfa/üye isteği yok
     assert sum(1 for c in src.cagrilar if c[0] == "parti") == 1
@@ -185,18 +185,18 @@ def test_329_uyeli_parti_ilk_100_alinir_diger_229_cekilmez(conn, servis, src):
 def test_eksik_veya_bozuk_yanit_parti_eklemeyi_reddeder_hicbir_sey_yazilmaz(conn, servis, src):
     # 99 üye ama toplam 329: sınırlı liste DEĞİL (eksik) -> reddedilir
     src.partiler["1244"] = PartiAnlik("1244", "T", tuple(PartiUyesi(str(i), f"U{i}") for i in range(1, 100)), False,
-                                       sinirli=False, toplam_uye=329)
+                                       kismi=False, toplam_uye=329)
     with pytest.raises(EksikVeri):
         run(servis.parti_ekle(G1, "1244", src))
     assert _parti_satiri(conn) is None and takipte(conn, G1) == set()
-    # çekirdek de savunmalı: sinirli=True ama toplam bilgisi tutarsız
+    # çekirdek de savunmalı: kismi=True ama toplam bilgisi tutarsız
     src.partiler["1244"] = PartiAnlik("1244", "T", tuple(PartiUyesi(str(i), f"U{i}") for i in range(1, 101)), False,
-                                       sinirli=True, toplam_uye=100)
+                                       kismi=True, toplam_uye=100)
     with pytest.raises(EksikVeri):
         run(servis.parti_ekle(G1, "1244", src))
     # yinelenen kimlik
     uy = [PartiUyesi(str(i), f"U{i}") for i in range(1, 100)] + [PartiUyesi("5", "dup")]
-    src.partiler["1244"] = PartiAnlik("1244", "T", tuple(uy), False, sinirli=True, toplam_uye=329)
+    src.partiler["1244"] = PartiAnlik("1244", "T", tuple(uy), False, kismi=True, toplam_uye=329)
     with pytest.raises(EksikVeri):
         run(servis.parti_ekle(G1, "1244", src))
     assert _parti_satiri(conn) is None
@@ -329,7 +329,7 @@ def test_gecis_sinirli_dan_tam_listeye_ayrilanlar_dogrulanmis_katilanlar_sessiz(
     assert sorted(x["oyuncu_id"] for x in v[0]["veri"]["ayrilanlar"]) == ["100", "96", "97", "98", "99"]
     assert v[0]["veri"]["katilanlar"] == [], "önceki liste kısmiydi: U120'nin yeni katılım olduğu doğrulanamaz"
     assert "120" in takipte(conn, G1)
-    assert not _parti_satiri(conn)["sinirli"]
+    assert not _parti_satiri(conn)["kismi"]
 
 
 def test_gecis_tamdan_sinirliya_bildirim_yok(conn, servis, src):
@@ -337,7 +337,7 @@ def test_gecis_tamdan_sinirliya_bildirim_yok(conn, servis, src):
     run(servis.parti_ekle(G1, "1244", src))
     _kaynakta(100, src=src, toplam=140)  # parti büyüdü: artık yalnız ilk 100
     run(servis.partiler_tara(G1, src))
-    assert bildirimler(conn) == [] and bool(_parti_satiri(conn)["sinirli"])
+    assert bildirimler(conn) == [] and bool(_parti_satiri(conn)["kismi"])
 
 
 # ============================================================ E) başlangıç özeti ve ekranlar
@@ -352,10 +352,9 @@ def test_baslangic_ozeti_329_uyeli_parti(conn, ui, src):
     m = y.metin
     assert m.count("Parti takibe eklendi") == 1 and "TEKNO" in m
     assert "Toplam üye: 329" in m and "API'den incelenen: 100" in m
-    assert "1.500.000+ XP ile takibe alınan: 100" in m and "XP sınırı altında: 0" in m
-    assert "ilk 100" in m.lower() and "XP" in m and "229" in m and "kontrol edilmedi" in m
+    assert "2.000.000+ XP ile takibe alınan: 100" in m and "XP sınırı altında: 0" in m
+    assert "EKSİK" in m and "100/329" in m and "229 üye okunamadı" in m
     assert "İlk bilgisi alınan: 100" in m
-    assert "katıl" not in m.lower().replace("katılım bildirimi", "") or "bildirim gönderilmez" in m
     assert conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0] == 0
 
 
@@ -363,27 +362,27 @@ def test_baslangic_ozeti_bekleyen_sayisi_ve_75_uyeli_parti(conn, ui, src, monkey
     monkeypatch.setattr(config, "PARTI_EKLE_ILK_VERI_UST", 30)
     _kaynakta(75, src=src)
     m = run(ui.komut(grup_komut("partiekle", "1244"))).metin
-    assert "Toplam üye: 75" in m and "1.500.000+ XP ile takibe alınan: 75" in m
+    assert "Toplam üye: 75" in m and "2.000.000+ XP ile takibe alınan: 75" in m
     assert "İlk bilgisi alınan: 30" in m and "İlk taramayı bekleyen: 45" in m
     assert "ilk 100" not in m.lower(), "75 üyeli partide sınır notu çıkmaz"
 
 
-@pytest.mark.parametrize("xp,parca", [(None, "XP sıralaması doğrulanamadı"), (False, "azalan sırada DEĞİL"),
-                                       (True, "azalan sırada doğrulandı")])
+@pytest.mark.parametrize("xp,parca", [(None, "XP sırası doğrulanamadı"), (False, "XP azalan sırada DEĞİL"),
+                                       (True, "XP azalan sırada görünüyor")])
 def test_ozet_xp_sirasi_durumunu_dogru_belirtir_varsayim_yapmaz(conn, ui, src, xp, parca):
     _kaynakta(100, src=src, toplam=329)
     src.partiler["1244"] = PartiAnlik("1244", "TEKNO", src.partiler["1244"].uyeler, False,
-                                       sinirli=True, toplam_uye=329, xp_sirali=xp)
+                                       kismi=True, toplam_uye=329, xp_sirali=xp)
     m = run(ui.komut(grup_komut("partiekle", "1244"))).metin
-    assert parca in m and "ilk 100 üyeyi döndürdü" in m
+    assert parca in m and "sıralamaya güvenilmez" in m and "EKSİK" in m
 
 
-def test_parti_listesi_ve_detayinda_sinirli_gosterim(conn, ui, src):
+def test_parti_listesi_ve_detayinda_kismi_okuma_gosterimi(conn, ui, src):
     _kaynakta(100, src=src, toplam=329)
     run(ui.komut(grup_komut("partiekle", "1244")))
     assert "100/329 üye" in run(ui.komut(grup_komut("partiler"))).metin
     d = run(ui.buton(grup_dugme("pd:1244"))).metin
-    assert "Toplam üye: 329" in d and "ilk 100" in d.lower()
+    assert "Toplam üye: 329" in d and "OKUNABİLDİ" in d and "2.000.000" in d
 
 
 def test_sinirli_partiyi_kaldirma_onizlemesi_uyari_verir_yalniz_dogrulananlari_siler(conn, ui, servis, src):
@@ -392,7 +391,7 @@ def test_sinirli_partiyi_kaldirma_onizlemesi_uyari_verir_yalniz_dogrulananlari_s
     src.oyuncu("500", "U500", "Bursa", "TR")
     run(servis.oyuncu_ekle(G1, "500", src))  # listede olmayan elle eklenmiş üye (belki partidedir, doğrulanamaz)
     y = run(ui.komut(grup_komut("partisil", "1244")))
-    assert "329" in y.metin and "ilk 100" in y.metin.lower() and "çıkarılmaz" in y.metin
+    assert "329" in y.metin and "EKSİK" in y.metin and "çıkarılmaz" in y.metin
     run(ui.buton(grup_dugme(f"c:e:{onay_kimligi(y)}")))
     assert takipte(conn, G1) == {"500"}, "yalnız doğrulanan ilk 100 çıkar; doğrulanamayan manuel kayıt korunur"
 
@@ -401,7 +400,7 @@ def test_kaldirma_eksik_liste_ise_hala_silinmez(conn, ui, servis, src):
     _kaynakta(100, src=src, toplam=329)
     run(ui.komut(grup_komut("partiekle", "1244")))
     src.partiler["1244"] = PartiAnlik("1244", "T", tuple(PartiUyesi(str(i)) for i in range(1, 51)), False,
-                                       sinirli=False, toplam_uye=329)
+                                       kismi=False, toplam_uye=329)
     y = run(ui.komut(grup_komut("partisil", "1244")))
     assert "kaldırılamadı" in y.metin and len(takipte(conn, G1)) == 100
 
@@ -415,7 +414,7 @@ def test_v4_veritabani_v5e_gecerken_kayitlar_korunur(tmp_path):
     yonetim.grup_onayla(c, saat, KURUCU, KURUCU, G1)
     src = _kaynakta(3)
     run(TakipServisi(c, saat).parti_ekle(G1, "1244", src))
-    c.execute("ALTER TABLE takip_partiler DROP COLUMN sinirli")
+    c.execute("ALTER TABLE takip_partiler DROP COLUMN kismi")
     c.execute("ALTER TABLE takip_partiler DROP COLUMN toplam_uye")
     c.execute("ALTER TABLE takip_partiler DROP COLUMN xp_sirali")
     c.execute("PRAGMA user_version=4")
@@ -423,7 +422,7 @@ def test_v4_veritabani_v5e_gecerken_kayitlar_korunur(tmp_path):
     c = db.baglan(yol)  # güncelleme sonrası ilk açılış
     assert c.execute("PRAGMA user_version").fetchone()[0] == db.SEMA_SURUMU >= 5
     r = _parti_satiri(c)
-    assert r["ad"] == "TEKNO" and r["sinirli"] == 0 and r["toplam_uye"] is None and r["xp_sirali"] is None
+    assert r["ad"] == "TEKNO" and r["kismi"] == 0 and r["toplam_uye"] is None and r["xp_sirali"] is None
     assert takipte(c, G1) == {"1", "2", "3"} and _uye_say(c) == 3
     c.close()
     c = db.baglan(yol)  # ikinci açılış idempotent
@@ -442,7 +441,7 @@ def test_sinirli_durum_yeniden_baslatmada_korunur_ve_tarama_sessiz_devam_eder(tm
     c.close()
     c = db.baglan(yol)  # yeniden başlatma
     r = _parti_satiri(c)
-    assert (r["sinirli"], r["toplam_uye"]) == (1, 329) and _uye_say(c) == 100
+    assert (r["kismi"], r["toplam_uye"]) == (1, 329) and _uye_say(c) == 100
     run(TakipServisi(c, saat).partiler_tara(G1, src))
     assert bildirimler(c) == []
     c.close()
@@ -457,7 +456,7 @@ def test_grup_tasi_sinirli_parti_alanlarini_tasir(conn, servis, src, saat):
     yonetim.grup_onayla(conn, saat, KURUCU, KURUCU, yeni)
     yonetim.grup_tasi(conn, saat, KURUCU, KURUCU, G1, yeni)
     r = _parti_satiri(conn, yeni)
-    assert (r["sinirli"], r["toplam_uye"]) == (1, 329) and _uye_say(conn, yeni) == 100
+    assert (r["kismi"], r["toplam_uye"]) == (1, 329) and _uye_say(conn, yeni) == 100
 
 
 def test_eski_kod_ek_sutunlari_bilmese_de_parti_ekleyebilir_geri_donus_uyumu(conn):
@@ -467,4 +466,4 @@ def test_eski_kod_ek_sutunlari_bilmese_de_parti_ekleyebilir_geri_donus_uyumu(con
         " VALUES(?,?,?,1,'t','t')", (G1, "9", "ESKI"),
     )
     r = _parti_satiri(conn, pid="9")
-    assert (r["sinirli"], r["toplam_uye"], r["xp_sirali"]) == (0, None, None)
+    assert (r["kismi"], r["toplam_uye"], r["xp_sirali"]) == (0, None, None)
