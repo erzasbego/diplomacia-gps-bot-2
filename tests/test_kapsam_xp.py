@@ -1,4 +1,4 @@
-"""Tek kriter: XP >= 2.000.000. Sabit 100 oyuncu sınırı YOK; API'nin tek istekte döndürdüğü 100 üye bir OKUMA sınırıdır
+"""Tek kriter: XP >= 1.500.000. Sabit 100 oyuncu sınırı YOK; API'nin tek istekte döndürdüğü 100 üye bir OKUMA sınırıdır
 (eksik okuma açıkça bildirilir, tam liste sayılmaz). Eşzamanlı çift üyelik varsayımı yok; eski/gecikmiş kayıtlar yanlış
 bildirim üretmez. MOCK; gerçek sayfalama yöntemi DOĞRULANMADI."""
 import copy
@@ -20,7 +20,7 @@ from dipbot.tg.arayuz import Arayuz
 from fakes import SahteKaynak
 
 FX = json.loads((Path(__file__).parent / "fixtures" / "diplomacia_ornek.json").read_text(encoding="utf-8"))
-ESIK = 2_000_000
+ESIK = 1_500_000
 
 
 def test_esik_2_milyon_tek_kriter():
@@ -155,7 +155,7 @@ def _ui_parti(src, n, toplam, xp):
 def test_ozet_kismi_okuma_hepsi_esik_ustu_okunmayan_arasinda_uygun_olabilir(conn, ui, src):
     _ui_parti(src, 100, 329, xp=lambda i: ESIK + 5000 - i)
     m = run(ui.komut(grup_komut("partiekle", "1244"))).metin
-    for satir in ("Toplam üye: 329", "API'den incelenen: 100", "2.000.000+ XP ile takibe alınan: 100", "XP sınırı altında: 0"):
+    for satir in ("Toplam üye: 329", "API'den incelenen: 100", "1.500.000+ XP ile takibe alınan: 100", "XP sınırı altında: 0"):
         assert satir in m, satir
     assert "EKSİK" in m and "100/329" in m and "229 üye okunamadı" in m
     assert "uygun oyuncu olabilir" in m, "okunan hepsi eşik üstü: okunmayanlar arasında da uygun olabilir"
@@ -167,7 +167,7 @@ def test_ozet_kismi_okuma_en_dusuk_xp_esik_alti_ise_siralama_varsayilmaz(conn, u
     m = run(ui.komut(grup_komut("partiekle", "1244"))).metin
     assert "EKSİK" in m and "229 üye okunamadı" in m
     assert "doğrulanamaz" in m and "sıralamaya güvenilmediği" in m
-    assert "2.000.000+ XP ile takibe alınan: 50" in m and "XP sınırı altında: 50" in m
+    assert "1.500.000+ XP ile takibe alınan: 50" in m and "XP sınırı altında: 50" in m
 
 
 def test_ozet_tam_listede_eksik_uyarisi_yok_ve_sayfalama_kanitsiz_notu_yok(conn, ui, src):

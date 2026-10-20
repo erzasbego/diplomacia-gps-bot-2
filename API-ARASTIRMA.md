@@ -151,7 +151,7 @@ Hâlâ DOĞRULANMADI: `X-Client-Platform` başlığı olmadan isteğin başarıs
 
 ## 9b. Üye `xp` alanı ve otomatik takip eşiği (kullanıcı kararı)
 - Üye kayıtlarında `xp` (tamsayı) vardır; örnek yanıtta 2214953 ve 1765874. **Doğrulanmadı:** bunun oyuncunun toplam XP'si olduğu, 100 üyelik gerçek bir yanıttaki dağılımı, alanın bazen eksik/null/metin gelip gelmediği ve XP'nin azalıp azalmadığı.
-- **Tek kriter:** `xp >= 2.000.000` (config.PARTI_XP_ESIGI; kullanıcı mesajında bir yerde "1,5 milyon" geçti, çoğunlukla ve "tek kriterimiz" cümlesinde 2.000.000 yazıyordu → 2.000.000 uygulandı, tek sabitle değişir). Oyuncu SAYISI sınırlanmaz. Her üyenin XP'si AYRI denetlenir; eksik/geçersiz XP (alan yok, bool, metin, negatif, kesirli, NaN/inf, > 10^12) = bilinmiyor → eklenmez. Tam sayı değerli kayan nokta (2000000.0) tamsayı kabul edilir.
+- **Tek kriter:** `xp >= 1.500.000` (config.PARTI_XP_ESIGI; kesin karar: 1.500.000, önceki 2.000.000 değeri yanlıştı; tek sabitle değişir). Oyuncu SAYISI sınırlanmaz. Her üyenin XP'si AYRI denetlenir; eksik/geçersiz XP (alan yok, bool, metin, negatif, kesirli, NaN/inf, > 10^12) = bilinmiyor → eklenmez. Tam sayı değerli kayan nokta (1500000.0) tamsayı kabul edilir.
 
 ## 9c. Gerçek sayfalama yöntemi — ARAŞTIRMA DURUMU (kanıt bekleniyor)
 - **Depoda ve günlüklerde sayfalama parametresine dair HİÇBİR kanıt yok.** `page`, `offset`, `limit`, `cursor`, `Link` başlığı gibi adaylar ÖNERİLEBİLİR ama kanıtlanmadığı için **kullanılmaz** (bot ek istek atmaz). Canlı siteye/API'ye bağlanılmadı.

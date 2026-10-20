@@ -59,7 +59,7 @@ TOKEN_PREV_KONTROL_ARALIGI_SANIYE = 300.0
 # TEK KRİTER: parti üyeleri arasından YALNIZ bu XP ve üzerindekiler (>=) otomatik takibe alınır; oyuncu SAYISI sınırlanmaz.
 # Her üyenin XP'si ayrı denetlenir (API sıralamasına güvenilmez); XP eksik/geçersizse oyuncu eklenmez (bilinmiyor).
 # Elle eklenenler etkilenmez.
-PARTI_XP_ESIGI = 2_000_000
+PARTI_XP_ESIGI = 1_500_000
 # Otomatik takipteki oyuncu eşiğin ALTINDA, art arda bu kadar taramada gözlenirse (geçerli XP ile) otomatik takipten
 # çıkarılır. Tek geçici/hatalı yanıt silmez. XP eksik/geçersiz yanıtlar sayacı değiştirmez.
 PARTI_XP_ALTI_ARDISIK_TARAMA = 3

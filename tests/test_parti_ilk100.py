@@ -352,7 +352,7 @@ def test_baslangic_ozeti_329_uyeli_parti(conn, ui, src):
     m = y.metin
     assert m.count("Parti takibe eklendi") == 1 and "TEKNO" in m
     assert "Toplam üye: 329" in m and "API'den incelenen: 100" in m
-    assert "2.000.000+ XP ile takibe alınan: 100" in m and "XP sınırı altında: 0" in m
+    assert "1.500.000+ XP ile takibe alınan: 100" in m and "XP sınırı altında: 0" in m
     assert "EKSİK" in m and "100/329" in m and "229 üye okunamadı" in m
     assert "İlk bilgisi alınan: 100" in m
     assert conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0] == 0
@@ -362,7 +362,7 @@ def test_baslangic_ozeti_bekleyen_sayisi_ve_75_uyeli_parti(conn, ui, src, monkey
     monkeypatch.setattr(config, "PARTI_EKLE_ILK_VERI_UST", 30)
     _kaynakta(75, src=src)
     m = run(ui.komut(grup_komut("partiekle", "1244"))).metin
-    assert "Toplam üye: 75" in m and "2.000.000+ XP ile takibe alınan: 75" in m
+    assert "Toplam üye: 75" in m and "1.500.000+ XP ile takibe alınan: 75" in m
     assert "İlk bilgisi alınan: 30" in m and "İlk taramayı bekleyen: 45" in m
     assert "ilk 100" not in m.lower(), "75 üyeli partide sınır notu çıkmaz"
 
@@ -382,7 +382,7 @@ def test_parti_listesi_ve_detayinda_kismi_okuma_gosterimi(conn, ui, src):
     run(ui.komut(grup_komut("partiekle", "1244")))
     assert "100/329 üye" in run(ui.komut(grup_komut("partiler"))).metin
     d = run(ui.buton(grup_dugme("pd:1244"))).metin
-    assert "Toplam üye: 329" in d and "OKUNABİLDİ" in d and "2.000.000" in d
+    assert "Toplam üye: 329" in d and "OKUNABİLDİ" in d and "1.500.000" in d
 
 
 def test_sinirli_partiyi_kaldirma_onizlemesi_uyari_verir_yalniz_dogrulananlari_siler(conn, ui, servis, src):
