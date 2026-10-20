@@ -220,14 +220,15 @@ def test_ilk_100den_cikan_ayrildi_bildirimi_uretmez_yeni_giren_sessiz_takibe_ali
     r = run(servis.partiler_tara(G1, src))
     assert r.ok and r.degisiklik == 0
     assert bildirimler(conn, "parti_uyelik") == [], "'ayrıldı'/'katıldı' bildirimi YOK"
-    assert "101" in takipte(conn, G1) and "102" in takipte(conn, G1), "yeni girenler takibe alındı"
+    assert "101" in takipte(conn, G1) and "102" in takipte(conn, G1), "yeni girenler (XP uygun) takibe alındı"
     assert _satir(conn, "101")["baseline_tamam"] == 0
     run(servis.oyuncular_tara(G1, src))
     assert bildirimler(conn) == [], "başlangıç verisi sessizce kaydedildi"
     assert _satir(conn, "101")["bolge"] == "Ankara" and _satir(conn, "101")["baseline_tamam"] == 1
-    # listede düşenler (otomatik eklenmişlerdi) takipten çıkar; set ~100 kalır
-    assert "1" not in takipte(conn, G1) and "2" not in takipte(conn, G1)
-    assert len(takipte(conn, G1)) == 100 and _uye_say(conn) == 100
+    # BİLİNÇLİ DEĞİŞİKLİK (XP süzgeci PR'ı): listeden düşmek XP kanıtı DEĞİLDİR; düşenler silinmez
+    # (yalnız gözlenen geçerli XP < eşik, art arda N taramada otomatik çıkarır: tests/test_xp_filtresi.py).
+    assert {"1", "2"} <= takipte(conn, G1)
+    assert len(takipte(conn, G1)) == 102 and _uye_say(conn) == 100
 
 
 def _satir(conn, oid, g=G1):
@@ -253,7 +254,7 @@ def test_manuel_eklenen_oyuncu_ilk_100den_cikinca_korunur(conn, servis, src):
     _sirala(src, list(range(3, 103)))  # U1,U2 düştü
     run(servis.partiler_tara(G1, src))
     assert "1" in takipte(conn, G1) and "500" in takipte(conn, G1), "manuel eklenenler korunur"
-    assert "2" not in takipte(conn, G1), "yalnız otomatik eklenen düşer"
+    assert "2" in takipte(conn, G1), "listeden düşmek (XP kanıtı yok) otomatik kaydı da silmez"
     assert bildirimler(conn) == []
 
 
@@ -280,27 +281,27 @@ def test_engelli_oyuncu_ilk_100e_girince_geri_eklenmez(conn, servis, src):
     assert bildirimler(conn) == []
 
 
-def test_ani_toplu_degisimde_yalniz_otomatik_ve_listede_olmayanlar_cikar_manuel_korunur(conn, servis, src):
+def test_ani_toplu_degisimde_kimse_silinmez_bildirim_yok(conn, servis, src):
     _kur329(conn, servis, src)
     src.oyuncu("50", "U50", "Ankara", "TR")
-    run(servis.oyuncu_ekle(G1, "50", src))  # otomatik kaydı manuel niyete çevirir
-    _sirala(src, list(range(201, 301)))  # 100 üyenin tamamı değişti
+    run(servis.oyuncu_ekle(G1, "50", src))
+    _sirala(src, list(range(201, 301)))  # 100 üyenin tamamı değişti (XP kanıtı yok)
     run(servis.partiler_tara(G1, src))
-    beklenen = {str(i) for i in range(201, 301)} | {"50"}
-    assert takipte(conn, G1) == beklenen and bildirimler(conn, "parti_uyelik") == []
+    assert {str(i) for i in range(1, 101)} <= takipte(conn, G1) and {str(i) for i in range(201, 301)} <= takipte(conn, G1)
+    assert bildirimler(conn, "parti_uyelik") == []
     _sirala(src, list(range(1, 101)))  # eski liste geri döndü
     run(servis.partiler_tara(G1, src))
-    assert takipte(conn, G1) == {str(i) for i in range(1, 101)} and bildirimler(conn) == []
+    assert len(takipte(conn, G1)) == 200 and bildirimler(conn) == []
 
 
-def test_ayni_oyuncu_baska_takipli_partinin_listesindeyse_cikarilmaz(conn, servis, src):
+def test_ilk_100den_dusen_oyuncu_baska_partideyse_de_korunur(conn, servis, src):
     _kur329(conn, servis, src)
     src.parti("77", "KUCUK", [("1", "U1"), ("900", "U900")])
     src.oyuncu("900", "U900", "X", "TR")
     run(servis.parti_ekle(G1, "77", src))
     _sirala(src, list(range(3, 103)))  # U1 büyük partinin ilk 100'ünden düştü ama KUCUK partide
     run(servis.partiler_tara(G1, src))
-    assert "1" in takipte(conn, G1) and "2" not in takipte(conn, G1)
+    assert "1" in takipte(conn, G1)
 
 
 # ============================================================ D) gerçek üyelik değişikliği (≤100 üyeli parti) hâlâ bildirilir
@@ -350,9 +351,10 @@ def test_baslangic_ozeti_329_uyeli_parti(conn, ui, src):
     y = run(ui.komut(grup_komut("partiekle", "1244")))
     m = y.metin
     assert m.count("Parti takibe eklendi") == 1 and "TEKNO" in m
-    assert "Toplam üye: 329" in m and "Takip edilen oyuncu: 100" in m
-    assert "ilk 100" in m.lower() and "XP" in m
-    assert "İlk veri alınan üye: 100" in m
+    assert "Toplam üye: 329" in m and "API'den incelenen: 100" in m
+    assert "1.500.000+ XP ile takibe alınan: 100" in m and "XP sınırı altında: 0" in m
+    assert "ilk 100" in m.lower() and "XP" in m and "229" in m and "kontrol edilmedi" in m
+    assert "İlk bilgisi alınan: 100" in m
     assert "katıl" not in m.lower().replace("katılım bildirimi", "") or "bildirim gönderilmez" in m
     assert conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0] == 0
 
@@ -361,8 +363,8 @@ def test_baslangic_ozeti_bekleyen_sayisi_ve_75_uyeli_parti(conn, ui, src, monkey
     monkeypatch.setattr(config, "PARTI_EKLE_ILK_VERI_UST", 30)
     _kaynakta(75, src=src)
     m = run(ui.komut(grup_komut("partiekle", "1244"))).metin
-    assert "Toplam üye: 75" in m and "Takip edilen oyuncu: 75" in m
-    assert "İlk veri alınan üye: 30" in m and "ilk taramada tamamlanacak: 45" in m
+    assert "Toplam üye: 75" in m and "1.500.000+ XP ile takibe alınan: 75" in m
+    assert "İlk bilgisi alınan: 30" in m and "İlk taramayı bekleyen: 45" in m
     assert "ilk 100" not in m.lower(), "75 üyeli partide sınır notu çıkmaz"
 
 
@@ -373,7 +375,7 @@ def test_ozet_xp_sirasi_durumunu_dogru_belirtir_varsayim_yapmaz(conn, ui, src, x
     src.partiler["1244"] = PartiAnlik("1244", "TEKNO", src.partiler["1244"].uyeler, False,
                                        sinirli=True, toplam_uye=329, xp_sirali=xp)
     m = run(ui.komut(grup_komut("partiekle", "1244"))).metin
-    assert parca in m and "API'nin döndürdüğü ilk 100" in m
+    assert parca in m and "ilk 100 üyeyi döndürdü" in m
 
 
 def test_parti_listesi_ve_detayinda_sinirli_gosterim(conn, ui, src):

@@ -100,6 +100,12 @@ class PartiEklemeSonucu:
     toplam_uye: int = 0  # partinin gerçek üye sayısı (member_count; bilinmiyorsa liste uzunluğu)
     takip_edilen: int = 0  # bu partiden şu an takipte olan oyuncu sayısı (yeni + zaten takipte; engelliler hariç)
     xp_sirali: bool | None = None  # yanıtta xp alanları azalan sıradaydı mı (None: doğrulanamadı)
+    # XP süzgeci (>= config.PARTI_XP_ESIGI) — API'den İNCELENEN üyeler üzerinden:
+    incelenen: int = 0  # API'nin döndürdüğü (incelenen) üye sayısı (ilk 100 dahil, sınırlıysa ≤100)
+    xp_uygun: int = 0  # XP >= eşik
+    xp_alti: int = 0  # geçerli XP < eşik
+    xp_bilinmeyen: int = 0  # XP eksik/geçersiz (takibe alınmadı)
+    zaten_nitelikli: int = 0  # XP'si uygun ve zaten takipte olanlar (takip_edilen = yeni + zaten_nitelikli)
 
 
 @dataclass(frozen=True)
@@ -496,13 +502,20 @@ class TakipServisi:
         # Yeni üyelerin ilk verisi (bölge, vatandaşlık, uid) SINIRLI eşzamanlılık, üst sınır ve süre bütçesiyle
         # alınır (büyük parti/hız sınırı komutu bloke etmez). Alınamayanlar baseline_tamam=0 ile eklenir ve
         # ilk taramada bildirimsiz tamamlanır. Transaction'dan ÖNCE yapılır (await boyunca DB açık kalmaz).
+        esik = config.PARTI_XP_ESIGI
+        # Her üyenin XP'si AYRI denetlenir (API sıralamasına güvenilmez; erken kesme yok). Eksik/geçersiz XP =
+        # bilinmiyor -> otomatik takibe alınmaz. Yalnız nitelikli YENİ üyelerin ilk verisi istenir.
+        nitelikli_mi = {u.oyuncu_id: (u.xp is not None and u.xp >= esik) for u in snap.uyeler}
+        xp_alti = sum(1 for u in snap.uyeler if u.xp is not None and u.xp < esik)
+        xp_bilinmeyen = sum(1 for u in snap.uyeler if u.xp is None)
         adaylar = [
             u.oyuncu_id for u in snap.uyeler
-            if not self._takipte_mi(group_id, u.oyuncu_id) and not self._engelli_mi(group_id, u.oyuncu_id)
+            if nitelikli_mi[u.oyuncu_id]
+            and not self._takipte_mi(group_id, u.oyuncu_id) and not self._engelli_mi(group_id, u.oyuncu_id)
         ]
         detay, ilk_not = await self._uye_ilk_verileri(adaylar, kaynak)
         simdi = self.saat()
-        yeni = zaten = engelli = alinan = bolge_b = vatandas_b = 0
+        yeni = zaten = engelli = alinan = bolge_b = vatandas_b = zaten_n = 0
         with islem(self.conn):
             self._onay_sart(group_id)  # await sırasında onay kaldırılmış olabilir
             cur = self.conn.execute(
@@ -515,12 +528,17 @@ class TakipServisi:
             if cur.rowcount == 0:
                 return PartiEklemeSonucu("zaten_takipte", parti_id)
             self.conn.executemany(
-                "INSERT INTO parti_uyeleri(group_id, parti_id, oyuncu_id, ad) VALUES(?,?,?,?)",
-                [(group_id, parti_id, u.oyuncu_id, u.ad) for u in snap.uyeler],
+                "INSERT INTO parti_uyeleri(group_id, parti_id, oyuncu_id, ad, xp) VALUES(?,?,?,?,?)",
+                [(group_id, parti_id, u.oyuncu_id, u.ad, u.xp) for u in snap.uyeler],
             )
             for u in snap.uyeler:
                 if self._takipte_mi(group_id, u.oyuncu_id):
                     zaten += 1
+                    if nitelikli_mi[u.oyuncu_id]:
+                        zaten_n += 1
+                        self._xp_onayla(group_id, u.oyuncu_id)
+                elif not nitelikli_mi[u.oyuncu_id]:
+                    continue  # XP eşiğin altında veya bilinmiyor: otomatik takibe alınmaz
                 elif self._engelli_mi(group_id, u.oyuncu_id):
                     engelli += 1
                 else:
@@ -537,7 +555,8 @@ class TakipServisi:
             vatandaslik_bilinen=vatandas_b, ilk_veri_notu=ilk_not if yeni > alinan else None,
             sinirli=bool(snap.sinirli),
             toplam_uye=snap.toplam_uye if snap.toplam_uye is not None else len(snap.uyeler),
-            takip_edilen=yeni + zaten, xp_sirali=snap.xp_sirali,
+            takip_edilen=yeni + zaten_n, xp_sirali=snap.xp_sirali, incelenen=len(snap.uyeler),
+            xp_uygun=sum(nitelikli_mi.values()), xp_alti=xp_alti, xp_bilinmeyen=xp_bilinmeyen, zaten_nitelikli=zaten_n,
         )
 
     async def _uye_ilk_verileri(self, ids: list[str], kaynak: DiplomaciaSource) -> tuple[dict, str | None]:
@@ -599,7 +618,7 @@ class TakipServisi:
             return False
         cur = self.conn.execute(
             "INSERT OR IGNORE INTO takip_oyuncular(group_id, oyuncu_id, ad, bolge, vatandaslik_ulkesi,"
-            " son_gozlem, baseline_tamam, elle_eklendi, eklendi, uid) VALUES(?,?,?,?,?,?,?,0,?,?)",
+            " son_gozlem, baseline_tamam, elle_eklendi, eklendi, uid, xp_onayli) VALUES(?,?,?,?,?,?,?,0,?,?,1)",
             (
                 group_id,
                 oyuncu_id,
@@ -614,18 +633,46 @@ class TakipServisi:
         )
         return cur.rowcount == 1
 
-    def _sinirli_dusenleri_temizle(self, group_id: int, dusenler: list[str]) -> int:
-        n = 0
-        for oid in dusenler:
-            r = self.conn.execute(
-                "SELECT elle_eklendi FROM takip_oyuncular WHERE group_id=? AND oyuncu_id=?", (group_id, oid)
-            ).fetchone()
-            if r is None or r["elle_eklendi"] or self._partide_mi(group_id, oid):
-                continue
-            self.conn.execute("DELETE FROM takip_oyuncular WHERE group_id=? AND oyuncu_id=?", (group_id, oid))
-            self._mukerrer_engelini_kaldir(group_id, [oid])
-            n += 1
-        return n
+    def _xp_onayla(self, group_id: int, oyuncu_id: str) -> None:
+        """Oyuncu XP süzgecini geçti (xp >= eşik): kayıt XP kuralına tabi olur, art arda eşik-altı sayacı sıfırlanır."""
+        self.conn.execute(
+            "UPDATE takip_oyuncular SET xp_onayli=1, xp_alti_sayac=0 WHERE group_id=? AND oyuncu_id=?"
+            " AND (xp_onayli=0 OR xp_alti_sayac<>0)",
+            (group_id, oyuncu_id),
+        )
+
+    def _baska_partide_nitelikli(self, group_id: int, parti_id: str, oyuncu_id: str) -> bool:
+        """Oyuncu bu grupta BAŞKA takipli partinin listesinde XP'si uygun (veya bilinmeyen: muhafazakâr) görünüyor mu?"""
+        return self.conn.execute(
+            "SELECT 1 FROM parti_uyeleri WHERE group_id=? AND oyuncu_id=? AND parti_id<>?"
+            " AND (xp IS NULL OR xp>=?) LIMIT 1",
+            (group_id, oyuncu_id, parti_id, config.PARTI_XP_ESIGI),
+        ).fetchone() is not None
+
+    def _xp_alti_gozle(self, group_id: int, parti_id: str, oyuncu_id: str) -> None:
+        """Geçerli XP eşiğin ALTINDA gözlendi. YALNIZ şu oyuncu kademeli çıkarılır: otomatik eklenmiş (elle eklenmemiş),
+        XP süzgecinden bir kez geçmiş (xp_onayli=1; eski kayıtlar korunur) ve başka takipli partide nitelikli
+        görünmeyen. Art arda config.PARTI_XP_ALTI_ARDISIK_TARAMA gözlemde silinir; tek geçici yanıt silmez.
+        Engel konmaz (eşiğe sonradan ulaşırsa sessizce yeniden alınır)."""
+        r = self.conn.execute(
+            "SELECT elle_eklendi, xp_onayli, xp_alti_sayac FROM takip_oyuncular WHERE group_id=? AND oyuncu_id=?",
+            (group_id, oyuncu_id),
+        ).fetchone()
+        if r is None or r["elle_eklendi"] or not r["xp_onayli"]:
+            return
+        if self._baska_partide_nitelikli(group_id, parti_id, oyuncu_id):
+            return
+        sayac = r["xp_alti_sayac"] + 1
+        if sayac >= config.PARTI_XP_ALTI_ARDISIK_TARAMA:
+            self.conn.execute("DELETE FROM takip_oyuncular WHERE group_id=? AND oyuncu_id=?", (group_id, oyuncu_id))
+            self._mukerrer_engelini_kaldir(group_id, [oyuncu_id])
+            log.info("oyuncu XP eşiğinin altında kaldığı için otomatik takipten çıkarıldı (grup=%s, oyuncu=%s)",
+                     group_id, oyuncu_id)
+        else:
+            self.conn.execute(
+                "UPDATE takip_oyuncular SET xp_alti_sayac=? WHERE group_id=? AND oyuncu_id=?",
+                (sayac, group_id, oyuncu_id),
+            )
 
     def _parti_uygula(self, group_id: int, parti_id: str, snap: PartiAnlik) -> int:
         """Doğrulanmış (tam) üye listesini uygular. Dönüş: üretilen bildirim sayısı."""
@@ -649,6 +696,8 @@ class TakipServisi:
             yeni = {u.oyuncu_id: u.ad for u in snap.uyeler}
             if not yeni and eski:
                 raise EksikVeri("boş üye listesi şüpheli; üyelik değişikliği sayılmadı")
+            xp_de = {u.oyuncu_id: u.xp for u in snap.uyeler}
+            esik = config.PARTI_XP_ESIGI
             fark_katilan = [i for i in yeni if i not in eski]
             fark_ayrilan = [i for i in eski if i not in yeni]
             sinirli = bool(snap.sinirli)
@@ -665,9 +714,13 @@ class TakipServisi:
                 katilan, ayrilan = fark_katilan, fark_ayrilan
 
             self.conn.execute("DELETE FROM parti_uyeleri WHERE group_id=? AND parti_id=?", (group_id, parti_id))
+            # Bildirimde yalnız TAKİP İLE İLGİLİ olanlar yer alır: katılan -> XP'si uygun (otomatik takibe alınacak);
+            # ayrılan -> o an takipte olan. Takip dışı (düşük/bilinmeyen XP) üyelerin giriş/çıkışı bildirilmez.
+            katilan_bildirim = [i for i in katilan if xp_de.get(i) is not None and xp_de[i] >= esik]
+            ayrilan_bildirim = [i for i in ayrilan if self._takipte_mi(group_id, i)]
             self.conn.executemany(
-                "INSERT INTO parti_uyeleri(group_id, parti_id, oyuncu_id, ad) VALUES(?,?,?,?)",
-                [(group_id, parti_id, i, ad) for i, ad in yeni.items()],
+                "INSERT INTO parti_uyeleri(group_id, parti_id, oyuncu_id, ad, xp) VALUES(?,?,?,?,?)",
+                [(group_id, parti_id, i, ad, xp_de.get(i)) for i, ad in yeni.items()],
             )
             self.conn.execute(
                 "UPDATE takip_partiler SET ad=COALESCE(?,ad), son_dogrulama=?, baseline_tamam=1, sinirli=?,"
@@ -676,21 +729,27 @@ class TakipServisi:
                  snap.toplam_uye if snap.toplam_uye is not None else len(snap.uyeler),
                  None if snap.xp_sirali is None else int(snap.xp_sirali), group_id, parti_id),
             )
-            # Takip uzlaştırma: üyeler takipte olmalı; engelli olanlar yalnız gerçek katılımda döner.
+            # Takip uzlaştırma — HER üyenin XP'si ayrı denetlenir (sıralamaya güvenilmez):
+            #   xp >= eşik  : takipte olmalı (engelli olanlar yalnız doğrulanmış gerçek katılımda döner); sayaç sıfırlanır
+            #   xp <  eşik  : otomatik takipliyse kademeli çıkarma sayacı işler (aşağıda)
+            #   xp bilinmez : ne eklenir ne sayılır
+            # Listeden DÜŞME (ilk 100'den çıkma / partiden ayrılma) XP kanıtı değildir: kimse silinmez.
             for oid, ad in yeni.items():
+                xp = xp_de.get(oid)
+                if xp is None:
+                    continue
+                if xp < esik:
+                    self._xp_alti_gozle(group_id, parti_id, oid)
+                    continue
                 if self._takipte_mi(group_id, oid):
                     if oid in katilan:
                         self.conn.execute("DELETE FROM engeller WHERE group_id=? AND oyuncu_id=?", (group_id, oid))
+                    self._xp_onayla(group_id, oid)
                     continue
                 if self._engelli_mi(group_id, oid) and oid not in katilan:
                     continue  # sessiz yeniden ekleme YOK
                 self.conn.execute("DELETE FROM engeller WHERE group_id=? AND oyuncu_id=?", (group_id, oid))
                 self._otomatik_ekle(group_id, oid, ad, None, simdi)
-            if sinirli:
-                # İlk 100'den düşenler: yalnız OTOMATİK eklenmiş ve başka takipli partinin listesinde olmayanlar
-                # takipten çıkar (parti başına ~100 oyuncu). Elle eklenenler her zaman korunur. Engel konmaz:
-                # sıralamaya geri girerlerse sessizce yeniden alınırlar.
-                self._sinirli_dusenleri_temizle(group_id, fark_ayrilan)
 
             if snap.ad and p["ad"] and snap.ad != p["ad"]:
                 bildirim += self._grup_kuyruk(
@@ -700,7 +759,7 @@ class TakipServisi:
                     {"parti_id": parti_id, "eski_ad": p["ad"], "yeni_ad": snap.ad, "tespit": iso(simdi)},
                     simdi,
                 )
-            if katilan or ayrilan:
+            if katilan_bildirim or ayrilan_bildirim:
                 bildirim += self._grup_kuyruk(
                     group_id,
                     "parti_uyelik",
@@ -708,8 +767,8 @@ class TakipServisi:
                     {
                         "parti_id": parti_id,
                         "parti_ad": snap.ad or p["ad"],
-                        "katilanlar": [{"oyuncu_id": i, "ad": yeni[i]} for i in katilan],
-                        "ayrilanlar": [{"oyuncu_id": i, "ad": eski[i]} for i in ayrilan],
+                        "katilanlar": [{"oyuncu_id": i, "ad": yeni[i]} for i in katilan_bildirim],
+                        "ayrilanlar": [{"oyuncu_id": i, "ad": eski[i]} for i in ayrilan_bildirim],
                         "tespit": iso(simdi),
                     },
                     simdi,

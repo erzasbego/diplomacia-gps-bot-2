@@ -7,13 +7,15 @@
 - `diplomacia.com.tr` bağlantıları: `/player/ID`, `/party/ID` ve `profile/` / `press/` bağlamlı biçimleri.
 - Sade savaş listesi, tutarlı emojiler.
 - `/partiekle`: üyelerin ilk bölge/vatandaşlık verisi sınırlı eşzamanlılıkla alınır; tek başlangıç özeti; ilk bilgi bildirim değildir.
-- **Büyük partiler (API ilk 100 üyeyi döndürür; örn. 100/329, 100/129):** artık eklenebilir; yalnız ilk 100 oyuncu takip edilir, sıralama değişimi parti üyeliği değişikliği sayılmaz (ayrıntı: README "Büyük partiler").
+- **Büyük partiler (API ilk 100 üyeyi döndürür; örn. 100/329, 100/129):** artık eklenebilir; ilk 100 üye incelenir, sıralama değişimi parti üyeliği değişikliği sayılmaz (ayrıntı: README "Büyük partiler").
+- **XP süzgeci:** parti üyelerinden yalnız `xp ≥ 1.500.000` olanlar otomatik takibe alınır; XP eksik/geçersiz olan eklenmez; takipten çıkarma yalnız art arda 3 geçerli eşik-altı gözlemle ve yalnız otomatik, XP'den geçmiş, başka partide nitelikli olmayan oyuncular için.
 
-## Veritabanı şeması DEĞİŞİYOR: v4 → v5 (yalnız EKLEME, mevcut kayıtlar korunur)
-`takip_partiler` tablosuna üç sütun eklenir: `sinirli INTEGER NOT NULL DEFAULT 0`, `toplam_uye INTEGER`, `xp_sirali INTEGER` (`PRAGMA user_version` 4 → 5). Geçiş servis **ilk açılışında** otomatik yapılır (`ALTER TABLE ... ADD COLUMN`, idempotent); satır silinmez/yeniden yazılmaz. Bu yüzden:
-- Mevcut **grup onayları, yetkili kullanıcılar, takip edilen oyuncular/partiler, engeller, savaş kayıtları, bekleyen bildirimler aynen korunur**. Eski partiler `sinirli=0, toplam_uye=NULL` ile "tam liste" olarak devam eder (bir sonraki taramada gerçek değerler yazılır).
-- **Yedek bu yüzden daha da önemlidir:** `guncelle.sh` yedeği ZORUNLU kılar; yedek `user_version=4` durumundadır.
-- **Geri dönüş:** v4 kodu v5 veritabanını sorunsuz açar (ek sütunların varsayılanı vardır; eski `INSERT`ler çalışır — testli), yani çoğu durumda yalnız kodu eski commit'e almak yeterlidir. v4 kodu büyük partilerde (ilk 100) yine "üye listesi tamamlanmadı" hatası verir; bu veri bozulması değildir. Beklenmedik durumda yedekten geri yükleyin.
+## Veritabanı şeması DEĞİŞİYOR: v4 → v6 (yalnız EKLEME, mevcut kayıtlar korunur)
+Eklenen sütunlar (hepsi güvenli varsayılanlı): `takip_partiler.sinirli/toplam_uye/xp_sirali` (v5, büyük parti ilk 100) ve `parti_uyeleri.xp`, `takip_oyuncular.xp_alti_sayac/xp_onayli` (v6, XP süzgeci); `PRAGMA user_version` 4 → 6. Geçiş servis **ilk açılışında** otomatik yapılır (`ALTER TABLE ... ADD COLUMN`, idempotent); satır silinmez/yeniden yazılmaz. Bu yüzden:
+- Mevcut **grup onayları, yetkili kullanıcılar, takip edilen oyuncular/partiler, engeller, savaş kayıtları, bekleyen bildirimler aynen korunur**. Eski partiler `sinirli=0, toplam_uye=NULL` ile "tam liste" olarak devam eder (ilk taramada gerçek değerler yazılır).
+- **XP süzgeci ve mevcut oyuncular:** bu sürümden önce otomatik eklenmiş oyuncular `xp_onayli=0` ile gelir ve **XP kuralıyla SİLİNMEZ**; XP'si ≥ 1.500.000 olarak ilk kez gözlendiklerinde `xp_onayli=1` olur ve o andan itibaren kademeli çıkarma kuralına (art arda 3 eşik-altı gözlem) tabidir. Elle eklenenler hiçbir zaman XP kuralına tabi değildir. **Davranış değişikliği:** mevcut partilere sonradan katılan XP'si düşük/bilinmeyen üyeler artık otomatik takibe alınmaz.
+- **Yedek bu yüzden önemlidir:** `guncelle.sh` yedeği ZORUNLU kılar; yedek `user_version=4` durumundadır.
+- **Geri dönüş:** v4 kodu v6 veritabanını sorunsuz açar (ek sütunların varsayılanı vardır; eski `INSERT`ler çalışır — testli), yani çoğu durumda yalnız kodu eski commit'e almak yeterlidir. v4 kodu büyük partilerde (ilk 100) yine "üye listesi tamamlanmadı" hatası verir ve XP süzgecini bilmez (tüm üyeleri otomatik ekler); bu veri bozulması değildir. Beklenmedik durumda yedekten geri yükleyin.
 - Bu PR'dan **önceki** (F2b öncesi, şema < 4) sürüme dönüş bu planın konusu değildir; o durumda yedekten geri yükleme gerekir.
 
 ## Önkoşullar
@@ -50,8 +52,8 @@
    - Küçük bir test partisiyle `/partiekle <ID>`: tek başlangıç özeti gelir, grupta üye başına bildirim **gelmez**; sonraki taramada yalnız gerçek değişiklikler bildirilir.
    - `/savaslar`: sade liste (`Saldıran – Savunan · Durum · #numara`), düğmeden ayrıntı kapsamlı.
    - Grup onayları (`/durum`), takip listeleri ve tarama zamanları önceki hâliyle uyumlu.
-   - Büyük parti (ör. 1319 veya 5170): `/partiekle` artık "100 != 329" hatası vermez; özet "Toplam üye: 329 / Takip edilen oyuncu: 100" gösterir; `journalctl`'da "API ilk 100 üyeyi döndürdü … XP sırası doğrulandı/doğrulanamadı" satırı vardır.
-   - `sqlite3 -readonly /var/lib/dipbot/dipbot.db 'PRAGMA user_version;'` → `5`.
+   - Büyük parti (ör. 1319 veya 5170): `/partiekle` artık "100 != 329" hatası vermez; özet "Toplam üye / API'den incelenen / 1.500.000+ XP ile takibe alınan / XP sınırı altında / İlk bilgisi alınan / İlk taramayı bekleyen" satırlarını ve ilk 100 dışının kontrol edilmediği notunu gösterir; `journalctl`'da "API ilk 100 üyeyi döndürdü … XP sırası doğrulandı/doğrulanamadı" satırı vardır.
+   - `sqlite3 -readonly /var/lib/dipbot/dipbot.db 'PRAGMA user_version;'` → `6`.
 
 ## Geri dönüş
 Sorun varsa (betik de aynı komutları yazar):
@@ -63,6 +65,7 @@ sudo systemctl restart dipbot
 
 ## Bilinmeyenler (canlıda doğrulanmadı)
 - `guncelle.sh`nin gerçek sunucuda (systemd, gerçek `dipbot` kullanıcısı, gerçek `pip`) davranışı.
+- `xp` alanının oyuncunun **toplam XP**'si olduğu ve 1.500.000 eşiğinin bu alana uygulandığı (örnek yanıtlarda 2.214.953 ve 1.765.874; gerçek dağılım görülmedi); XP'nin zaman içinde azalıp azalmadığı.
 - Büyük partide API'nin gerçekten **yalnız** ilk 100 üyeyi döndürdüğü, bunların **XP'ye göre azalan** sırada olduğu ve `member_count`'un toplam üye sayısı olduğu (VPS günlükleri "100 != 329" ve "100 != 129" gösterdi; sıralama ölçütü yalnız kullanıcı beyanı + 2 üyelik örnek yanıt). Bot her yanıtta `xp` alanlarını denetler ve sonucu günlüğe/özete yazar ama sıralamayı VARSAYMAZ.
 - Üye ilk verisi alımının gerçek Diplomacia hız sınırlarıyla davranışı (büyük partilerde üst sınır ve süre bütçesi sabitleri `config.py`: `PARTI_EKLE_ESZAMANLI`, `PARTI_EKLE_ILK_VERI_UST`, `PARTI_EKLE_ILK_VERI_SURE_SN`; canlı gözleme göre ayarlanabilir).
 - Telegram'da yeni komut listesinin (`set_my_commands`) istemcilerde görünmesi ve eski komutların kısa süre önbellekte kalması.

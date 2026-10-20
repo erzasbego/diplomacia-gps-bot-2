@@ -108,6 +108,8 @@ class OyuncuAnlik:
 class PartiUyesi:
     oyuncu_id: str
     ad: str | None = None
+    # Üyenin XP'si (yanıttaki `xp`). None = eksik/geçersiz -> XP BİLİNMİYOR (otomatik takibe ALINMAZ; 0 değildir).
+    xp: int | None = None
 
 
 @dataclass(frozen=True)

@@ -60,10 +60,12 @@ class SahteKaynak:
         self.oyuncular[oid] = OyuncuAnlik(oid, ad, bolge, ulke)
 
     def parti(self, pid, ad, uyeler, tamam=True, toplam=None, xp_sirali=None):
-        """toplam: partinin GERÇEK üye sayısı (member_count). uyeler'den büyükse liste SINIRLI (ilk N) sayılır."""
+        """uyeler: (id, ad) veya (id, ad, xp). xp verilmezse 2.000.000 (XP süzgecini GEÇEN değer); (id, ad, None) =
+        XP bilgisi eksik. toplam: partinin GERÇEK üye sayısı; uyeler'den büyükse liste SINIRLI (ilk N) sayılır."""
         sinirli = toplam is not None and toplam > len(uyeler)
+        uy = tuple(PartiUyesi(u[0], u[1], u[2] if len(u) > 2 else 2_000_000) for u in uyeler)
         self.partiler[pid] = PartiAnlik(
-            pid, ad, tuple(PartiUyesi(i, a) for i, a in uyeler), tamam and not sinirli,
+            pid, ad, uy, tamam and not sinirli,
             sinirli=sinirli, toplam_uye=toplam if toplam is not None else len(uyeler), xp_sirali=xp_sirali,
         )
 

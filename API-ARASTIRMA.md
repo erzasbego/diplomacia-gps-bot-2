@@ -150,3 +150,7 @@ Hâlâ DOĞRULANMADI: `X-Client-Platform` başlığı olmadan isteğin başarıs
 - **Kullanıcı beyanı (bağımsız doğrulanmadı):** üyeler XP'ye göre sıralı ve ilk 100 döndürülüyor. Tutarlı tek kanıt: örnek yanıttaki iki üye azalan `xp` (2214953 ≥ 1765874). 100 üyelik gerçek bir yanıtın `xp` dizisi bu depoda YOKTUR. Bot bu yüzden sıralamayı varsaymaz: her yanıtta `xp` alanlarını denetler (`PartiAnlik.xp_sirali`: True/False/None) ve günlüğe/özete yazar.
 - **DOĞRULANMADI:** ek sayfa/offset parametresinin varlığı (bot kullanmaz), 100 sınırının sabit olup olmadığı, `member_count`'un tüm üyeleri mi aktif üyeleri mi saydığı.
 - Bot davranışı: tam 100 kayıt + `member_count` > 100 + mükerrer/sayfalama yok → "sınırlı liste" (geçerli, partinin tamamıyla eşdeğer DEĞİL); diğer uyuşmazlıklar (99/329, 101/329, mükerrer…) reddedilir.
+
+## 9b. Üye `xp` alanı ve otomatik takip eşiği (kullanıcı kararı, 2026-10-20)
+- Üye kayıtlarında `xp` (tamsayı) vardır; örnek yanıtta 2214953 ve 1765874. **Doğrulanmadı:** bunun oyuncunun toplam XP'si olduğu, 100 üyelik gerçek bir yanıttaki dağılımı, alanın bazen eksik/null/metin gelip gelmediği ve XP'nin azalıp azalmadığı.
+- Kural: `xp >= 1.500.000` (config.PARTI_XP_ESIGI) olan üyeler otomatik takibe alınır; her üyenin XP'si AYRI denetlenir (sıralamaya güvenilmez); eksik/geçersiz XP (alan yok, bool, metin, negatif, kesirli, NaN/inf, > 10^12) = bilinmiyor → eklenmez. Tam sayı değerli kayan nokta (1500000.0) tamsayı kabul edilir.

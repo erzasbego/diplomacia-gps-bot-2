@@ -11,8 +11,9 @@ from pathlib import Path
 
 from . import config
 
-SEMA_SURUMU = 5  # 2: takip_oyuncular.uid; 3: grup_gocleri; 4: onayli_gruplar.donem + outbox.onay_donemi (D7);
-#                 5: takip_partiler.sinirli/toplam_uye/xp_sirali (büyük parti: ilk 100 üye)
+SEMA_SURUMU = 6  # 2: takip_oyuncular.uid; 3: grup_gocleri; 4: onayli_gruplar.donem + outbox.onay_donemi (D7);
+#                 5: takip_partiler.sinirli/toplam_uye/xp_sirali (büyük parti: ilk 100 üye);
+#                 6: parti_uyeleri.xp + takip_oyuncular.xp_alti_sayac/xp_onayli (XP süzgeci)
 
 
 def _sema() -> str:
@@ -50,6 +51,8 @@ CREATE TABLE IF NOT EXISTS takip_oyuncular(
     elle_eklendi INTEGER NOT NULL DEFAULT 0,
     eklendi TEXT NOT NULL,
     uid TEXT,                                   -- kaynağın kalıcı kimliği (UUID); ilk gözlemde yazılır
+    xp_alti_sayac INTEGER NOT NULL DEFAULT 0,   -- OTOMATİK takipli: art arda XP-eşiği-altı gözlem sayısı
+    xp_onayli INTEGER NOT NULL DEFAULT 0,       -- 1: XP süzgeciyle (>= eşik) onaylandı; 0: eski kayıt (XP kuralına tabi DEĞİL)
     PRIMARY KEY(group_id, oyuncu_id)
 );
 CREATE TABLE IF NOT EXISTS takip_partiler(
@@ -70,6 +73,7 @@ CREATE TABLE IF NOT EXISTS parti_uyeleri(
     parti_id TEXT NOT NULL,
     oyuncu_id TEXT NOT NULL,
     ad TEXT,
+    xp INTEGER,                                 -- son gözlenen XP; NULL = eksik/geçersiz/bilinmiyor
     PRIMARY KEY(group_id, parti_id, oyuncu_id)
 );
 -- Grup düzeyinde yeniden-ekleme engeli (sessiz otomatik eklemeyi önler).
@@ -184,6 +188,14 @@ def _goc(conn: sqlite3.Connection) -> None:
         for ad, tanim in (("sinirli", "INTEGER NOT NULL DEFAULT 0"), ("toplam_uye", "INTEGER"), ("xp_sirali", "INTEGER")):
             if ad not in sutunlar:
                 conn.execute(f"ALTER TABLE takip_partiler ADD COLUMN {ad} {tanim}")
+    if surum < 6:  # additive: mevcut kayıtlar korunur; eski otomatik kayıtlar XP kuralına tabi olmaz (xp_onayli=0)
+        for tablo, ad, tanim in (
+            ("parti_uyeleri", "xp", "INTEGER"),
+            ("takip_oyuncular", "xp_alti_sayac", "INTEGER NOT NULL DEFAULT 0"),
+            ("takip_oyuncular", "xp_onayli", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if ad not in {r[1] for r in conn.execute(f"PRAGMA table_info({tablo})")}:
+                conn.execute(f"ALTER TABLE {tablo} ADD COLUMN {ad} {tanim}")
     if surum < SEMA_SURUMU:
         conn.execute(f"PRAGMA user_version={SEMA_SURUMU}")
 

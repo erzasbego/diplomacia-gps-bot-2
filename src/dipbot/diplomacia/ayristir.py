@@ -17,6 +17,7 @@ Alan kararları:
 """
 from __future__ import annotations
 
+import math
 import uuid as _uuid
 from dataclasses import dataclass
 
@@ -53,6 +54,7 @@ class PartiBilgi:
 # Üyelerin XP'ye göre sıralı geldiği kullanıcı beyanıdır; yanıttaki `xp` alanlarıyla her yanıtta denetlenir
 # (örnek yanıtta iki üye azalan XP'dedir) ama sıralama VARSAYILMAZ: yalnız "API'nin döndürdüğü ilk 100" alınır.
 UYE_SINIRI = 100
+XP_UST = 10**12  # makul üst sınır; bunun üstü geçersiz sayılır
 
 
 @dataclass(frozen=True)
@@ -173,9 +175,10 @@ def uyeler_ayristir(govde, beklenen_sayi: int) -> UyeListesi:
             mukerrer = True
         gorulen_no.add(no)
         gorulen_uuid.add(pid)
-        uyeler.append(PartiUyesi(oyuncu_id=str(no), ad=ad))
+        xp = _xp(m.get("xp"))
+        uyeler.append(PartiUyesi(oyuncu_id=str(no), ad=ad, xp=xp))
         uuidler[str(no)] = pid
-        xp_listesi.append(m.get("xp"))
+        xp_listesi.append(xp)
     neden = ""
     sinirli = False
     sayfalama = sorted(SAYFALAMA_ANAHTARLARI & set(g))
@@ -199,6 +202,20 @@ def uyeler_ayristir(govde, beklenen_sayi: int) -> UyeListesi:
         tuple(uyeler), uuidler, tamam=not neden and not sinirli, neden=neden, sinirli=sinirli,
         xp_sirali=_xp_sirali(xp_listesi) if sinirli else None,
     )
+
+
+def _xp(v) -> int | None:
+    """XP'yi güvenilir ayrıştırır: negatif olmayan tamsayı (veya tam sayı değerli sonlu kayan nokta) -> int.
+    Eksik, bool, metin ('1500000'), negatif, kesirli, NaN/inf, aşırı büyük -> None (BİLİNMİYOR; 0 sayılmaz)."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, float):
+        if not math.isfinite(v) or not v.is_integer():
+            return None
+        v = int(v)
+    if not isinstance(v, int) or v < 0 or v > XP_UST:
+        return None
+    return v
 
 
 def _xp_sirali(xp: list) -> bool | None:
