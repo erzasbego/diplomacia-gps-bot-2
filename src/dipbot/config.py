@@ -59,7 +59,7 @@ TOKEN_PREV_KONTROL_ARALIGI_SANIYE = 300.0
 # Parti eklenirken üyelerin ilk oyuncu verisi (bölge, vatandaşlık, gözlem zamanı): komut içinde SINIRLI iş yapılır;
 # kalan üyeler baseline_tamam=0 ile eklenir ve ilk taramada (bildirimsiz) tamamlanır.
 PARTI_EKLE_ESZAMANLI = 4  # aynı anda en çok bu kadar oyuncu isteği
-PARTI_EKLE_ILK_VERI_UST = 60  # komutta en çok bu kadar üyenin verisi istenir
+PARTI_EKLE_ILK_VERI_UST = 100  # komutta en çok bu kadar üyenin verisi istenir (parti başına takip üst sınırıyla aynı)
 PARTI_EKLE_ILK_VERI_SURE_SN = 20.0  # toplam süre bütçesi; dolunca bekleyen istekler iptal edilir
 
 # Zamanlayıcı.

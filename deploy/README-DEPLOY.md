@@ -140,7 +140,7 @@ systemctl restart dipbot
 journalctl -u dipbot -n 50 --utc
 ```
 
-Sorun çıkarsa önceki sürüme dönün (`git checkout <önceki_sürüm>`). **Dikkat:** veritabanı şeması ileri taşınır (`user_version` 4, `onayli_gruplar.donem`); eski sürüm kodu dönemleri bilmez ve onu çalıştırırken onaylanan grupların bildirimleri yeni sürüme dönüşte sessizce iptal edilebilir. Kod sürümünü geri alırken veritabanını da **güncelleme öncesi alınan yedekten** geri yükleyin (aşağıdaki geri yükleme); yalnız kodu geri almak güvenli değildir.
+Sorun çıkarsa önceki sürüme dönün (`git checkout <önceki_sürüm>`). **Dikkat:** veritabanı şeması ileri taşınır (`user_version` 5; v4: `onayli_gruplar.donem`, v5: `takip_partiler.sinirli/toplam_uye/xp_sirali`); eski sürüm kodu dönemleri bilmez ve onu çalıştırırken onaylanan grupların bildirimleri yeni sürüme dönüşte sessizce iptal edilebilir. Kod sürümünü geri alırken veritabanını da **güncelleme öncesi alınan yedekten** geri yükleyin (aşağıdaki geri yükleme); yalnız kodu geri almak güvenli değildir.
 
 ## Yedekleme
 

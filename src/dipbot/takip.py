@@ -95,6 +95,11 @@ class PartiEklemeSonucu:
     bolge_bilinen: int = 0  # alınanlar arasında bölgesi dolu olan
     vatandaslik_bilinen: int = 0  # alınanlar arasında vatandaşlık ülkesi dolu olan
     ilk_veri_notu: str | None = None  # ayrıntı eksik kaldıysa kısa neden
+    # Büyük parti (API ilk 100 üyeyi döndürür): yalnız ilk 100 takip edilir.
+    sinirli: bool = False
+    toplam_uye: int = 0  # partinin gerçek üye sayısı (member_count; bilinmiyorsa liste uzunluğu)
+    takip_edilen: int = 0  # bu partiden şu an takipte olan oyuncu sayısı (yeni + zaten takipte; engelliler hariç)
+    xp_sirali: bool | None = None  # yanıtta xp alanları azalan sıradaydı mı (None: doğrulanamadı)
 
 
 @dataclass(frozen=True)
@@ -106,6 +111,8 @@ class KaldirmaOnizleme:
     uye_sayisi: int = 0
     etkilenen: tuple[str, ...] = ()  # takipten çıkarılacak oyuncu kimlikleri
     ozet_anahtari: str = ""  # onay butonuna gömülecek; üyelik değişirse değişir
+    sinirli: bool = False  # liste yalnız ilk 100 üye: ilk 100 dışındakiler doğrulanamadığı için ÇIKARILMAZ
+    toplam_uye: int = 0
 
 
 @dataclass(frozen=True)
@@ -227,6 +234,12 @@ class TakipServisi:
         self._onay_sart(group_id)
         oyuncu_id = str(oyuncu_id)
         if self._takipte_mi(group_id, oyuncu_id):
+            # Kullanıcı bu oyuncuyu elle de eklemek istedi: otomatik (parti) kaydı "elle eklendi" olur ve
+            # parti sıralamasından düşse bile takipten çıkarılmaz.
+            with islem(self.conn):
+                self.conn.execute(
+                    "UPDATE takip_oyuncular SET elle_eklendi=1 WHERE group_id=? AND oyuncu_id=?", (group_id, oyuncu_id)
+                )
             return OyuncuEklemeSonucu("zaten_takipte", oyuncu_id)
         snap = self._oyuncu_temiz(await kaynak.fetch_player(oyuncu_id), oyuncu_id)
         simdi = self.saat()
@@ -461,7 +474,10 @@ class TakipServisi:
         if snap.parti_id != parti_id:
             raise EksikVeri("parti kimliği uyuşmuyor")
         if not snap.uyeler_tamam:
-            raise EksikVeri("üye listesi sayfalaması tamamlanmadı")
+            # SINIRLI (ilk N) liste yalnız tutarlıysa kabul edilir: toplam bilinmeli ve listeden büyük olmalı.
+            # Bozuk/yinelenen/sayfalamalı/eksik yanıtlar adaptörde sinirli=False kalır ve burada reddedilir.
+            if not snap.sinirli or snap.toplam_uye is None or len(snap.uyeler) >= snap.toplam_uye:
+                raise EksikVeri("üye listesi sayfalaması tamamlanmadı")
         ids = [u.oyuncu_id for u in snap.uyeler]
         if any(not i for i in ids) or len(set(ids)) != len(ids):
             raise EksikVeri("üye listesi bozuk")
@@ -491,8 +507,10 @@ class TakipServisi:
             self._onay_sart(group_id)  # await sırasında onay kaldırılmış olabilir
             cur = self.conn.execute(
                 "INSERT OR IGNORE INTO takip_partiler(group_id, parti_id, ad, baseline_tamam,"
-                " son_dogrulama, eklendi) VALUES(?,?,?,1,?,?)",
-                (group_id, parti_id, snap.ad, iso(simdi), iso(simdi)),
+                " son_dogrulama, eklendi, sinirli, toplam_uye, xp_sirali) VALUES(?,?,?,1,?,?,?,?,?)",
+                (group_id, parti_id, snap.ad, iso(simdi), iso(simdi), int(bool(snap.sinirli)),
+                 snap.toplam_uye if snap.toplam_uye is not None else len(snap.uyeler),
+                 None if snap.xp_sirali is None else int(snap.xp_sirali)),
             )
             if cur.rowcount == 0:
                 return PartiEklemeSonucu("zaten_takipte", parti_id)
@@ -517,6 +535,9 @@ class TakipServisi:
             "eklendi", parti_id, snap.ad, len(snap.uyeler), yeni, zaten, engelli,
             ilk_veri_alinan=alinan, ilk_veri_bekleyen=yeni - alinan, bolge_bilinen=bolge_b,
             vatandaslik_bilinen=vatandas_b, ilk_veri_notu=ilk_not if yeni > alinan else None,
+            sinirli=bool(snap.sinirli),
+            toplam_uye=snap.toplam_uye if snap.toplam_uye is not None else len(snap.uyeler),
+            takip_edilen=yeni + zaten, xp_sirali=snap.xp_sirali,
         )
 
     async def _uye_ilk_verileri(self, ids: list[str], kaynak: DiplomaciaSource) -> tuple[dict, str | None]:
@@ -593,6 +614,19 @@ class TakipServisi:
         )
         return cur.rowcount == 1
 
+    def _sinirli_dusenleri_temizle(self, group_id: int, dusenler: list[str]) -> int:
+        n = 0
+        for oid in dusenler:
+            r = self.conn.execute(
+                "SELECT elle_eklendi FROM takip_oyuncular WHERE group_id=? AND oyuncu_id=?", (group_id, oid)
+            ).fetchone()
+            if r is None or r["elle_eklendi"] or self._partide_mi(group_id, oid):
+                continue
+            self.conn.execute("DELETE FROM takip_oyuncular WHERE group_id=? AND oyuncu_id=?", (group_id, oid))
+            self._mukerrer_engelini_kaldir(group_id, [oid])
+            n += 1
+        return n
+
     def _parti_uygula(self, group_id: int, parti_id: str, snap: PartiAnlik) -> int:
         """Doğrulanmış (tam) üye listesini uygular. Dönüş: üretilen bildirim sayısı."""
         simdi = self.saat()
@@ -615,8 +649,20 @@ class TakipServisi:
             yeni = {u.oyuncu_id: u.ad for u in snap.uyeler}
             if not yeni and eski:
                 raise EksikVeri("boş üye listesi şüpheli; üyelik değişikliği sayılmadı")
-            katilan = [i for i in yeni if i not in eski]
-            ayrilan = [i for i in eski if i not in yeni]
+            fark_katilan = [i for i in yeni if i not in eski]
+            fark_ayrilan = [i for i in eski if i not in yeni]
+            sinirli = bool(snap.sinirli)
+            eski_sinirli = bool(p["sinirli"])
+            # GERÇEK üyelik değişikliği yalnız İKİ TARAF DA TAM listeyse bilinir. Sınırlı (ilk 100) listede bir
+            # oyuncunun sıralamadan düşmesi/girmesi parti üyeliği değişikliği DEĞİLDİR: bildirim yok.
+            # Sınırlıdan tam listeye geçişte yeni listede OLMAYANLAR doğrulanmış ayrılmadır (tam liste), ama
+            # yeni görünenlerin gerçek katılım olduğu doğrulanamaz (önceki liste kısmiydi): katılım bildirimi yok.
+            if sinirli:
+                katilan = ayrilan = []
+            elif eski_sinirli:
+                katilan, ayrilan = [], fark_ayrilan
+            else:
+                katilan, ayrilan = fark_katilan, fark_ayrilan
 
             self.conn.execute("DELETE FROM parti_uyeleri WHERE group_id=? AND parti_id=?", (group_id, parti_id))
             self.conn.executemany(
@@ -624,9 +670,11 @@ class TakipServisi:
                 [(group_id, parti_id, i, ad) for i, ad in yeni.items()],
             )
             self.conn.execute(
-                "UPDATE takip_partiler SET ad=COALESCE(?,ad), son_dogrulama=?, baseline_tamam=1"
-                " WHERE group_id=? AND parti_id=?",
-                (snap.ad, iso(simdi), group_id, parti_id),
+                "UPDATE takip_partiler SET ad=COALESCE(?,ad), son_dogrulama=?, baseline_tamam=1, sinirli=?,"
+                " toplam_uye=?, xp_sirali=? WHERE group_id=? AND parti_id=?",
+                (snap.ad, iso(simdi), int(sinirli),
+                 snap.toplam_uye if snap.toplam_uye is not None else len(snap.uyeler),
+                 None if snap.xp_sirali is None else int(snap.xp_sirali), group_id, parti_id),
             )
             # Takip uzlaştırma: üyeler takipte olmalı; engelli olanlar yalnız gerçek katılımda döner.
             for oid, ad in yeni.items():
@@ -638,6 +686,11 @@ class TakipServisi:
                     continue  # sessiz yeniden ekleme YOK
                 self.conn.execute("DELETE FROM engeller WHERE group_id=? AND oyuncu_id=?", (group_id, oid))
                 self._otomatik_ekle(group_id, oid, ad, None, simdi)
+            if sinirli:
+                # İlk 100'den düşenler: yalnız OTOMATİK eklenmiş ve başka takipli partinin listesinde olmayanlar
+                # takipten çıkar (parti başına ~100 oyuncu). Elle eklenenler her zaman korunur. Engel konmaz:
+                # sıralamaya geri girerlerse sessizce yeniden alınırlar.
+                self._sinirli_dusenleri_temizle(group_id, fark_ayrilan)
 
             if snap.ad and p["ad"] and snap.ad != p["ad"]:
                 bildirim += self._grup_kuyruk(
@@ -730,7 +783,10 @@ class TakipServisi:
         anahtar = hashlib.sha256(
             json.dumps([guncel, list(etkilenen)]).encode()
         ).hexdigest()[:16]
-        return KaldirmaOnizleme(True, parti_id, None, snap.ad or p["ad"], len(guncel), etkilenen, anahtar)
+        return KaldirmaOnizleme(
+            True, parti_id, None, snap.ad or p["ad"], len(guncel), etkilenen, anahtar,
+            sinirli=bool(snap.sinirli), toplam_uye=snap.toplam_uye if snap.toplam_uye is not None else len(guncel),
+        )
 
     async def parti_kaldirma_onayla(
         self,

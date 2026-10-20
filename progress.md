@@ -82,3 +82,8 @@ Sonraki adım: DEVAM.md §1→§8.
 - Madde 5 (ilk gerçek bilgi bildirim değildir) mevcut mantıkta zaten doğruydu (kayıtlı değer NULL ise ilk bilgi sessiz oturur; geçici boş değer eski değeri korur); alan bazlı/yeniden başlatma/çok gruplu regresyon testleri eklendi. Gerçek eksik: parti eklendikten ilk taramaya kadar olan GERÇEK değişiklik ilk gözlem sayılıp yutuluyordu — üye verisi eklerken alındığı için artık bildirilir.
 - Şema DEĞİŞMEDİ (SEMA_SURUMU 4, parmak izi testli): canlı veriler için geçiş gerekmez. `deploy/guncelle.sh` (yedek ZORUNLU, ff-only, ön kontrol, en son servis) + `deploy/GUNCELLEME-PLANI.md` eklendi; bulutta yalnız sahte systemctl/pip ve yerel git ile test edildi. Bulunan hata: deploy/*.sh dosyaları depoda 0644'tü → 0755.
 - Canlı VPS'e/Telegram'a/Diplomacia'ya DOKUNULMADI.
+
+## 2026-10-20 (devam 2) — büyük parti: ilk 100 üye (dal `claude/parti-ilk-100-uye`)
+- Sorun (gerçek VPS günlükleri): parti 1319 `100 != 329`, 5170 `100 != 129` → parti eklenemiyordu. Kanıt: API büyük partide 100 üye döndürür; sıralamanın XP olması kullanıcı beyanı (2 üyelik örnek tutarlı; sıralama VARSAYILMAZ, her yanıtta `xp` denetlenir).
+- Çözüm: `PartiAnlik.sinirli/toplam_uye/xp_sirali`; adaptör yalnız tam 100 kayıt + member_count>100 + mükerrer/sayfalama yok → sınırlı liste; diğer eksikler reddedilir. Sınırlı listede ayrılma/katılma bildirimi YOK; yeni girenler sessiz takip; düşen otomatik eklenenler takipten çıkar, elle eklenenler (ve `/oyuncuekle` ile zaten-otomatik olanlar) korunur. Şema v5 (additive: takip_partiler.sinirli/toplam_uye/xp_sirali). `PARTI_EKLE_ILK_VERI_UST` 100.
+- Canlı VPS'e/Telegram'a/Diplomacia'ya DOKUNULMADI.

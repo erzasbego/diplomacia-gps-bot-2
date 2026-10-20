@@ -457,7 +457,9 @@ class Arayuz:
                 [
                     "✅ <b>Parti takibe eklendi</b>",
                     bicim.parti_link(pid, s.ad),
-                    f"Üye sayısı: {s.uye_sayisi}",
+                    f"Toplam üye: {s.toplam_uye or s.uye_sayisi}",
+                    f"Takip edilen oyuncu: {s.takip_edilen}" + (" (en fazla 100)" if s.sinirli else ""),
+                    *self._sinirli_not(s),
                     f"Takibe yeni alınan: {s.yeni_eklenen}; zaten takipte: {s.zaten_takipte}; "
                     f"engelli (otomatik eklenmedi): {s.engelli}",
                     *self._ilk_veri_satirlari(s),
@@ -467,6 +469,18 @@ class Arayuz:
             ),
             [[Dugme("👥 Partiler", "pl:0"), Dugme("🏠 Ana menü", "m")]],
         )
+
+    @staticmethod
+    def _sinirli_not(s) -> list[str]:
+        if not s.sinirli:
+            return []
+        xp = {True: "yanıttaki XP değerleri azalan sırada doğrulandı",
+              False: "yanıttaki XP değerleri azalan sırada DEĞİL; yalnız API'nin döndürdüğü ilk 100 alındı",
+              None: "XP sıralaması doğrulanamadı; yalnız API'nin döndürdüğü ilk 100 alındı"}[s.xp_sirali]
+        return [
+            f"ℹ️ Büyük parti: yalnız API'nin döndürdüğü ilk 100 üye takip edilir ({xp}).",
+            "İlk 100 dışındaki üyeler izlenmez; sıralamadan düşme/girme parti üyeliği değişikliği sayılmaz.",
+        ]
 
     @staticmethod
     def _ilk_veri_satirlari(s) -> list[str]:
@@ -778,8 +792,8 @@ class Arayuz:
     # ---- partiler
     def _parti_liste(self, g: int, sayfa: int) -> Yanit:
         satirlar_db = self.conn.execute(
-            "SELECT t.parti_id, t.ad, (SELECT COUNT(*) FROM parti_uyeleri u WHERE u.group_id=t.group_id"
-            " AND u.parti_id=t.parti_id) AS uye FROM takip_partiler t WHERE t.group_id=?"
+            "SELECT t.parti_id, t.ad, t.sinirli, t.toplam_uye, (SELECT COUNT(*) FROM parti_uyeleri u"
+            " WHERE u.group_id=t.group_id AND u.parti_id=t.parti_id) AS uye FROM takip_partiler t WHERE t.group_id=?"
             " ORDER BY lower(COALESCE(t.ad, '')), t.parti_id",
             (g,),
         ).fetchall()
@@ -794,7 +808,8 @@ class Arayuz:
         klavye: Klavye = []
         for i, r in enumerate(satirlar_db[bas : bas + SAYFA_BOYUTU], start=bas + 1):
             metin.append(
-                f"{i}. {bicim.parti_link(r['parti_id'], r['ad'])} (#{esc(r['parti_id'])}) — {r['uye']} üye"
+                f"{i}. {bicim.parti_link(r['parti_id'], r['ad'])} (#{esc(r['parti_id'])}) — "
+                + (f"{r['uye']}/{r['toplam_uye']} üye" if r["sinirli"] and r["toplam_uye"] else f"{r['uye']} üye")
             )
             d = _dg(f"{i}. {r['ad'] or r['parti_id']} #{r['parti_id']}", f"pd:{r['parti_id']}")
             if d:
@@ -817,6 +832,9 @@ class Arayuz:
             f"Bilinen üye sayısı: {uye}",
             f"Son doğrulama: {bicim.tarih(r['son_dogrulama'])}",
         ]
+        if r["sinirli"]:
+            metin.insert(2, f"Toplam üye: {r['toplam_uye'] or '?'} — yalnız API'nin döndürdüğü ilk 100 takip edilir "
+                            "(sıralamadan düşme/girme üyelik değişikliği sayılmaz).")
         klavye: Klavye = []
         sil = _dg("🗑 Parti takibini kaldır", f"ps:{pid}")
         if sil:
@@ -845,7 +863,8 @@ class Arayuz:
             satirlar.append("⚠️ Üyelik onay sırasında değişti; güncel özeti yeniden onaylayın.")
         satirlar += [
             f"Parti: {bicim.parti_link(on.parti_id, on.parti_ad)} (#{esc(on.parti_id)})",
-            f"Güncel üye sayısı: {on.uye_sayisi}",
+            f"Güncel üye sayısı: {on.uye_sayisi}" if not on.sinirli else
+            f"Toplam üye: {on.toplam_uye} (yalnız API'nin döndürdüğü ilk {on.uye_sayisi} doğrulanabildi)",
             f"Bu grubun takibinden çıkarılacak oyuncu: <b>{len(on.etkilenen)}</b>",
         ]
         for oid, ad in adlar.items():
@@ -856,6 +875,11 @@ class Arayuz:
             "Partiden önceden ayrılmış oyuncuların takibi sürer; diğer gruplar etkilenmez. "
             "Elle eklenmiş olsalar da şu anki üyeler çıkarılır."
         )
+        if on.sinirli:
+            satirlar.append(
+                "⚠️ Büyük parti: yalnız ilk 100 üye doğrulanabildi. İlk 100 dışındaki üyeler (elle eklenmiş olsalar "
+                "bile) bu işlemle takipten çıkarılmaz."
+            )
         return self._onay_yaniti(
             o, "parti_sil", g, {"parti_id": on.parti_id, "ozet": on.ozet_anahtari}, "\n".join(satirlar)
         )

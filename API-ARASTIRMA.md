@@ -143,3 +143,10 @@ Kaynak: kullanıcı Chrome DevTools'ta başarılı bir `GET /api/players/72400` 
 Karar (bot): `Authorization` başlığını `Bearer` şemasıyla oluştur ve `X-Client-Platform: web` başlığını da gönder. Token yalnızca güvenli yerel yapılandırmadan (token dosyası) okunur; kaynağa, testlere, loglara, Git deposuna veya hafızaya yazılmaz. Kimlik bilgisi yoksa gerçek API isteği ATILMAZ. 401 → kurucuya bildirim ve gereksiz tekrar yok.
 
 Hâlâ DOĞRULANMADI: `X-Client-Platform` başlığı olmadan isteğin başarısız olup olmadığı; 401 gövdesi; token ömrü (kullanıcı tokenın JWT olduğunu doğruladı, `exp` değeri kullanılabilir olabilir ama tek örnekten genelleme yapılmadı); 403/404/429 davranışı; `/api/wars` sayfalaması; `ended` yanıtı. Canlı bağlantı testi, kullanıcı yeni ve güvenli bir tokenı yerel ortamda sağladıktan sonra yapılacak (şu ana dek hiçbir gerçek API isteği botla atılmadı; tüm testler mock).
+
+
+## 9. Büyük parti üye listesi (gerçek VPS günlükleri, 2026-10-20)
+- Gerçek günlük satırları: parti 1319 → `üye sayısı uyuşmuyor (100 != 329)`, parti 5170 → `(100 != 129)`. **Kanıtlanan:** `/api/parties/{n}/members` bu partilerde 100 kayıt döndürdü, `party.member_count` ise 329 / 129. Yanıtta sayfalama anahtarı yoktu (aksi halde hata nedeni "sayfalama anahtarı var" olurdu).
+- **Kullanıcı beyanı (bağımsız doğrulanmadı):** üyeler XP'ye göre sıralı ve ilk 100 döndürülüyor. Tutarlı tek kanıt: örnek yanıttaki iki üye azalan `xp` (2214953 ≥ 1765874). 100 üyelik gerçek bir yanıtın `xp` dizisi bu depoda YOKTUR. Bot bu yüzden sıralamayı varsaymaz: her yanıtta `xp` alanlarını denetler (`PartiAnlik.xp_sirali`: True/False/None) ve günlüğe/özete yazar.
+- **DOĞRULANMADI:** ek sayfa/offset parametresinin varlığı (bot kullanmaz), 100 sınırının sabit olup olmadığı, `member_count`'un tüm üyeleri mi aktif üyeleri mi saydığı.
+- Bot davranışı: tam 100 kayıt + `member_count` > 100 + mükerrer/sayfalama yok → "sınırlı liste" (geçerli, partinin tamamıyla eşdeğer DEĞİL); diğer uyuşmazlıklar (99/329, 101/329, mükerrer…) reddedilir.

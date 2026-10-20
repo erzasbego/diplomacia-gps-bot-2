@@ -5,7 +5,7 @@
 Python 3.11+ · `python-telegram-bot` 22.8 (long polling; alan adı/HTTPS gerekmez) · SQLite · Telegram arayüzü ve mesajlar Türkçe · gösterilen zamanlar `Europe/Istanbul`, kayıtlar UTC.
 
 > ## ⚠️ Doğrulama durumu — önce bunu okuyun
-> Bu bot **henüz gerçek Diplomacia'ya veya gerçek Telegram'a bağlanılarak denenmedi.** Şu an elde olan: **848 otomatik test** (sahte veri kaynağı, `httpx.MockTransport`, sahte Telegram nesneleri; Python 3.11/3.12/3.13'te geçti). Bunlar iş kurallarını kanıtlar; **canlı entegrasyonu kanıtlamaz.** Ayrıntı için [Doğrulananlar ve doğrulanmayanlar](#doğrulananlar-ve-doğrulanmayanlar).
+> Bu bot **henüz gerçek Diplomacia'ya veya gerçek Telegram'a bağlanılarak denenmedi.** Şu an elde olan: **899 otomatik test** (sahte veri kaynağı, `httpx.MockTransport`, sahte Telegram nesneleri; Python 3.11/3.12/3.13'te geçti). Bunlar iş kurallarını kanıtlar; **canlı entegrasyonu kanıtlamaz.** Ayrıntı için [Doğrulananlar ve doğrulanmayanlar](#doğrulananlar-ve-doğrulanmayanlar).
 
 ## İçindekiler
 1. [Nasıl çalışır](#nasıl-çalışır)
@@ -34,7 +34,7 @@ Bot olayları **dinlemez, aralıklarla yoklar.** Bu yüzden: iki kontrol arasın
 ```bash
 python3.11 -m venv .venv && . .venv/bin/activate     # Python 3.11+ (3.12 ve 3.13 de denendi)
 pip install -r requirements.txt
-python -m pytest -q                                  # beklenen: 848 passed (MOCK)
+python -m pytest -q                                  # beklenen: 899 passed (MOCK)
 ```
 Paket `src/` altındadır ve pip ile **kurulmaz**; çalıştırırken `PYTHONPATH=src` verilir (testler için `pytest.ini` bunu zaten yapar):
 ```bash
@@ -100,6 +100,7 @@ Gruplarda komutlar yalnız **onaylı grupta yetkili kullanıcıya** açıktır. 
 - **Kimlik:** takip, sabit oyuncu kimliği üzerindendir; ad, bölge ve vatandaşlık ülkesi ayrı alanlar olarak bağımsız izlenir. Aynı oyuncu farklı yollarla (bağlantı, numara, parti, baştaki sıfırlı numara) eklense bile **tek** kayıttır.
 - **Eksik/hatalı cevap** (boş alan, sayfalaması tamamlanmamış parti listesi, ağ hatası) değişiklik veya üye çıkışı sayılmaz; önceki doğru veri korunur. Hiç gözlem yapılamayan tarama "başarılı" kaydedilmez.
 - **Oyuncu bulunamıyor (404):** art arda 3 taramada 404 alan oyuncu durum ekranında "Bulunamıyor" işaretlenir; **otomatik silinmez.**
+- **Büyük partiler (ilk 100):** Diplomacia `/members` uç noktası büyük partilerde yalnız **ilk 100 üyeyi** döndürür (gerçek günlükler: 100/329, 100/129). Bot parti başına **en çok 100 oyuncu** takip eder; **ek sayfa istemez**, ilk 100 dışındaki üyelerin bilgisini çekmez. 75 üyeli partide 75, 100 üyelide 100, 129/329 üyelide 100 oyuncu takip edilir. Liste kabulü sıkıdır: tam 100 kayıt + `member_count` > 100, mükerrer/sayfalama anahtarı/bozuk kayıt yok; **eksik, yinelenen veya tutarsız yanıt reddedilir** (örn. 99/329). Üyelerin XP'ye göre sıralı geldiği kullanıcı beyanıdır; bot her yanıtta `xp` alanlarının azalan sırada olup olmadığını denetler ve özette/günlükte belirtir ama **sıralamayı varsaymaz**. Sınırlı liste partinin tüm üyeleriyle **eşdeğer sayılmaz**: bir oyuncunun ilk 100'den çıkması veya girmesi **parti üyeliği değişikliği değildir** → "ayrıldı/katıldı" bildirimi yok. Yeni girenler sessizce takibe alınır (ilk bölge/vatandaşlık bildirim değildir); listeden düşen **otomatik eklenmiş** oyuncular takipten çıkar (engel konmaz), **elle eklenenler her zaman korunur**; başka takipli partinin listesindekiler de korunur. Parti ≤100'e inince (tam liste) listede olmayanlar doğrulanmış ayrılmadır ve bildirilir (yeni görünenlerin katılımı doğrulanamadığından bildirilmez). Sınırlı partiyi kaldırırken yalnız doğrulanan ilk 100 çıkarılır; diğer üyeler (elle eklenmişse) çıkarılmaz ve ekran bunu belirtir.
 - **Parti kaldırma:** önce partinin güncel üyeleri doğrulanır; doğrulanamazsa **hiçbir şey silinmez**. Doğrulanırsa, o anda partide olan herkes (elle eklenmiş olsa da) ilgili grubun takibinden çıkar; daha önce ayrılmış üyeler takipte kalır; diğer gruplar etkilenmez; kaldırılanlar otomatik yeniden eklenmez.
 - **Savaşlar:** ilk taramada mevcut savaşlar bildirimsiz kaydedilir (bildirim yağmuru yok); tek taramada 5'ten fazla yeni savaş çıkarsa tek özet mesajı gider; tanınmayan durum/türdeki kayıt "yeni savaş" bildirimi üretmez.
 - **Bildirim teslimi "en az bir kez"dir:** gönderimden hemen sonra süreç ölürse aynı mesaj bir kez daha gidebilir; çok parçalı uzun mesajda bir parça tekrarlanabilir. Telegram'da "tam bir kez" garantisi verilemez.
@@ -140,11 +141,12 @@ Hedef: **Ubuntu 24.04 LTS** (Python 3.12), tek VPS, tek bot süreci, systemd. Ad
 - `/grup_tasi`: eski grubun onayı düştükten sonra yeni grup onaylanana kadar başlayan savaşlar, yeni grubun ilk (bildirimsiz) taramasında baseline'a girer ve taşımadan sonra da bildirilmez (kısa pencere; kabul edilen sınır). İki grupta ortak savaşın kaydı yeni grubunkiyle birleşir (en erken ilk görülme korunur).
 - Token `.prev` yedeği tektir: üst üste iki yenilemede (A→B→C) ilk token kaybolur (`.prev` = B). Yedek, taramalar token nedeniyle duraklatılmışken yaş nedeniyle silinmez.
 - Kod sürümünü geri alırken veritabanını da güncelleme öncesi yedekten geri yükleyin (şema ileri taşınır; bkz. `deploy/README-DEPLOY.md`).
-- Savaş listesi sayfalaması ve `/members` sayfalaması **canlıda doğrulanmadı**; bot "tam liste" bayrağı gelmeyen listeyi eksik sayar.
+- Savaş listesi sayfalaması **canlıda doğrulanmadı**; bot "tam liste" bayrağı gelmeyen listeyi eksik sayar. `/members` yalnız **ilk 100** üyeyi döndürür (VPS günlüklerinden), sıralama ölçütünün XP olması ise **doğrulanmadı** (kullanıcı beyanı + 2 üyelik örnek).
+- Büyük partide ilk 100 dışındaki üyelerin ayrılma/katılması izlenemez; otomatik eklenmiş bir oyuncunun gerçekten partiden ayrılmasıyla ilk 100'den düşmesi ayırt edilemez (ikisi de bildirim üretmez, otomatik kayıt kaldırılır).
 
 ## Doğrulananlar ve doğrulanmayanlar
 **Doğrulandı (otomatik test / araç ile; hepsi MOCK ya da yerel):**
-- 848 test: ilk ekleme bildirimsiz, kimlik üzerinden değişiklik, bölge/vatandaşlık bağımsızlığı, tekrar bildirim yok, eksik cevap veriyi bozmaz, parti ilk kayıt/giriş/çıkış/kaldırma kuralları, grup izolasyonu, yetki matrisi (komut+buton), eski buton reddi, yeniden başlatmada veri korunumu, ilk savaş taramasında bildirim yok, outbox yeniden deneme/iptal, token doğrulama/`.prev`/maskeleme, D7 saat güvenliği, göç taşıma.
+- 899 test: ilk ekleme bildirimsiz, kimlik üzerinden değişiklik, bölge/vatandaşlık bağımsızlığı, tekrar bildirim yok, eksik cevap veriyi bozmaz, parti ilk kayıt/giriş/çıkış/kaldırma kuralları, grup izolasyonu, yetki matrisi (komut+buton), eski buton reddi, yeniden başlatmada veri korunumu, ilk savaş taramasında bildirim yok, outbox yeniden deneme/iptal, token doğrulama/`.prev`/maskeleme, D7 saat güvenliği, göç taşıma.
 - Python 3.11, 3.12 ve 3.13'te test paketi geçti (Ubuntu 24.04 tabanlı bulut ortamında).
 - `deploy/dipbot.service` için `systemd-analyze verify` (systemd 255, **statik**; yollar sahte düzende) hatasız; `backup.sh`/`restore.sh` gerçek WAL veritabanı ve **sahte** `systemctl` ile çalıştı; `onkontrol.sh` sahte dizin düzeniyle çalıştı.
 - Kullanıcı DevTools'ta doğruladı (ben bağımsız doğrulamadım): `Authorization: Bearer <JWT>` + `X-Client-Platform: web` ile `GET /api/players/72400` → 200; savaş bağlantısı biçimi `…/wars/war/{numara}`; oturum token'ı JWT'dir.

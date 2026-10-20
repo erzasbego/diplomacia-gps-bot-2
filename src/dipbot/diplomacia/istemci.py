@@ -260,7 +260,11 @@ class IstemciKaynagi:
         self._uuid_denetle("t", n, bilgi.uuid)
         for no, uid in uyeler.uuidler.items():
             self._uuid_denetle("o", no, uid)
-        if not uyeler.tamam:
+        if uyeler.sinirli:
+            log.info("parti %s: API ilk %d üyeyi döndürdü (toplam %d); XP sırası %s; ek sayfa istenmedi",
+                     n, len(uyeler.uyeler), bilgi.member_count,
+                     {True: "doğrulandı", False: "AZALAN DEĞİL", None: "doğrulanamadı"}[uyeler.xp_sirali])
+        elif not uyeler.tamam:
             log.info("parti %s üye listesi tam değil: %s", n, uyeler.neden)
         return ayristir.parti_birlestir(bilgi, uyeler)
 

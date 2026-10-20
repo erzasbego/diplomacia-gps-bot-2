@@ -222,7 +222,7 @@ def test_100_oyunculu_ilk_parti_eklemesi_tek_ozet_yuzlerce_bildirim_yok(conn, ui
         src.oyuncu(str(i), f"A{i}", "Ankara" if i % 2 else None, "TR")
     src.parti("1244", "P", [(str(i), f"A{i}") for i in range(1, 101)])
     y = run(ui.komut(grup_komut("partiekle", "1244")))
-    assert y.metin.count("Parti takibe eklendi") == 1 and "Üye sayısı: 100" in y.metin
+    assert y.metin.count("Parti takibe eklendi") == 1 and "Toplam üye: 100" in y.metin
     assert "başlangıç özeti" in y.metin.lower() and "bildirim gönderilmez" in y.metin
     assert "100" in y.metin and "bölge" in y.metin.lower()
     assert conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0] == 0
@@ -251,13 +251,13 @@ def test_baslangic_ozeti_sonraki_gercek_degisiklik_bildirimlerinden_ayri(conn, u
 
 
 # ----------------------------------------------------------------- şema değişmedi (güvenli güncelleme garantisi)
-def test_veritabani_semasi_main_ile_ayni_gecis_gerekmez():
-    """Bu PR veritabanı şemasını DEĞİŞTİRMEZ (SEMA_SURUMU 4): mevcut canlı kayıtlar için geçiş gerekmez, geri dönüş
-    yalnız kod geri dönüşüdür. Şema bilerek değiştirilirse bu parmak izi ve deploy/GUNCELLEME-PLANI.md birlikte
-    güncellenmeli (migration + yedekten dönüş planı ile)."""
+def test_veritabani_semasi_parmak_izi_degisiklik_bilincli_olmali():
+    """Şema parmak izi: şema BİLEREK değiştirilirse bu değer, migration ve deploy/GUNCELLEME-PLANI.md birlikte
+    güncellenmeli. v5 (Tur: büyük parti ilk 100): takip_partiler'e sinirli/toplam_uye/xp_sirali EKLENDİ (additive,
+    mevcut kayıtlar korunur: tests/test_parti_ilk100.py::test_v4_veritabani_v5e_gecerken_kayitlar_korunur)."""
     import hashlib
-    assert db.SEMA_SURUMU == 4
-    assert hashlib.sha256(db._sema().encode()).hexdigest() == "dabb41edae51b72abfc04a44654786abf2e670c0db253e60daa7d06fd166207f"
+    assert db.SEMA_SURUMU == 5
+    assert hashlib.sha256(db._sema().encode()).hexdigest() == "071bbf9b6d3959862a5e02cc316f0cca42a38b5b1480b849895f1a22c957b6d8"
 
 
 def test_mevcut_veri_yeni_surumle_acilinca_korunur(tmp_path):
@@ -270,7 +270,7 @@ def test_mevcut_veri_yeni_surumle_acilinca_korunur(tmp_path):
     run(TakipServisi(c, saat).oyuncu_ekle(G1, "5", src))
     c.close()
     c = db.baglan(yol)  # güncelleme sonrası ilk açılış (migration idempotent)
-    assert c.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert c.execute("PRAGMA user_version").fetchone()[0] == db.SEMA_SURUMU
     assert G1 in yonetim.durum_yukle(c, KURUCU).onayli_gruplar and 55 in yonetim.durum_yukle(c, KURUCU).yetkililer
     assert takipte(c, G1) == {"5"}
     c.close()

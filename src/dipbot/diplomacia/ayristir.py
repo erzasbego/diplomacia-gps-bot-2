@@ -48,12 +48,21 @@ class PartiBilgi:
     member_count: int
 
 
+# Diplomacia /members uç noktası büyük partilerde yalnız İLK 100 üyeyi döndürür (gerçek VPS günlükleri:
+# "100 != 329", "100 != 129"). Ek sayfa İSTENMEZ; bot parti başına en çok bu kadar oyuncuyu takip eder.
+# Üyelerin XP'ye göre sıralı geldiği kullanıcı beyanıdır; yanıttaki `xp` alanlarıyla her yanıtta denetlenir
+# (örnek yanıtta iki üye azalan XP'dedir) ama sıralama VARSAYILMAZ: yalnız "API'nin döndürdüğü ilk 100" alınır.
+UYE_SINIRI = 100
+
+
 @dataclass(frozen=True)
 class UyeListesi:
     uyeler: tuple[PartiUyesi, ...]
     uuidler: dict  # {player_number(str): player_id UUID}
     tamam: bool
     neden: str = ""
+    sinirli: bool = False  # geçerli ama kısmi (ilk UYE_SINIRI üye)
+    xp_sirali: bool | None = None
 
 
 # ---- yardımcılar ----------------------------------------------------------
@@ -139,8 +148,10 @@ def parti_ayristir(govde) -> PartiBilgi:
 def uyeler_ayristir(govde, beklenen_sayi: int) -> UyeListesi:
     """`{"members":[...]}` gövdesi. Bozuk üye -> EksikVeri (sessizce atlanmaz).
 
-    tamam=True yalnız: sayfalama anahtarı yok, len==beklenen_sayi, player_number ve
-    player_id mükerrer değil. Aksi halde tamam=False (eksik liste çıkış sayılmamalı).
+    tamam=True yalnız: sayfalama anahtarı yok, len==beklenen_sayi (<= UYE_SINIRI), player_number ve
+    player_id mükerrer değil. sinirli=True (tamam=False) yalnız: sayfalama anahtarı yok, mükerrer yok, TAM
+    UYE_SINIRI kayıt var ve beklenen_sayi > UYE_SINIRI (veya liste beklenen sayıyla eşit ama UYE_SINIRI'ndan
+    büyük: ilk UYE_SINIRI alınır). Başka her uyuşmazlık tamam=False, sinirli=False (eksik liste çıkış sayılmaz).
     """
     g = _json_nesne(govde, "üye yanıtı")
     liste = _zorunlu(g, "members", "üye yanıtı")
@@ -150,6 +161,7 @@ def uyeler_ayristir(govde, beklenen_sayi: int) -> UyeListesi:
     uuidler: dict = {}
     gorulen_no: set = set()
     gorulen_uuid: set = set()
+    xp_listesi: list = []
     mukerrer = False
     for i, m in enumerate(liste):
         ne = f"members[{i}]"
@@ -163,18 +175,41 @@ def uyeler_ayristir(govde, beklenen_sayi: int) -> UyeListesi:
         gorulen_uuid.add(pid)
         uyeler.append(PartiUyesi(oyuncu_id=str(no), ad=ad))
         uuidler[str(no)] = pid
+        xp_listesi.append(m.get("xp"))
     neden = ""
+    sinirli = False
     sayfalama = sorted(SAYFALAMA_ANAHTARLARI & set(g))
     if sayfalama:
         neden = f"sayfalama anahtarı var {sayfalama}: tamlık doğrulanamaz"
     elif mukerrer:
         neden = "mükerrer üye"
     elif len(liste) != beklenen_sayi:
-        neden = f"üye sayısı uyuşmuyor ({len(liste)} != {beklenen_sayi})"
-    return UyeListesi(tuple(uyeler), uuidler, tamam=not neden, neden=neden)
+        if len(liste) == UYE_SINIRI and beklenen_sayi > UYE_SINIRI:
+            sinirli = True  # API ilk UYE_SINIRI üyeyi döndürdü; kalanı için sayfa istenmez
+        else:
+            neden = f"üye sayısı uyuşmuyor ({len(liste)} != {beklenen_sayi})"
+    elif len(liste) > UYE_SINIRI:
+        sinirli = True  # API tüm üyeleri döndürdü: parti başına yalnız ilk UYE_SINIRI takip edilir
+    if sinirli and len(uyeler) > UYE_SINIRI:
+        for u in uyeler[UYE_SINIRI:]:
+            uuidler.pop(u.oyuncu_id, None)
+        uyeler = uyeler[:UYE_SINIRI]
+        xp_listesi = xp_listesi[:UYE_SINIRI]
+    return UyeListesi(
+        tuple(uyeler), uuidler, tamam=not neden and not sinirli, neden=neden, sinirli=sinirli,
+        xp_sirali=_xp_sirali(xp_listesi) if sinirli else None,
+    )
+
+
+def _xp_sirali(xp: list) -> bool | None:
+    """Tüm üyelerde tamsayı xp varsa azalmayan (büyükten küçüğe) sıra mı; eksik/bozuk xp -> None (bilinmiyor)."""
+    if not xp or any(isinstance(x, bool) or not isinstance(x, int) for x in xp):
+        return None
+    return all(xp[i] >= xp[i + 1] for i in range(len(xp) - 1))
 
 
 def parti_birlestir(bilgi: PartiBilgi, uyeler: UyeListesi) -> PartiAnlik:
     return PartiAnlik(
-        parti_id=bilgi.parti_id, ad=bilgi.ad, uyeler=uyeler.uyeler, uyeler_tamam=uyeler.tamam
+        parti_id=bilgi.parti_id, ad=bilgi.ad, uyeler=uyeler.uyeler, uyeler_tamam=uyeler.tamam,
+        sinirli=uyeler.sinirli, toplam_uye=bilgi.member_count, xp_sirali=uyeler.xp_sirali,
     )
