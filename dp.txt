@@ -1,0 +1,620 @@
+VPS üzerinde sürekli çalışacak, Diplomacia oyunundaki oyuncuları, partileri ve savaşları takip eden, Telegram üzerinden yönetilen bir bot geliştir.
+
+Yalnızca plan veya örnek kod verme. Projeyi oluştur, gerekli kodları yaz, önemli davranışları test et ve VPS kurulum talimatlarını hazırla. Teknik olarak doğrulayamadığın özellikleri çalışıyor gibi sunma.
+
+## 1. Geliştirme yaklaşımı
+
+- Gerektiğinde geliştirme, araştırma, kod inceleme ve test işleri için paralel agent kullan. Agent sayısını keyfî bir sayıyla sınırlama; mevcut ortamın ve hesabın gerçek limitleri içinde ihtiyaca göre kullan.
+- Agent kullanımı yalnızca geliştirme süreci içindir. Çalışan Telegram botunun bir yapay zekâ modeline veya sürekli çalışan agentlara ihtiyacı olmayacak.
+- Önce sitenin veri yapısını ve erişim yöntemini araştır; ardından uygulamayı geliştir.
+- Olağan teknik kararları kendin ver. Gerçek bir engel veya gerekli erişim bilgisi eksikliği olmadıkça her adımda onay isteme.
+- Sade, bakımı kolay, gereksiz servislerden oluşmayan bir yapı kur.
+- Tercihen Python, Telegram için uygun bir kütüphane ve SQLite kullan. Farklı bir tercih yaparsan gerekçesini açıkla.
+- Telegram arayüzü ve kullanıcı mesajları Türkçe olsun.
+
+## 2. Site ve örnek bağlantılar
+
+Ana site:
+https://diplomacia.com.tr/
+
+Örnek oyuncu:
+https://diplomacia.com.tr/player/72400
+
+Örnek mevcut bölge:
+https://diplomacia.com.tr/profile/region/varna
+
+Örnek vatandaşlık ülkesi:
+https://diplomacia.com.tr/profile/country/3ac6303e-5181-4168-9a9d-47c91449a3c8
+
+Savaşlar:
+https://diplomacia.com.tr/wars
+
+Örnek Parti
+https://diplomacia.com.tr/party/5830
+
+Mevcut bölge ile vatandaşlık ülkesini ayrı bilgiler olarak işle. Ülke bağlantısını mevcut konum gibi yorumlama.
+
+Parti bağlantısının biçimini siteyi inceleyerek belirle. Gerekirse benden örnek parti bağlantısı iste; bağlantı biçimini veya API adreslerini uydurma.
+
+## 3. Veriye erişim ve hesap bağlantısı
+
+- Veriler, benim sağladığım oyun hesabının tokenı ile alınacak.
+- Öncelikle sitenin kullandığı veri isteklerini ve kimlik doğrulama yöntemini incele.
+- Oyuncu, parti üyeleri, vatandaşlık ve savaş bilgilerini sağlayan gerçek veri kaynaklarını doğrula.
+- Gerçek API adreslerini, alan adlarını, sayfalama yöntemini ve hata cevaplarını incelemeden varsayımsal entegrasyon oluşturma.
+- Uygun bir veri arayüzü varsa doğrudan onu kullan. Tarayıcı otomasyonu gerekiyorsa nedenini açıkla.
+- Erişim kısıtlarını aşmaya veya başka kullanıcıların tokenlarını elde etmeye çalışma.
+- Tokenı kodun içine, Git deposuna, Telegram grup mesajlarına veya loglara yazma.
+- Token yenileme yalnızca kurucu tarafından, kurucunun botla özel sohbeti üzerinden yapılabilsin.
+- Yeni tokenın çalıştığını doğrulamadan mevcut tokenı değiştirme.
+- Tokenın yaklaşık haftalık yenilenmesi bekleniyor. Gerçek geçerlilik süresini araştır; doğrulanmadan kesin yedi gün varsayma.
+- Süresi doğrulanamıyorsa son başarılı token güncellemesinden itibaren haftalık hatırlatma yap.
+- Token daha erken geçersizleşirse bunu tespit et ve yalnızca kurucuya özel mesajla bildir.
+- Token geçersizken tekrarlı istek ve hata mesajı yağmuru oluşturma.
+- Yeni token doğrulandıktan sonra takip işlemleri kaldığı yerden devam etsin.
+
+## 4. Kullanıcı, grup ve kurucu yetkileri
+
+Üç ayrı kavram kullan:
+
+1. Kurucu: yapılandırmada Telegram kullanıcı kimliğiyle tanımlanan asıl sahip.
+2. Yetkili kullanıcılar: botun yönetim işlemlerini yapmasına izin verilen kişiler.
+3. Onaylı gruplar: botun grup içinde çalışmasına izin verilen Telegram grupları.
+
+Kurallar:
+
+- Grup kullanımı için hem grup onaylı olmalı hem işlemi yapan kullanıcı yetkili olmalı.
+- Bir grubun onaylı olması gruptaki herkese kullanım yetkisi vermesin.
+- Kontroller kullanıcı adıyla değil, Telegram sayısal kullanıcı ve grup kimlikleriyle yapılsın.
+- Yetkili kullanıcılar takip yönetimi, ayar değiştirme, kullanıcı yetkisi verme/alma ve grup onayı verme/kaldırma dahil bütün normal yönetim işlemlerini yapabilsin.
+- Kurucunun yetkisi başka kullanıcılar tarafından kaldırılamasın.
+- Özel sohbet yalnızca kurucuya açık olsun. Diğer yetkili kullanıcılar da botu özelden kullanamasın.
+- Token görüntüleme/değiştirme ve özel güvenlik bildirimleri yalnızca kurucuya ait olsun.
+- Kurucu özel sohbetten ilk kurulumu, kullanıcı yetkilendirmesini ve grup onaylarını yapabilsin.
+- Normal takip bildirimleri yalnızca ilgili onaylı gruba gönderilsin.
+- Yetkisiz kullanım denemeleri kurucuya özel mesajla bildirilsin. Biliniyorsa kullanıcı kimliği, grup kimliği, denenen işlem ve zaman yer alsın.
+- Aynı kullanıcı veya grubun tekrarlı denemeleri kurucuyu mesaj yağmuruna tutmasın; bildirimleri sınırlandır.
+- Botun onaysız gruba eklenmesi, yetkisiz komutlar ve buton işlemleri de denetlensin.
+- Bütün komutlarda ve butonlarda yetki kontrolü uygulansın.
+- Grubun onayı kaldırıldığında o gruptaki taramalar ve gönderimler dursun.
+
+## 5. Her grubun bağımsız çalışması
+
+Ortak takip listesi oluşturma.
+
+- Her onaylı grubun oyuncu listesi, parti listesi ve tarama ayarı ayrı olsun.
+- Bir grupta oyuncu eklemek veya silmek diğer grupları etkilemesin.
+- Bildirimler yalnızca değişikliğin ilgili olduğu gruplara gitsin.
+- Aynı oyuncu birden fazla grupta takip ediliyorsa mümkün olduğunda veri isteğini paylaşabilirsin; fakat grupların listelerini, önceki gözlemlerini ve bildirim durumlarını birbirine karıştırma.
+- Bir grupta takipten çıkarılan oyuncu diğer gruplarda takipte kalabilsin.
+
+## 6. Oyuncu ekleme ve takip
+
+Oyuncuyu şu şekilde komutla ekleyebilmeliyim:
+
+/oyuncu_ekle https://diplomacia.com.tr/player/72400
+
+Bot:
+
+- Bağlantıyı doğrulasın.
+- Oyuncunun adını, mevcut bölgesini ve vatandaşlık ülkesini okusun.
+- İlk bilgileri kaydederek oyuncuyu ilgili grubun takibine eklesin.
+- İlk eklemede mevcut durum özeti göndersin; bunu değişiklik bildirimi gibi göstermesin.
+- Aynı oyuncunun aynı gruba tekrar eklenmesini engellesin.
+
+Oyuncuları Telegram arayüzünde isimleriyle göster. İsim değişikliklerini anlayabilmek ve kayıtları doğru eşleştirmek için arka planda sabit oyuncu kimliğini sakla.
+
+Takip edilecek değişiklikler:
+
+- Oyuncu adı.
+- Mevcut bölge.
+- Vatandaşlık ülkesi.
+
+Değişiklik bildiriminde:
+
+- Oyuncunun güncel adı ve profil bağlantısı.
+- Değişen alan.
+- Eski değer.
+- Yeni değer.
+- Tespit zamanı.
+
+Örnek:
+
+📍 Oyuncu bölge değiştirdi
+Oyuncu: Örnek Oyuncu
+Önceki bölge: Varna
+Yeni bölge: İstanbul
+Tespit: 19.10.2026 15:20
+
+Bu, aralıklı kontroldür. Tespit zamanını kesin hareket zamanı olarak sunma. Kontroller arasında gerçekleşip geri alınan değişiklikleri gözlemleyemeyebileceğini dokümantasyonda açıkla.
+
+Aynı oyuncuda bir taramada birden fazla alan değişmişse mümkün olduğunda tek anlaşılır mesajda birleştir.
+
+Oyuncu listesi, oyuncu ayrıntısı ve oyuncuyu takipten çıkarma işlemleri bulunsun. Silme işlemlerinde aynı isimli oyuncuları kimlikleriyle ayırt et.
+
+## 7. Parti takibi
+
+Bir parti bağlantısını komutla ekleyebilmeliyim.
+
+Parti eklendiğinde:
+
+- Partinin adını ve sabit kimliğini belirle.
+- Mevcut üyelerin tamamını, gerekiyorsa bütün sayfaları okuyarak tespit et.
+- Her üyeyi aynı gruba tek tek oyuncu eklenmiş gibi takibe al.
+- İlk üye listesini başlangıç durumu olarak kaydet.
+- İlk eklemede mevcut üyeler için “partiye katıldı” bildirimi üretme.
+- Eklenen ve zaten takipte olan üye sayılarını özetle.
+
+Sonraki taramalarda:
+
+- Partiye yeni katılan oyuncuyu bildir ve otomatik takibe al.
+- Partiden ayrılan oyuncuyu bildir.
+- Partiden ayrılmış oyuncunun bireysel takibini sürdür.
+- Parti isim değiştirirse eski ve yeni adını bildir.
+- Aynı oyuncu elle ve parti aracılığıyla eklenmiş olsa da aynı grup içinde tek oyuncu takibi ve tek değişiklik bildirimi olsun.
+
+### Parti takibini kaldırmanın kesin davranışı
+
+Bir partinin takibi kaldırıldığında:
+
+1. Partinin kaldırma anındaki güncel üyelerini doğrula.
+2. O anda partide bulunan bütün oyuncuları ilgili grubun oyuncu takibinden çıkar.
+3. Bu oyuncular elle de eklenmiş olsa, bu açık kuralı uygula.
+4. Önceden bu partide bulunmuş fakat kaldırma anında artık üyesi olmayan oyuncuların takibi devam etsin.
+5. Önceden ayrılıp başka partiye geçmiş oyuncular da takipte kalsın.
+6. İşlem diğer grupların takiplerini etkilemesin.
+7. Partinin kendi takibini de kaldır.
+
+Örnek:
+
+- Parti ilk eklendiğinde üyeleri A, B ve C.
+- Daha sonra C ayrılıyor, D katılıyor.
+- Parti kaldırıldığı anda üyeler A, B ve D.
+- A, B ve D’nin ilgili gruptaki takibi kaldırılır.
+- C’nin takibi devam eder.
+
+Güncel üyelik listesi alınamıyorsa eski listeyi güncel kabul ederek oyuncu silme. İşlemi gerçekleştirmeden neden tamamlanamadığını açıkla.
+
+Kaldırmadan önce etkilenecek oyuncu sayısını gösteren onay butonu sun. Onay anında üyeliği yeniden doğrula; etkilenecek liste değişmişse güncellenmiş özeti tekrar onaya sun.
+
+Kaldırılan oyuncu başka bir takip edilen partinin üye listesinde görünüyorsa sonraki rutin taramada sessizce yeniden eklenmesin. Bu çatışmayı açıkça ele al; otomatik yeniden eklenmeyi engelleyen grup düzeyinde kayıt tut. Kullanıcının oyuncuyu yeniden eklemesi veya oyuncunun takip edilen bir partiye daha sonra gerçekten yeniden katılması bu engeli kaldırabilsin.
+
+## 8. Savaş takibi
+
+- Yeni açılan savaşları tespit et ve ilgili onaylı gruplara otomatik bildir.
+- İlk kurulum veya bir grubun ilk etkinleştirilmesi sırasında mevcut savaşların tamamını yeni açılmış gibi gönderme.
+- Savaşları sabit kimlikleriyle eşleştir; aynı savaş için tekrarlı yeni savaş bildirimi gönderme.
+- “Savaşlar” butonu veya /savaslar komutuyla mevcut bütün aktif savaşları listele.
+- Liste uzunsa sayfalama kullan.
+- Savaş seçildiğinde mevcut veriler ölçüsünde savaş adı, taraflar, tarafların verdiği hasarlar, durum ve bağlantı gösterilsin.
+- Sonuçların güncellik zamanı görülsün.
+- Liste veya ayrıntı açıldığında güncel veriyi al; alınamıyorsa son veriyi açıkça tarih bilgisiyle göster veya veriye erişilemediğini bildir.
+- Hasar artışları için otomatik bildirim gönderme.
+- Hasar verileri yalnızca kullanıcı savaşlar bölümünü açtığında veya yenileme istediğinde gösterilsin.
+- Henüz mevcut olmayan bir alanı sıfır gibi sunma.
+
+## 9. Tarama aralıkları
+
+Kodda merkezi ve açık bir yapılandırma bulunsun:
+
+ALLOWED_SCAN_INTERVALS_MINUTES = [5, 10, 15, 20]
+DEFAULT_SCAN_INTERVAL_MINUTES = 10
+
+- Her grubun tarama aralığı ayrı seçilebilsin.
+- Ayar Telegram komutu ve butonlarıyla değiştirilebilsin.
+- Yalnızca bu dört seçenek kabul edilsin.
+- Seçilen aralık oyuncu, parti üyeliği ve yeni savaş kontrolleri için geçerli olsun.
+- Aynı işin önceki taraması bitmeden yenisi başlamasın.
+- Bir gruptaki yavaşlık diğer grupları gereksiz yere durdurmasın.
+- Siteye sınırsız eşzamanlı istek atma. Kontrollü eşzamanlılık, zaman aşımı ve gerektiğinde geri çekilme uygula.
+- Site istek sınırına takılırsa bunu tanı ve uygun bekleme uygula.
+- Gerçekleşmeyen taramayı başarılı gibi kaydetme.
+
+## 10. Kalıcı kayıt
+
+Proje içinde küçük bir data/ klasörü ve SQLite dosyası kullan.
+
+En az şu bilgiler yeniden başlatmada korunsun:
+
+- Yetkili kullanıcılar.
+- Onaylı gruplar.
+- Gruba özel ayarlar.
+- Takip edilen oyuncular ve partiler.
+- Oyuncuların son başarılı bilgileri.
+- Partilerin son doğrulanmış üye listeleri.
+- Bilinen savaşlar.
+- Tekrarlı bildirimleri engelleyen durum.
+- Son başarılı tarama zamanları.
+- Takipten çıkarma ve otomatik yeniden ekleme engelleri.
+
+Telegram mesaj geçmişini veritabanının yerine kullanma.
+
+Yeniden başlatma sonrasında ilk kurulum gibi davranma; mevcut kayıtlarla devam et. İlk kez eklenen bir varlık ile daha önce takip edilip yeniden başlatma sonrası kontrol edilen varlığı ayırt et.
+
+Tokenı bu veritabanına açık biçimde yerleştirmek yerine uygun izinleri olan ayrı bir yerel yapılandırmada tut. Yerel dosya erişim yetkilerini ve yedekleme davranışını belgele. Token içeren dosyalar depoya eklenmesin.
+
+## 11. Hata ve bildirim yönetimi
+
+Şunları birbirinden ayırt et:
+
+- Geçersiz veya süresi dolmuş token.
+- Ağ zaman aşımı.
+- Sitenin geçici olarak erişilememesi.
+- İstek sınırı.
+- Eksik veya beklenmeyen veri.
+- Oyuncu ya da partinin doğrulanmış biçimde artık bulunmaması.
+- Telegram mesaj gönderim hatası.
+
+Kurallar:
+
+- Başarısız isteği konum, vatandaşlık veya isim değişikliği sayma.
+- Eksik ya da sayfalaması tamamlanmamış parti listesini üye çıkışı olarak yorumlama.
+- Eski doğru veriyi hatalı cevapla ezme.
+- Aynı değişikliği her taramada yeniden bildirme.
+- Değişiklik kaydı ve bildirim gönderimini, geçici Telegram hatasında bildirimin kaybolmayacağı şekilde tasarla.
+- Başarısız gönderimleri kontrollü yeniden dene.
+- Yeniden denemelerde mümkün olan en iyi tekrar önlemeyi uygula; dış serviste tam bir “yalnızca bir kez teslim” garantisi veremiyorsan bunu belgeleyerek dürüstçe belirt.
+- Yetki kaldırılan gruba bekleyen bildirim gönderme.
+- Grup mesajları ve oyuncu adlarından gelen özel karakterleri Telegram biçimlendirmesine uygun kaçır.
+- Loglarda token veya başka sır bulunmasın.
+- Hata kayıtları teşhis için yeterli olsun; gereksiz kişisel veri toplama.
+
+## 12. Telegram arayüzü
+
+Hem komutlar hem anlaşılır butonlar kullan.
+
+Ana menü:
+
+- Oyuncular
+- Partiler
+- Savaşlar
+- Tarama Ayarları
+- Bot Durumu
+- Yönetim
+- Yardım
+
+Örnek komutlar:
+
+/oyuncu_ekle <profil_linki>
+/oyuncular
+/oyuncu_sil <oyuncu_kimligi>
+/parti_ekle <parti_linki>
+/partiler
+/parti_sil <parti_kimligi>
+/savaslar
+/tarama <5|10|15|20>
+/durum
+/yetki_ver <telegram_kullanici_kimligi>
+/yetki_al <telegram_kullanici_kimligi>
+/grup_onayla <telegram_grup_kimligi>
+/grup_kaldir <telegram_grup_kimligi>
+/yardim
+
+Gerekirse komutları teknik gerekliliklere göre düzenle; Türkçe açıklamalarını koru.
+
+- Uzun listelerde sayfalama olsun.
+- Oyuncu ve parti bağlantılarına tıklanabilsin.
+- Silme ve yetki kaldırma gibi etkili işlemler butonla doğrulansın.
+- Butonlar tıklandığında güncel yetki yeniden kontrol edilsin.
+- Başka gruba ait işlem kimliğiyle işlem yapılamasın.
+- Eski veya süresi dolmuş butonlar anlaşılır cevap versin.
+- Kurucunun özel sohbet menüsünde token yenileme ve başlangıç yönetimi bulunsun.
+- Diğer kullanıcılara özel sohbet işlevi açma.
+
+Bot Durumu bölümünde ilgili grup için:
+
+- Oyuncu sayısı.
+- Parti sayısı.
+- Tarama aralığı.
+- Son başarılı kontrol.
+- Sonraki planlanan kontrol.
+- Devam eden tarama durumu.
+- Genel bağlantı durumu.
+
+Tokenın kendisini veya gizli ayrıntılarını gösterme.
+
+## 13. VPS kurulumu ve işletim
+
+- Linux VPS üzerinde çalışacak şekilde hazırla.
+- Tek VPS ve tek bot süreci için sade bir kurulum hedefle.
+- Telegram long polling uygunsa tercih et; alan adı ve HTTPS gerekliliği oluşturma.
+- Bağımlılıkları ve desteklenen çalışma ortamını açıkça belirt.
+- Örnek .env dosyası oluştur; gerçek sır ekleme.
+- BOT_TOKEN ve OWNER_TELEGRAM_ID gibi gerekli alanları belgele.
+- systemd servis örneği sağla.
+- Sunucu yeniden başladığında otomatik çalışsın.
+- Uygulama çökerse kontrollü yeniden başlasın.
+- Kapanırken devam eden işleri ve veritabanını güvenli şekilde kapatsın.
+- Verilerin servis yeniden başlatmalarında korunacağı dizini açıkça belirt.
+- Log görüntüleme, güncelleme, durdurma ve yedekten geri yükleme talimatları yaz.
+- Kullanıcıya gösterilen zamanlar Europe/Istanbul saat diliminde olsun; kayıt için UTC kullanabilirsin.
+
+## 14. Test ve doğrulama
+
+Özellikle şu iş kurallarını anlamlı testlerle doğrula:
+
+1. İlk oyuncu ekleme değişiklik bildirimi üretmez.
+2. İsim değişikliği aynı oyuncu kimliği üzerinden algılanır.
+3. Bölge ve vatandaşlık birbirinden bağımsız izlenir.
+4. Aynı değişiklik tekrar bildirilmez.
+5. Eksik cevap önceki doğru veriyi bozmaz.
+6. İlk parti kaydı mevcut üyeler için giriş bildirimi üretmez.
+7. Yeni parti üyesi otomatik takibe alınır.
+8. Partiden ayrılan oyuncu takipte kalır.
+9. Parti kaldırıldığında yalnızca o anki üyeler ilgili grubun takibinden çıkarılır; eski üyeler kalır.
+10. Parti kaldırma için güncel üyeler doğrulanamıyorsa silme yapılmaz.
+11. Grupların takip listeleri ve ayarları ayrıdır.
+12. Onaysız grup veya yetkisiz kullanıcı işlem yapamaz.
+13. Kurucu dışındaki kullanıcılar özel sohbeti ve token yönetimini kullanamaz.
+14. Yetkisi alınan kullanıcı eski butonlarla işlem yapamaz.
+15. Yeniden başlatmada takipler ve önceki bilgiler korunur.
+16. İlk savaş taraması bildirim yağmuru oluşturmaz.
+17. Hasar değişiklikleri otomatik mesaj üretmez.
+18. Geçici Telegram hatasında bildirim kontrollü şekilde yeniden denenir.
+19. Grup onayı kaldırıldıktan sonra bekleyen mesajlar gönderilmez.
+20. Aynı oyuncu farklı ekleme yollarıyla mükerrer takip edilmez.
+
+Gerçek token veya erişim olmadan yalnızca test verisiyle doğruladığın bölümleri açıkça belirt. Test verileriyle çalışan entegrasyonu canlıda doğrulanmış gibi sunma.
+
+## 15. Teslim
+
+Şunları hazırla:
+
+- Tam kaynak kod.
+- Bağımlılık dosyası.
+- Örnek yapılandırma.
+- Veri klasörü düzeni.
+- systemd servis dosyası.
+- Türkçe README.
+- Komut ve buton kullanım açıklamaları.
+- Kurulum ve token yenileme adımları.
+- İlgili testler.
+- Gerçek verilerle doğrulanan ve henüz doğrulanamayan entegrasyonların kısa listesi.
+
+Önce kısa bir uygulama planı çıkar, ardından geliştirmeye devam et. Gerçek erişim gerektiren bir noktada engellenirsen tamamlayabildiğin bölümleri bitir; kalan engeli ve benden gereken kesin bilgiyi açıkça yaz. Eksik canlı entegrasyonu gizleyen sahte başarı davranışı oluşturma.
+
+
+## 16. Claude Code — Akıllı Ajan Koordinasyonu ve Görev Yönetimi
+
+### 16.1. Genel çalışma ilkesi
+
+Bu proje için Claude Code'un mevcut özel uzman ajanlarını, Skills, MCP araçlarını, proje hafızasını ve test altyapısını kullan.
+
+Ana koordinatör, geliştirmenin tamamından sorumludur. Kullanıcı yalnızca proje gereksinimlerini verir; olağan görev dağıtımı ve teknik kararlar koordinatör tarafından yönetilir.
+
+**Temel kurallar:**
+
+- Gereksiz ajan oluşturma.
+- Basit bir işlem tek ajanla tamamlanabiliyorsa başka ajan çağırma.
+- Birden fazla bağımsız görev olduğunda paralel çalışmayı değerlendir.
+- Birbirine bağımlı işleri doğru sırada yürüt.
+- Her görev için en düşük yeterli model seviyesini tercih et.
+- Büyük görevleri küçük, ölçülebilir ve doğrulanabilir parçalara böl.
+- Başarısız denemeleri körü körüne tekrarlama.
+- Daha önce yapılmış araştırmayı ve doğrulanmış sonuçları gereksiz yere yeniden üretme.
+- Ajanlara yalnızca görevlerinin gerektirdiği araçları ve yetkileri ver.
+- Mevcut Claude Pro kullanım limitlerini gözet.
+- Kullanılmayan ajanları veya uzmanlık rollerini sırf hazır oldukları için çalıştırma.
+
+### 16.2. Modellerin görev dağılımı
+
+**Haiku — Araştırma ve bilgi toplama**
+
+Öncelikli sorumlulukları:
+
+- Diplomacia sitesinin yapısını incelemek.
+- Gerçek API kaynaklarını araştırmak.
+- Oyuncu, parti, ülke, bölge ve savaş verilerini sınıflandırmak.
+- Proje dosyalarını ve mevcut kodları araştırmak.
+- Güncel dokümantasyonları bulmak.
+- Diğer ajanların ihtiyaç duyduğu bilgileri özetlemek.
+- Proje hafızasından ilgili önceki kararları getirmek.
+
+Haiku normalde üretim kodu yazmamalıdır. Araştırma sonuçlarını kısa, somut ve doğrulanabilir şekilde sunmalıdır.
+
+Bir konu kapasitesini aşıyorsa bunu koordinatöre bildirmeli ve neden daha güçlü bir modele ihtiyaç duyulduğunu açıklamalıdır.
+
+**Sonnet — Ana geliştirme modeli**
+
+Öncelikli sorumlulukları:
+
+- Python uygulamasının geliştirilmesi.
+- Diplomacia API istemcisinin oluşturulması.
+- Telegram komutları ve butonlarının uygulanması.
+- SQLite veritabanı ve takip sisteminin geliştirilmesi.
+- Oyuncu, parti ve savaş değişikliklerinin tespit edilmesi.
+- Token yenileme ve hata yönetimi.
+- VPS/systemd kurulumu için yapılandırma hazırlanması.
+- Testlerin yazılması ve çalıştırılması.
+- Normal hataların düzeltilmesi.
+
+Geliştirme işlerinin büyük bölümünü Sonnet üstlenmelidir.
+
+**Sonnet QA — Bağımsız kontrol**
+
+Anlamlı değişikliklerden sonra gerektiğinde ayrı QA ajanı kullan.
+
+QA ajanı:
+
+- Gereksinimlerle kod davranışını karşılaştırır.
+- Test sonuçlarını değerlendirir.
+- Yetkilendirme ve grup izolasyonunu inceler.
+- Veri tutarlılığı hatalarını araştırır.
+- Eksik test senaryolarını bildirir.
+- Bulduğu hataları önem derecesine göre sınıflandırır.
+
+QA ajanı salt okunur çalışmalı, kaynak kodunu değiştirmemelidir.
+
+**Opus — Kritik inceleme ve zor problemlerin çözümü**
+
+Opus yalnızca aşağıdaki durumlarda çağrılmalıdır:
+
+- Kritik mimari kararlar.
+- Token veya yetkilendirme güvenliği.
+- Veri kaybı ya da gruplar arasında veri karışması riski.
+- Karmaşık eşzamanlılık ve yarış koşulları.
+- Parti üyeliği ve toplu takip silme gibi kritik işlemler.
+- Sonnet'in iki farklı, anlamlı düzeltme denemesine rağmen çözemediği doğrulanmış hatalar.
+- Projenin bütünlüğünü etkileyebilecek önemli sorunlar.
+
+Opus'un yalnızca inceleme yapması yeterliyse kod değiştirme yetkisi verme.
+
+Sonnet'in çözemediği ciddi bir problem varsa `zor-kod` uzmanıyla Opus kodlama görevini devralabilir.
+
+Her küçük değişiklik için Opus incelemesi yapma.
+
+### 16.3. Uzman ajanların seçimi
+
+Mevcut yerel uzmanları ve VoltAgent koleksiyonunu kullan.
+
+Diplomacia projesinde özellikle şu uzmanlıkları değerlendir:
+
+- `arastirmaci`: Site, dokümantasyon ve veri araştırması.
+- `api`: API istemcisi, yanıt şemaları, sayfalama ve kimlik doğrulama.
+- `oyun`: Oyuncu, parti, ülke, bölge ve savaş alanlarının modellenmesi.
+- `gelistirici`: Genel Python geliştirme.
+- `qa`: Test ve bağımsız inceleme.
+- `kritik-inceleme`: Opus ile yüksek riskli kod kontrolü.
+- `zor-kod`: Sonnet'in çözemediği ciddi sorunları devralma.
+- `devops`: Linux VPS, systemd, servis ve log yapılandırması.
+- `hafiza`: Önemli proje kararlarının hafızaya kaydedilmesi.
+
+Aynı işi yapan iki uzmanı gereksiz yere çağırma.
+
+Mevcut uzmanlar yeterliyse yeni ajan oluşturma. Gerçekten yeni bir uzmanlık gerekiyorsa önce geçici görev tanımı kullan. Kalıcı ajan tanımı veya yeni eklenti kurulumu için kullanıcı onayı iste.
+
+### 16.4. Görevlerin dağıtılması
+
+Önce mevcut proje dosyalarını, proje hafızasını ve varsa önceki uygulama planını incele.
+
+Ardından işi şu aşamalara ayır:
+
+1. Diplomacia sitesinin ve gerçek veri kaynaklarının incelenmesi.
+2. API araştırması ve doğrulanmış veri şemalarının belgelenmesi.
+3. Veritabanı ve temel takip mimarisi.
+4. Telegram yetkilendirme ve yönetim arayüzü.
+5. Oyuncu takibi.
+6. Parti üyeliği ve parti kaldırma işlemleri.
+7. Savaş takibi.
+8. Tarama zamanlayıcısı, hata yönetimi ve bildirim kuyruğu.
+9. VPS kurulumu ve servis yönetimi.
+10. Entegrasyon testleri, güvenlik incelemesi ve son doğrulama.
+
+Bağımsız görevleri paralel yürüt.
+
+Örneğin, doğrulanmış veri sözleşmeleri hazırsa Telegram arayüzü ve bazı veritabanı işlemleri ayrı ajanlar tarafından geliştirilebilir.
+
+Ancak API araştırması tamamlanmadan doğrulanmamış veri şemalarına dayalı canlı entegrasyon geliştirme.
+
+Aynı dosyaların birden fazla ajan tarafından eşzamanlı değiştirilmesini önle. Gerekirse ayrı Git worktree kullan.
+
+### 16.5. MCP ve diğer araçların kullanımı
+
+Araçları yalnızca ihtiyaç halinde çağır.
+
+- **Chrome DevTools MCP:** Diplomacia sitesindeki sayfa ve ağ isteklerini incelemek için.
+- **Agent Browser:** İzinli tarayıcı etkileşimleri ve işlev testleri için.
+- **Context7:** Kullanılan Python/Telegram kütüphanelerinin güncel dokümantasyonu gerektiğinde.
+- **GitNexus:** Kod tabanı yeterince büyüdüğünde fonksiyon ve bağımlılık ilişkilerini analiz etmek için.
+- **Planning with Files:** Uzun geliştirme planını ve tamamlanma durumlarını korumak için.
+- **Superpowers:** Kontrollü geliştirme, hata ayıklama ve test yöntemlerinde.
+- **Claude HUD ve ccusage:** Çalışma durumunu ve kullanım tüketimini gözlemlemek için.
+
+Aynı amaçla birden fazla aracı gereksiz yere çağırma.
+
+Uzun HTML, JSON, log veya ağ trafiği kayıtlarının tamamını modele aktarmak yerine öncelikle ilgili alanları çıkar. Ancak hata teşhisinde gerekli kanıtları kaybetme.
+
+### 16.6. Hata çözme ve model yükseltme
+
+Bir hata oluştuğunda şu sırayı izle:
+
+1. Hatayı mümkünse yeniden üret.
+2. Gerçek hata çıktısını veya başarısız test sonucunu kaydet.
+3. Sonnet kök nedeni analiz etsin.
+4. Sonnet ilk düzeltmeyi uygulasın ve testi tekrar çalıştırsın.
+5. Başarısızsa aynı yöntemi tekrarlamak yerine kanıta dayalı farklı çözüm denesin.
+6. İki anlamlı deneme başarısız olduysa veya sorun baştan kritikse Opus'a devret.
+7. Opus önceki denemeleri ve kanıtları inceleyip gerekirse kodu düzeltsin.
+8. Düzeltmeden sonra bağımsız test ve inceleme yapılsın.
+
+Başarısızlığı gizleme, testleri değiştirilmiş beklentilerle yapay olarak başarılı gösterme veya hataları atlayarak ilerleme.
+
+Sonsuz düzeltme döngüsüne girme. Gerçek bir engel varsa bunu raporla.
+
+### 16.7. Kritik güvenlik ve veri bütünlüğü kontrolleri
+
+Özellikle şu konularda bağımsız test ve gerektiğinde Opus incelemesi uygula:
+
+- Kurucu ve yetkili kullanıcı ayrımı.
+- Telegram sayısal kimlikleriyle yetkilendirme.
+- Grup bazında veri ve bildirim izolasyonu.
+- Oyun tokenının gizli tutulması ve yenilenmesi.
+- Parti kaldırıldığında güncel üyelerin doğru belirlenmesi.
+- Aynı oyuncunun mükerrer takip edilmemesi.
+- Eksik API yanıtının yanlış oyuncu veya üyelik değişikliği sayılmaması.
+- Silinen takiplerin yanlışlıkla yeniden oluşturulmaması.
+- Eşzamanlı taramalarda yarış koşulları.
+- Telegram mesaj gönderim hataları ve kontrollü yeniden deneme.
+- Yeniden başlatma sonrasında takip kayıtlarının korunması.
+
+Bu işlemlerde yalnızca modelin değerlendirmesine güvenme. Mümkün olduğunda otomatik test ve gerçek veri doğrulaması kullan.
+
+### 16.8. Proje hafızası
+
+Önemli kilometre taşlarından sonra mevcut `hafiza` uzmanını gerektiğinde çağır.
+
+Aşağıdaki bilgileri kaydet:
+
+- Doğrulanmış Diplomacia API adresleri ve veri şemaları.
+- Kullanılan teknoloji ve kütüphaneler.
+- Veritabanı mimarisi.
+- Önemli teknik kararlar ve gerekçeleri.
+- Çözülen hatalar ve başarısız çözüm girişimleri.
+- Tamamlanan ve yarım kalan özellikler.
+- Canlı ortamda doğrulanması gereken noktalar.
+- Sonraki oturumda devam edilmesi gereken görevler.
+
+Gizli tokenları, şifreleri ve gereksiz kişisel verileri hafızaya yazma.
+
+Eski oturum bilgilerini kesin doğru kabul etme; değişebilecek API davranışlarını gerektiğinde yeniden doğrula.
+
+### 16.9. Kullanım limiti ve verimlilik
+
+Claude Pro kullanım limitlerini korumaya çalış.
+
+- Öncelikle tek ajanla çözülebilecek işleri belirle.
+- Paralel ajan sayısını gerçek iş ihtiyacına göre seç.
+- Her araştırma için yeni ajan oluşturma.
+- Haiku'nun doğrulanmış sonuçlarını Sonnet'e özet olarak aktar.
+- Aynı araştırmayı farklı ajanlara sebepsiz tekrar yaptırma.
+- Opus'u sıradan kod değişikliklerinde kullanma.
+- Bağımsız QA incelemesini risk ve değişiklik büyüklüğüne göre çalıştır.
+- Geniş test paketlerini her küçük değişiklikte değil, uygun aşamalarda çalıştır.
+- Kod yazma dışındaki rutin veri toplama işlemlerini mümkün olduğunca normal Python servislerine bırak.
+
+Token tasarrufu için doğrulama kalitesinden veya güvenlikten ödün verme.
+
+### 16.10. Tamamlama ve raporlama
+
+Bir aşama ancak şu koşullarda tamamlanmış sayılsın:
+
+- İstenen davranış uygulanmış olmalı.
+- İlgili testler çalıştırılmış olmalı.
+- Testlerin gerçek sonuçları kaydedilmeli.
+- Kritik ve doğrulanmış hatalar çözülmüş olmalı veya açıkça bildirilmiş olmalı.
+- Mock testler ile canlı entegrasyon testleri ayrı gösterilmeli.
+- Önemli kararlar proje hafızasına işlenmeli.
+
+Her aşamanın sonunda kısa Türkçe rapor ver:
+
+- Tamamlanan işler.
+- Kullanılan uzman ajanlar ve modeller.
+- Değiştirilen önemli dosyalar.
+- Çalıştırılan testler ve sonuçları.
+- Tespit edilen sorunlar.
+- Eksik canlı doğrulamalar.
+- Sonraki aşama.
+
+Projeyi yalnızca ajanlar tamamlandığını söyledi diye bitirme.
+
+**Nihai hedef:** Doğrulanmış, bakımı kolay, güvenli ve VPS üzerinde sürekli çalışabilecek bir Diplomacia Telegram botu geliştirmek. Ajan sayısı veya model kullanım miktarı değil, çalışan yazılımın doğruluğu ve sürdürülebilirliği başarı ölçütü olsun.

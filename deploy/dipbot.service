@@ -1,0 +1,69 @@
+# /etc/systemd/system/dipbot.service
+# TASLAK - DOGRULANMADI: gercek sistemde `systemd-analyze verify dipbot.service` calistirilmali.
+#
+# Giris noktasi koddan dogrulandi: src/dipbot/__main__.py -> `python -m dipbot`.
+#
+# Duzen: kod /opt/dipbot, venv /opt/dipbot/.venv, veri /var/lib/dipbot (SQLite + WAL/SHM + diplomacia.token),
+# ortam dosyasi /etc/dipbot/dipbot.env (BOT_TOKEN burada; veritabaninda degil).
+#
+# UYGULAMANIN YAZDIGI YERLER (koddan): DB_PATH dizini (DB, -wal, -shm) ve DIPLOMACIA_TOKEN_DOSYASI
+# (bos ise DB_PATH dizinindeki diplomacia.token; yazim ayni dizinde gecici dosya + os.replace ile yapilir,
+# yani DIZININ yazilabilir olmasi gerekir). dipbot.env'e uygulama YAZMAZ.
+# DB_PATH veya DIPLOMACIA_TOKEN_DOSYASI /var/lib/dipbot disina tasinirsa ReadWritePaths ayni sekilde guncellenmeli.
+
+[Unit]
+Description=Diplomacia GPS Botu (Telegram, tek surec)
+Wants=network-online.target
+After=network-online.target
+# Hizli cokme dongusunu sinirla: 10 dakikada 5 baslatmadan fazlasi denenirse unit "failed" olur.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=dipbot
+Group=dipbot
+WorkingDirectory=/opt/dipbot
+EnvironmentFile=/etc/dipbot/dipbot.env
+# Kod dizini salt okunur oldugundan .pyc yazimi denenmesin; loglar aninda journal'a gitsin.
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+# Kayit UTC; kullaniciya gosterim Europe/Istanbul uygulama tarafinda yapilir.
+Environment=TZ=UTC
+
+ExecStart=/opt/dipbot/.venv/bin/python -m dipbot
+
+Restart=on-failure
+RestartSec=10
+# Kalici hatalarda yeniden baslatma dongusu olmasin:
+#   2 = yapilandirma hatasi (BOT_TOKEN/OWNER_TELEGRAM_ID eksik/gecersiz)
+#   3 = Telegram bot tokeni gecersiz veya Conflict (ayni token ile baska ornek getUpdates yapiyor)
+# Bu kodlarla cikinca systemd yeniden baslatmaz; unit "failed" kalir, duzeltip elle baslatilir.
+# (RestartPreventExitStatus= gecerli bir systemd [Service] direktifidir; sunucuda dogrulanmadi.)
+RestartPreventExitStatus=2 3
+# Kapanista SIGTERM ile zarif kapanis. Uygulama: polling durur, tarama gorevine 10 sn tanir, sonra
+# iptal eder, uygulama + DB kapatir (kod: TARAMA_KAPANIS_BEKLEME_SN=10). 30 sn bunun uzerine
+# ag/kapanis payi birakir; sure dolarsa SIGKILL.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Yeni dosyalar yalniz sahibine acik (0600/0700)
+UMask=0077
+
+# Sertlestirme
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+# DB + WAL/SHM ve diplomacia.token (ayni dizin). Yazim gecici dosya + rename oldugundan dizin yazilabilir olmali.
+ReadWritePaths=/var/lib/dipbot
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,8 @@
+# Çalışma zamanı (çekirdek yalnız standart kütüphane + zaman dilimi verisi kullanır)
+# Python 3.11+
+tzdata>=2024.1        # Windows'ta Europe/Istanbul için gerekli; Linux'ta zararsız
+# Telegram arayüzü (long polling). Sürüm pip ile kurularak doğrulandı: 22.8.
+python-telegram-bot==22.8
+
+# Test
+pytest>=8.0

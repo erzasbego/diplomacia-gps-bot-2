@@ -1,0 +1,79 @@
+{
+  "_not": "Kullanicinin sagladigi gercek Diplomacia yanitlarindan KISALTILMIS kopya (yalnizca takip icin gerekli alanlar + birkac yok sayilmasi gereken alan). Token/cerez yok. Hangi adresten alindigi kullanici tarafindan belirtilmedi (bkz. API-ARASTIRMA.md 6).",
+  "player_response": {
+    "player": {
+      "id": "56b0a187-62fa-4e63-a459-f379a7a9a563",
+      "username": "Ayetullah Mutahhari",
+      "display_name": "[TEKNO] Ayetullah Mutahhari",
+      "country_id": "395543d8-c980-4c62-acf8-58e75d70a00d",
+      "country_name": "Macaristan Sosyalist Cumhuriyeti.",
+      "cabinet_role": "education",
+      "mp_country_id": null,
+      "mp_country_name": null,
+      "created_at": "2026-08-20T10:07:32.013Z",
+      "last_active": "2026-10-19T19:36:20.041Z",
+      "province_name": "Horasan",
+      "citizenship_province": null,
+      "citizenship_is_independent": null,
+      "citizenship_country_id": "395543d8-c980-4c62-acf8-58e75d70a00d",
+      "citizenship_country_name": "Macaristan Sosyalist Cumhuriyeti.",
+      "nation_code": "HRV",
+      "nation": {"code": "HRV", "label": "Hırvatistan", "flag": "🇭🇷"},
+      "level": 79,
+      "governor_province": null,
+      "is_banned": false,
+      "world_rank": 2759,
+      "badges": [{"id": "ilk_adim", "label": "İlk Adım"}],
+      "skills": {"kisla": 32}
+    }
+  },
+  "party_response": {
+    "party": {
+      "id": "f5248460-488a-4750-92a7-4ad55fd80a52",
+      "name": "TEKNO MERKEZ PARTİSİ",
+      "abbreviation": "TEKNO",
+      "ideology": "teknokrasi",
+      "is_open": true,
+      "leader_id": "57d67925-f1f8-497b-bd46-9ff1a6e73ab5",
+      "country_id": "839343a9-e636-4dd1-96b4-aa6fb24b7206",
+      "created_at": "2026-10-15T16:01:14.630Z",
+      "updated_at": "2026-10-17T06:11:10.715Z",
+      "headquarters": "Çad",
+      "party_number": 5830,
+      "country_name": "مملكة تشاد",
+      "leader_name": "BATUMLU",
+      "leader_player_number": 76737,
+      "member_count": 2,
+      "parliament_seats": 1,
+      "history_24h": 3
+    }
+  },
+  "party_members_response": {
+    "members": [
+      {
+        "player_id": "57d67925-f1f8-497b-bd46-9ff1a6e73ab5",
+        "party_role": "leader",
+        "player_number": 76737,
+        "username": "BATUMLU",
+        "xp": 2214953,
+        "country_name": "İran Baas Cumhuriyeti",
+        "display_name": "[TEKNO] BATUMLU",
+        "level": 82,
+        "is_loyal": true
+      },
+      {
+        "player_id": "56b0a187-62fa-4e63-a459-f379a7a9a563",
+        "party_role": "spokesperson",
+        "player_number": 72400,
+        "username": "Ayetullah Mutahhari",
+        "xp": 1765874,
+        "country_name": "Macaristan Sosyalist Cumhuriyeti.",
+        "display_name": "[TEKNO] Ayetullah Mutahhari",
+        "level": 79,
+        "is_loyal": false
+      }
+    ],
+    "role_limits": {"deputy": 1, "spokesperson": 1, "organizer": 2},
+    "loyal": {"count": 1, "diamond_salary": 10, "min_level": 70}
+  }
+}

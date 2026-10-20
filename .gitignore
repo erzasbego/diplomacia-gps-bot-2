@@ -1,0 +1,44 @@
+data/
+.env
+*.db
+*.db-wal
+*.db-shm
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# Token içeren yerel dosyalar
+*.token
+secrets/
+
+# --- Bulut/GitHub aktarımı için ek gizli-dosya korumaları (2026-10-20) ---
+# Token yedekleri ve geçici token dosyaları (eski token içerir)
+*.prev
+.token-*
+*.token*
+# Ortam dosyaları (örnek hariç)
+.env.*
+!.env.example
+# Veritabanı yedekleri ve çalışma verisi
+backups/
+*.bak
+*.sqlite
+*.sqlite3
+# Yerel araç/oturum ayarları
+.claude/settings.local.json
+.claude/projects/
+*.pem
+*.key
+
+# --- Kullanıcı kararı (2026-10-20): ajan hafızası ve yerel Claude klasörü ilk aktarıma DAHİL DEĞİL ---
+.claude/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+.idea/
+.vscode/
+Thumbs.db
+desktop.ini
