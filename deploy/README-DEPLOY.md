@@ -129,6 +129,8 @@ Koda göre (`tg/calistir.py`) SIGTERM/SIGINT alınınca polling durur, çalışa
 
 ## Güncelleme
 
+**Önerilen:** `sudo /opt/dipbot/deploy/guncelle.sh [ref]` — yedeği ZORUNLU kılar (yedek alınamazsa hiçbir şey değişmez), kodu yalnız ileri sarar, ön kontrol yapar ve servisi en son yeniden başlatır. Adımlar, duman testi ve geri dönüş: [`GUNCELLEME-PLANI.md`](GUNCELLEME-PLANI.md). Aşağıdaki elle yöntem aynı sırayı uygular.
+
 ```bash
 /usr/local/sbin/dipbot-backup                 # önce yedek
 cd /opt/dipbot

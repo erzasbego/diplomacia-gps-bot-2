@@ -248,3 +248,29 @@ def test_baslangic_ozeti_sonraki_gercek_degisiklik_bildirimlerinden_ayri(conn, u
     assert turler == ["oyuncu_degisti", "parti_uyelik"]
     uyelik = bildirimler(conn, "parti_uyelik")[0]["veri"]
     assert [k["oyuncu_id"] for k in uyelik["katilanlar"]] == ["3"] and uyelik["ayrilanlar"] == []
+
+
+# ----------------------------------------------------------------- şema değişmedi (güvenli güncelleme garantisi)
+def test_veritabani_semasi_main_ile_ayni_gecis_gerekmez():
+    """Bu PR veritabanı şemasını DEĞİŞTİRMEZ (SEMA_SURUMU 4): mevcut canlı kayıtlar için geçiş gerekmez, geri dönüş
+    yalnız kod geri dönüşüdür. Şema bilerek değiştirilirse bu parmak izi ve deploy/GUNCELLEME-PLANI.md birlikte
+    güncellenmeli (migration + yedekten dönüş planı ile)."""
+    import hashlib
+    assert db.SEMA_SURUMU == 4
+    assert hashlib.sha256(db._sema().encode()).hexdigest() == "dabb41edae51b72abfc04a44654786abf2e670c0db253e60daa7d06fd166207f"
+
+
+def test_mevcut_veri_yeni_surumle_acilinca_korunur(tmp_path):
+    yol = tmp_path / "canli.db"
+    saat = SahteSaat()
+    c = db.baglan(yol)
+    yonetim.yetki_ver(c, saat, KURUCU, KURUCU, 55)
+    yonetim.grup_onayla(c, saat, KURUCU, KURUCU, G1)
+    src = SahteKaynak(); src.oyuncu("5", "Ali", "Ankara", "TR")
+    run(TakipServisi(c, saat).oyuncu_ekle(G1, "5", src))
+    c.close()
+    c = db.baglan(yol)  # güncelleme sonrası ilk açılış (migration idempotent)
+    assert c.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert G1 in yonetim.durum_yukle(c, KURUCU).onayli_gruplar and 55 in yonetim.durum_yukle(c, KURUCU).yetkililer
+    assert takipte(c, G1) == {"5"}
+    c.close()

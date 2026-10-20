@@ -544,6 +544,8 @@ class TakipServisi:
                     durum["dur"] = "erişim reddedildi"
                 except (KaynakHatasi, EksikVeri):
                     pass  # bu üye ilk taramaya kalır
+                except Exception:  # beklenmeyen: komutu düşürme, üye ilk taramaya kalsın (ayrıntı günlükte, sır yok)
+                    log.exception("parti üyesi ilk verisi alınırken beklenmeyen hata (oyuncu=%s)", oid)
 
         gorevler = [asyncio.ensure_future(al(o)) for o in hedef]
         try:

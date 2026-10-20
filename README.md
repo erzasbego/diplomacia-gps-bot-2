@@ -5,7 +5,7 @@
 Python 3.11+ · `python-telegram-bot` 22.8 (long polling; alan adı/HTTPS gerekmez) · SQLite · Telegram arayüzü ve mesajlar Türkçe · gösterilen zamanlar `Europe/Istanbul`, kayıtlar UTC.
 
 > ## ⚠️ Doğrulama durumu — önce bunu okuyun
-> Bu bot **henüz gerçek Diplomacia'ya veya gerçek Telegram'a bağlanılarak denenmedi.** Şu an elde olan: **679 otomatik test** (sahte veri kaynağı, `httpx.MockTransport`, sahte Telegram nesneleri; Python 3.11/3.12/3.13'te geçti). Bunlar iş kurallarını kanıtlar; **canlı entegrasyonu kanıtlamaz.** Ayrıntı için [Doğrulananlar ve doğrulanmayanlar](#doğrulananlar-ve-doğrulanmayanlar).
+> Bu bot **henüz gerçek Diplomacia'ya veya gerçek Telegram'a bağlanılarak denenmedi.** Şu an elde olan: **848 otomatik test** (sahte veri kaynağı, `httpx.MockTransport`, sahte Telegram nesneleri; Python 3.11/3.12/3.13'te geçti). Bunlar iş kurallarını kanıtlar; **canlı entegrasyonu kanıtlamaz.** Ayrıntı için [Doğrulananlar ve doğrulanmayanlar](#doğrulananlar-ve-doğrulanmayanlar).
 
 ## İçindekiler
 1. [Nasıl çalışır](#nasıl-çalışır)
@@ -34,7 +34,7 @@ Bot olayları **dinlemez, aralıklarla yoklar.** Bu yüzden: iki kontrol arasın
 ```bash
 python3.11 -m venv .venv && . .venv/bin/activate     # Python 3.11+ (3.12 ve 3.13 de denendi)
 pip install -r requirements.txt
-python -m pytest -q                                  # beklenen: 679 passed (MOCK)
+python -m pytest -q                                  # beklenen: 848 passed (MOCK)
 ```
 Paket `src/` altındadır ve pip ile **kurulmaz**; çalıştırırken `PYTHONPATH=src` verilir (testler için `pytest.ini` bunu zaten yapar):
 ```bash
@@ -77,10 +77,10 @@ Gruplarda komutlar yalnız **onaylı grupta yetkili kullanıcıya** açıktır. 
 
 | Komut | Ne yapar |
 |---|---|
-| `/oyuncu_ekle <profil linki veya numara>` | Oyuncuyu takibe alır (ilk ekleme değişiklik bildirimi üretmez). Örn. `https://diplomacia.com.tr/player/72400` |
-| `/oyuncular`, `/oyuncu_sil <numara>` | Listeler / takipten çıkarır (onay düğmesiyle). |
-| `/parti_ekle <parti linki veya numara>` | Partiyi ve **o anki üyelerini** takibe alır; ayrıntı ilk taramada doldurulur. Sonradan katılan üye otomatik takibe alınır. |
-| `/partiler`, `/parti_sil <numara>` | Listeler / parti takibini kaldırır (aşağıdaki "Parti kaldırma"). |
+| `/oyuncuekle <ID veya bağlantı>` | Oyuncuyu takibe alır (ilk ekleme değişiklik bildirimi üretmez). Örn. `/oyuncuekle 72400` veya `/oyuncuekle https://diplomacia.com.tr/player/72400` (`/profile/player/…` ve `/press/player/…` biçimleri de kabul edilir). |
+| `/oyuncular`, `/oyuncusil <ID veya bağlantı>` | Listeler / takipten çıkarır (onay düğmesiyle). |
+| `/partiekle <ID veya bağlantı>` | Partiyi ve **o anki üyelerini** takibe alır. Örn. `/partiekle 1244` veya `/partiekle https://diplomacia.com.tr/party/1244` (`/profile/party/…`, `/press/party/…` da kabul). Üyelerin bölge/vatandaşlık ilk verisi sınırlı eşzamanlılıkla alınır (üst sınır ve süre bütçesi var), alınamayanlar ilk taramada tamamlanır; yanıt tek bir **başlangıç özeti**dir, bildirim gönderilmez. Sonradan katılan üye otomatik takibe alınır. |
+| `/partiler`, `/partisil <ID veya bağlantı>` | Listeler / parti takibini kaldırır (aşağıdaki "Parti kaldırma"). |
 | `/savaslar` | Aktif savaşları listeler; ayrıntı ekranında `…/wars/war/{numara}` bağlantısı bulunur. |
 | `/tarama <5\|10\|15\|20>` | Grubun tarama aralığı. |
 | `/durum` | Bot durumu: son tarama zamanları, hatalar, token durumu. |
@@ -89,6 +89,10 @@ Gruplarda komutlar yalnız **onaylı grupta yetkili kullanıcıya** açıktır. 
 | `/grup_kaldir <grup_id>` | Grup onayını kaldırır — **yalnız kurucu** (komut ve düğme aynı kural). |
 | `/grup_tasi <eski_id> <yeni_id>` | Supergroup'a yükselen grubun verisini yeni kimliğe taşır — **yalnız kurucu, yalnız özel sohbet**, düğmeyle onay. |
 | `/yardim` | Komut özeti. |
+
+**Eski komut adları** (`/oyuncu_ekle`, `/oyuncu_sil`, `/parti_ekle`, `/parti_sil`) geriye dönük uyumluluk için çalışır, aynı yetki ve onay kurallarına tabidir; ancak Telegram komut listesinde, yardımda ve menülerde yalnız yeni kısa adlar gösterilir. **Bağlantı kuralı:** yalnız `diplomacia.com.tr` / `www.diplomacia.com.tr` alan adı ve `/player/ID`, `/party/ID` yolları (başına `profile/` veya `press/` gelebilir); başka alan adı, port, kullanıcı bilgisi, ek yol parçası veya yanlış tür (oyuncu komutuna parti bağlantısı) reddedilir.
+
+**Savaş listesi** yalnız temel bilgiyi gösterir (`Saldıran – Savunan · Durum · #numara`, numara varsa tıklanabilir); ayrıntı ekranı kapsamlıdır. Emoji anlamları: ⚔️ standart savaş (tür yoksa/tanınmıyorsa da), 🔥 ayaklanma, 🏳️ bağımsızlık; ayrıntıda ⚔️ saldıran, 🛡️ savunan, ⏳ hazırlık, 🟢 aktif.
 
 **Ana menü düğmeleri:** Oyuncular · Partiler · Savaşlar · Tarama Ayarları · Bot Durumu · Yönetim · Yardım · Grup Seç (özelde). *Token Yenile* ana menüde değil, **Yönetim** ekranındadır (yalnız kurucu, özel sohbette). Silme/kaldırma ve yetki işlemleri **onay düğmesi** ister; onay tek kullanımlık, 10 dakika geçerli ve yalnız işlemi başlatan kullanıcıya/sohbete bağlıdır.
 
@@ -140,7 +144,7 @@ Hedef: **Ubuntu 24.04 LTS** (Python 3.12), tek VPS, tek bot süreci, systemd. Ad
 
 ## Doğrulananlar ve doğrulanmayanlar
 **Doğrulandı (otomatik test / araç ile; hepsi MOCK ya da yerel):**
-- 679 test: ilk ekleme bildirimsiz, kimlik üzerinden değişiklik, bölge/vatandaşlık bağımsızlığı, tekrar bildirim yok, eksik cevap veriyi bozmaz, parti ilk kayıt/giriş/çıkış/kaldırma kuralları, grup izolasyonu, yetki matrisi (komut+buton), eski buton reddi, yeniden başlatmada veri korunumu, ilk savaş taramasında bildirim yok, outbox yeniden deneme/iptal, token doğrulama/`.prev`/maskeleme, D7 saat güvenliği, göç taşıma.
+- 848 test: ilk ekleme bildirimsiz, kimlik üzerinden değişiklik, bölge/vatandaşlık bağımsızlığı, tekrar bildirim yok, eksik cevap veriyi bozmaz, parti ilk kayıt/giriş/çıkış/kaldırma kuralları, grup izolasyonu, yetki matrisi (komut+buton), eski buton reddi, yeniden başlatmada veri korunumu, ilk savaş taramasında bildirim yok, outbox yeniden deneme/iptal, token doğrulama/`.prev`/maskeleme, D7 saat güvenliği, göç taşıma.
 - Python 3.11, 3.12 ve 3.13'te test paketi geçti (Ubuntu 24.04 tabanlı bulut ortamında).
 - `deploy/dipbot.service` için `systemd-analyze verify` (systemd 255, **statik**; yollar sahte düzende) hatasız; `backup.sh`/`restore.sh` gerçek WAL veritabanı ve **sahte** `systemctl` ile çalıştı; `onkontrol.sh` sahte dizin düzeniyle çalıştı.
 - Kullanıcı DevTools'ta doğruladı (ben bağımsız doğrulamadım): `Authorization: Bearer <JWT>` + `X-Client-Platform: web` ile `GET /api/players/72400` → 200; savaş bağlantısı biçimi `…/wars/war/{numara}`; oturum token'ı JWT'dir.

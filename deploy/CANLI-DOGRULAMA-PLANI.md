@@ -19,7 +19,7 @@
 | 1.3 | `systemd-analyze verify /etc/systemd/system/dipbot.service` | Çıktı boş / uyarısız | |
 | 1.4 | `timedatectl` | `System clock synchronized: yes`, `NTP service: active` | |
 | 1.5 | `sudo -u dipbot env -i PYTHONPATH=/opt/dipbot/src /opt/dipbot/.venv/bin/python -m dipbot; echo $?` | Yapılandırma hatası mesajı, çıkış kodu **2** (ağ yok) | |
-| 1.6 | `cd /opt/dipbot && PYTHONPATH=src .venv/bin/python -m pytest -q` | Bulutta: `679 passed`. Sunucuda aynı sayı beklenir | |
+| 1.6 | `cd /opt/dipbot && PYTHONPATH=src .venv/bin/python -m pytest -q` | Bulutta: `848 passed`. Sunucuda aynı sayı beklenir | |
 
 ## 2. Diplomacia — salt okunur API doğrulaması
 
@@ -62,7 +62,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' -H @/tmp/dip-hdr -H 'X-Client-Platform
 | 3.7 | **Yeni token gönder**'e bas, `systemctl restart dipbot`, sonra mesaj gönder | Bekleme geçersiz ("Önce menüden …") — yeniden başlatma bekleyen işlemi iptal eder | |
 | 3.8 | Botu **onaysız** gruba ekle | Bot cevap vermez/işlem yapmaz; kurucuya tek bildirim | |
 | 3.9 | Kurucu özelden `/grup_onayla <test grubu id>`, sonra grupta yetkisiz kullanıcı komut dener | Yetkisiz reddedilir; kurucuya bildirim; yetkili kullanıcıya `/yetki_ver` sonrası çalışır | |
-| 3.10 | Grupta `/oyuncu_ekle` (gerçek oyuncu), `/parti_ekle`, `/savaslar`, düğmeler | Metinler Türkçe, HTML bozulmaz; ilk eklemede değişiklik bildirimi yok; savaş bağlantısı tıklanır (`/wars/war/{numara}`) | |
+| 3.10 | Grupta `/oyuncuekle 72400` ve `/oyuncuekle <profile/press bağlantısı>`, `/partiekle 1244` (üye ilk verisi alınıyor mu, tek özet mi), eski `/oyuncu_ekle` takma adı, `/savaslar` (sade liste + emoji), düğmeler | Metinler Türkçe, HTML bozulmaz; ilk eklemede değişiklik bildirimi yok; savaş bağlantısı tıklanır (`/wars/war/{numara}`) | |
 | 3.11 | Bir sonraki taramada (10 dk) değişiklik yoksa | Bildirim yok; `/durum` son tarama zamanını gösterir | |
 | 3.12 | Gizlilik modu (BotFather `/setprivacy`) | Komutlar grupta çalışıyor; kararı kaydedin | |
 | 3.13 | Test grubunu süper gruba yükseltin (göç) | Kurucuya göç bildirimi; eski id düşer; `/grup_onayla <yeni>` + `/grup_tasi <eski> <yeni>` onayla taşır (veri korunur) | |
@@ -81,7 +81,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' -H @/tmp/dip-hdr -H 'X-Client-Platform
 | 4.7 | `sudo dipbot-backup` (servis çalışırken) | `.db` 0600, `integrity_check ok`, eski yedekler `KEEP`'e göre silinir | |
 | 4.8 | `sudo dipbot-restore <yedek>` | Servis durur/kalkar; veri yedekteki hâle döner; güvenlik yedeği oluşur | |
 | 4.9 | `.prev` yaşam döngüsü: token yenile → `ls -l diplomacia.token.prev` | `.prev` oluşur (0600); ilk başarılı taramadan sonra (`journalctl`: "…ilk başarılı yetkili taramayla teyit edildi") **silinir**; silinmezse 24 sa sonra silinir | |
-| 4.10 | Saat güvenliği — **yalnız özel test VPS'inde**: onay isteyen bir işlemi (örn. `/oyuncu_sil`) başlat; `timedatectl set-ntp false && date -s '+1 hour'`; onay düğmesine bas; sonra `timedatectl set-ntp true` | "Sunucu saati değişti … yeniden başlatın"; işlem uygulanmaz | |
+| 4.10 | Saat güvenliği — **yalnız özel test VPS'inde**: onay isteyen bir işlemi (örn. `/oyuncusil 72400`) başlat; `timedatectl set-ntp false && date -s '+1 hour'`; onay düğmesine bas; sonra `timedatectl set-ntp true` | "Sunucu saati değişti … yeniden başlatın"; işlem uygulanmaz | |
 | 4.11 | Token'ı sunucuda elle sil (`rm`) | Bot istek atmaz, "token dosyası yok" der, hata yağmuru yok; menüden token verince devam eder | |
 | 4.12 | Geçersiz (süresi dolmuş) token ile tarama | Kurucuya **tek** "token geçersiz" mesajı; taramalar durur; yeni token sonrası devam | |
 | 4.13 | 24 saat gözlem: `journalctl -p warning`, RAM/CPU (`systemctl status`), bildirim sayıları | Bellek sızıntısı/log yağmuru yok | |
