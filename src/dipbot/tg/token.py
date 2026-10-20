@@ -8,6 +8,10 @@ Bu, Telegram BOT_TOKEN'ı DEĞİL, veri kaynağına erişen oyun hesabı token'�
   koruma NTFS dizin ACL'lerine bağlıdır. Üretim hedefi Linux'tur (systemd UMask=0077 de uygular).
 - Yeni token doğrulanmadan mevcut token DEĞİŞTİRİLMEZ. Yazmadan önce mevcut dosya varsa 0600
   `<dosya>.prev` olarak (atomik) yedeklenir; .prev de bir sırdır (eski token) ve aynı izinle korunur.
+- .prev SÜRESİZ TUTULMAZ: yeni token ilk başarılı yetkili taramayla teyit edilince VEYA yaşı
+  config.TOKEN_PREV_OMRU_SANIYE (24 sa) dolunca zamanlayıcı onu siler (yalnız unlink; üzerine yazma yok).
+  Geri dönüş (silinmeden önce): `.prev` dosyasını elle token dosyasının üzerine taşıyın. Politika kodu
+  zamanlayicida (prev_politikasi_uygula); bu sınıf yalnız yaş/silme ilkellerini sağlar.
 """
 from __future__ import annotations
 
@@ -94,6 +98,24 @@ class TokenDeposu:
             os.chmod(hedef, 0o600)
         except OSError:
             pass
+
+    def prev_yasi(self, simdi_ts: float) -> float | None:
+        """`.prev` yedeğinin yaşı (sn; dosya değişiklik zamanından). Yedek yoksa None. Negatif: dosya zamanı
+        gelecekte (saat geri gitmiş/dosya taşınmış) -> çağıran belirsiz sayar."""
+        try:
+            return simdi_ts - self.yedek_yolu.lstat().st_mtime
+        except OSError:
+            return None
+
+    def prev_sil(self) -> bool:
+        """`.prev` yedeğini siler (yalnız unlink; sembolik bağ ise bağın kendisi). True: silindi."""
+        try:
+            self.yedek_yolu.unlink()
+            return True
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return False
 
     def eski_gecicileri_temizle(self) -> int:
         """Açılışta: yarım kalmış '.token-*' geçici dosyalarını (yalnız token dizininde) siler. Dönüş: silinen sayı."""

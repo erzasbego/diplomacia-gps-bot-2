@@ -29,7 +29,7 @@ from .kaynak import (
     hata_aciklamasi,
 )
 from .takip import TakipServisi, TaramaSonucu
-from .zaman import Saat, iso, iso_coz, simdi_utc
+from .zaman import Saat, iso, iso_coz, monotonik_al, simdi_utc
 
 log = logging.getLogger("dipbot.zamanlayici")
 
@@ -132,6 +132,39 @@ class TaramaZamanlayici:
         with islem(self.conn):
             self.conn.execute("DELETE FROM sistem_durumu WHERE anahtar='token_duraklatildi'")
             self.conn.execute("UPDATE grup_ayarlari SET sonraki_tarama=NULL")
+
+    # ---- token .prev yedeği politikası (Tur F2b) ---------------------------
+    def _prev_sil(self, neden: str) -> bool:
+        silindi = self._token_deposu is not None and self._token_deposu.prev_sil()
+        if silindi:
+            log.info("önceki token yedeği (.prev) silindi: %s", neden)  # içerik/yol dışında bilgi yok
+        return silindi
+
+    def prev_politikasi_uygula(self) -> bool:
+        """`.prev` yedeği yaşı TOKEN_PREV_OMRU_SANIYE'yi aşmışsa siler. Dönüş: silindi mi.
+        Güvenlik: (0) taramalar token nedeniyle duraklatılmışsa SİLMEZ; (1) ana token dosyası yok/boşsa SİLMEZ (.prev tek kopya olabilir); (2) yaş belirsizse (dosya zamanı
+        gelecekte: saat geri gitmiş, ör. boot'ta hatalı RTC) SİLMEZ, bir kez uyarır; saat düzelince normal işler.
+        Token dosyasına dokunmaz."""
+        if self._token_deposu is None or self._token_dur:
+            return False  # token duraklatılmışken (yeni token kanıtlanamadı) .prev son çalışan token olabilir
+        yas = self._token_deposu.prev_yasi(self.saat().timestamp())
+        if yas is None:
+            return False
+        if yas < -config.SAAT_TUTARSIZLIK_TOLERANSI_SANIYE:
+            if "prev_belirsiz" not in self._yapilandirma_uyarildi:
+                self._yapilandirma_uyarildi.add("prev_belirsiz")
+                log.warning("token .prev yedeğinin yaşı belirsiz (dosya zamanı gelecekte; sunucu saati geride olabilir): "
+                            "silinmedi, saat düzelince politika uygulanır")
+            return False
+        if yas < config.TOKEN_PREV_OMRU_SANIYE:
+            return False
+        try:
+            ana_var = bool((self._token_deposu.oku() or "").strip())
+        except OSError:
+            ana_var = False
+        if not ana_var:
+            return False
+        return self._prev_sil("yaş sınırı doldu")
 
     TOKEN_HATIRLATMA_ARALIGI = timedelta(days=7)
 
@@ -247,6 +280,7 @@ class TaramaZamanlayici:
     async def _grup_calis(self, gid: int, kaynak) -> list[TaramaSonucu]:
         sonuclar: list[TaramaSonucu] = []
         reddedildi = False
+        mt0 = self._token_deposu.son_degisiklik() if self._token_deposu is not None else None
         try:
             async with self._sem:
                 for is_tipi, fn in (
@@ -300,14 +334,31 @@ class TaramaZamanlayici:
             if tam:
                 self._istek_siniri_sayac = 0  # tam başarılı tur: üstel bekleme sayacı sıfırlanır
             self._sonraki_planla(gid, tam)
+            # Yeni token ilk başarılı GERÇEK yetkili taramayla teyit edildi: .prev gereksiz. Yalnız token dosyası
+            # tarama boyunca DEĞİŞMEMİŞSE (eski tokenla başlayan tarama yeni tokenı teyit edemez).
+            # Teyit için en az bir oyuncu/parti isteği BAŞARIYLA gözlenmiş olmalı: yalnız /api/wars başarısı yetmez
+            # (o uç noktanın kimlik gerektirdiği canlıda doğrulanmadı).
+            if (len(sonuclar) == 3 and all(x.ok and not x.yapilandirma for x in sonuclar)
+                    and any(x.gozlenen > 0 for x in sonuclar)
+                    and mt0 is not None and self._token_deposu is not None
+                    and mt0 == self._token_deposu.son_degisiklik()):
+                self._prev_sil("yeni token ilk başarılı yetkili taramayla teyit edildi")
         return sonuclar
 
     async def calis(self, gonderici: outbox.Gonderici, durdur: asyncio.Event) -> None:
         """Üretim döngüsü. `durdur` kurulunca devam eden grup taramalarını bitirip çıkar."""
         gorevler: set[asyncio.Task] = set()
         ardisik = 0
+        mono = monotonik_al(self.saat)
+        prev_son: float | None = None
         while not durdur.is_set():
             bekleme = config.TICK_SECONDS
+            if prev_son is None or mono() - prev_son >= config.TOKEN_PREV_KONTROL_ARALIGI_SANIYE:
+                prev_son = mono()
+                try:
+                    self.prev_politikasi_uygula()
+                except Exception:
+                    log.warning("token .prev politikası uygulanamadı")
             try:
                 for g in self.tick():
                     gorevler.add(g)

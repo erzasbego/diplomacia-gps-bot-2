@@ -224,7 +224,7 @@ def test_eski_grup_hala_onayliysa_reddedilir(ui, conn, saat):
     _reddedilir(ui, conn)
 
 
-@pytest.mark.parametrize("tablo", ["takip_oyuncular", "takip_partiler", "parti_uyeleri", "engeller", "savaslar",
+@pytest.mark.parametrize("tablo", ["takip_oyuncular", "takip_partiler", "parti_uyeleri", "engeller",
                                    "bulunamadi_sayaclari"])
 def test_yeni_grupta_veri_varsa_reddedilir(ui, conn, saat, tablo):
     _hazir(ui, conn, saat)
@@ -241,10 +241,15 @@ def test_yeni_grupta_veri_varsa_reddedilir(ui, conn, saat, tablo):
     _reddedilir(ui, conn)
 
 
-def test_yeni_grupta_savas_baseline_baslamissa_reddedilir(ui, conn, saat):
+def test_yeni_grupta_savas_taramasi_baslamissa_tasima_yine_calisir(ui, conn, saat):
+    """BİLİNÇLİ DEĞİŞİKLİK (QA-A YÜKSEK-1): yeni grup onaylanınca zamanlayıcı savaş taramasını kendiliğinden
+    başlatır; bu önceden taşımayı kalıcı engelliyordu. Savaş kayıtları artık birleştirilir
+    (ayrıntı: tests/test_qa_bulgulari.py)."""
     _hazir(ui, conn, saat)
     conn.execute("UPDATE grup_ayarlari SET savas_baseline_tamam=1 WHERE group_id=?", (YENI,))
-    _reddedilir(ui, conn)
+    conn.execute("INSERT INTO savaslar(group_id, savas_id, ilk_gorulme) VALUES(?, 'z', 't')", (YENI,))
+    sayilar = yonetim.grup_tasi(conn, saat, KURUCU, KURUCU, G1, YENI)
+    assert sayilar["takip_oyuncular"] == 2
 
 
 def test_eski_grupta_tasinacak_veri_yoksa_reddedilir(ui, conn, saat):

@@ -61,10 +61,17 @@ def kuyruga_ekle(
     veri: dict,
     simdi,
 ) -> bool:
-    """Satır ekler; aynı (hedef, anahtar) varsa eklemez. True = yeni eklendi."""
+    """Satır ekler; aynı (hedef, anahtar) varsa eklemez. True = yeni eklendi.
+
+    Gruba bağlı satır, üretildiği andaki grup onay DÖNEMİNİ (artan tamsayı) saklar; grup o an onaylı
+    değilse dönem 0'dır (gönderimde iptal edilir). Zaman damgasına bakılmaz (D7)."""
+    donem = None
+    if grup_id is not None:
+        r = conn.execute("SELECT donem FROM onayli_gruplar WHERE group_id=?", (grup_id,)).fetchone()
+        donem = r[0] if r else 0
     cur = conn.execute(
         "INSERT OR IGNORE INTO outbox(hedef_sohbet, grup_id, tur, idem_anahtari, veri,"
-        " sonraki_deneme, olusturuldu) VALUES(?,?,?,?,?,?,?)",
+        " sonraki_deneme, olusturuldu, onay_donemi) VALUES(?,?,?,?,?,?,?,?)",
         (
             hedef_sohbet,
             grup_id,
@@ -73,6 +80,7 @@ def kuyruga_ekle(
             json.dumps(veri, ensure_ascii=False, sort_keys=True),
             iso(simdi),
             iso(simdi),
+            donem,
         ),
     )
     return cur.rowcount == 1
@@ -92,9 +100,11 @@ def _onayli_mi(conn, grup_id) -> bool:
     return conn.execute("SELECT 1 FROM onayli_gruplar WHERE group_id=?", (grup_id,)).fetchone() is not None
 
 
-def _guncel_onay_donemi(conn, grup_id, olusturuldu: str) -> bool:
-    r = conn.execute("SELECT onaylandi FROM onayli_gruplar WHERE group_id=?", (grup_id,)).fetchone()
-    return r is not None and olusturuldu >= r[0]
+def _guncel_onay_donemi(conn, grup_id, satir_donemi) -> bool:
+    """Grup onaylı VE satır onun GÜNCEL onay döneminde üretilmiş mi? Dönemi bilinmeyen (NULL/0) satır
+    geçerliliği belirsiz sayılır: gönderilmez (fail-closed)."""
+    r = conn.execute("SELECT donem FROM onayli_gruplar WHERE group_id=?", (grup_id,)).fetchone()
+    return r is not None and bool(satir_donemi) and satir_donemi == r[0]
 
 
 def _geri_cekilme(deneme: int) -> int:
@@ -126,7 +136,7 @@ async def bekleyenleri_gonder(
                 (bekleyen[r["hedef_sohbet"]], r["id"], bekleyen[r["hedef_sohbet"]]),
             )
             continue
-        if r["grup_id"] is not None and not _guncel_onay_donemi(conn, r["grup_id"], r["olusturuldu"]):
+        if r["grup_id"] is not None and not _guncel_onay_donemi(conn, r["grup_id"], r["onay_donemi"]):
             # Onaysız grup VEYA satır önceki bir onay döneminde (onay kaldırılıp yeniden verilmiş) üretilmiş.
             conn.execute(
                 "UPDATE outbox SET durum='iptal', son_hata='grup onaysiz/bayat' WHERE id=? AND durum='bekliyor'", (r["id"],)

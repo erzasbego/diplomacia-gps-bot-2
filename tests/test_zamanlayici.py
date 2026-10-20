@@ -37,14 +37,16 @@ def _oyuncu_ekle(servis, src, grup, oid):
 
 def test_ayni_is_ust_uste_binmez_ve_aralik_gozetilir(conn, src, saat, servis):
     _oyuncu_ekle(servis, src, G1, "p1")
+    _oyuncu_ekle(servis, src, G2, "p2")  # G2 de kapıda beklesin: iki tarama da sürerken sınanır
     z = _z(conn, src, saat)
 
     async def sen():
         gate = asyncio.Event()
         src.kapilar[("oyuncu", "p1")] = gate
+        src.kapilar[("oyuncu", "p2")] = gate
         ilk = z.tick()
         await asyncio.sleep(0.01)
-        assert len(ilk) == 2 and z.calisiyor_mu(G1)  # G1 ve G2 (vadesi geldi)
+        assert len(ilk) == 2 and z.calisiyor_mu(G1) and z.calisiyor_mu(G2)  # ikisinin de vadesi geldi
         saat.ilerle(7200)  # vade çoktan geçti, ama tarama hâlâ sürüyor
         assert z.tick() == []  # aynı iş üst üste binmez
         gate.set()

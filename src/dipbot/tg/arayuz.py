@@ -21,7 +21,10 @@ from ..db import islem as db_islem
 from ..kaynak import EksikVeri, KaynakHatasi, ZamanlayiciKorumali, hata_aciklamasi
 from ..takip import GrupOnaysiz, TakipServisi
 from ..maske import sir_kaydet
-from ..zaman import Saat, iso, iso_coz, simdi_utc, yerel_goster
+from ..zaman import (
+    SURE_GECERLI, SURE_SAAT_DEGISTI, Saat, ZamanDamgasi, damga_al, monotonik_al, simdi_utc, sure_durumu,
+    yerel_goster, iso,
+)
 from . import bicim
 from .bicim import esc
 from .islemler import IslemDeposu
@@ -69,6 +72,8 @@ YALNIZ_KURUCU = "Bu işlemi yalnızca kurucu yapabilir."
 GRUP_ONAYSIZ_YANIT = "Bu grup artık onaylı değil; işlem yapılmadı."
 ESKI_DUGME = "Bu düğme artık geçerli değil. /start ile yeni menü açın."
 ONAY_BITTI = "⌛ Bu onayın süresi dolmuş veya zaten kullanılmış. İşlemi yeniden başlatın."
+SAAT_DEGISTI = ("⏱ Sunucu saati değişti; güvenlik için bekleyen işlem geçersiz sayıldı ve uygulanmadı. "
+                "İşlemi yeniden başlatın.")
 
 
 def kimlik_coz(arg: str, tur: str) -> str | None:
@@ -132,44 +137,28 @@ class Arayuz:
         self.zamanlayici = zamanlayici
         self.dogrulayici = dogrulayici or YapilandirilmamisDogrulayici()
         self.token_deposu = token_deposu
-        self.islemler = IslemDeposu(conn, saat)
+        self._mono = monotonik_al(saat)
+        self.islemler = IslemDeposu(conn, saat, self._mono)
         self._secili: dict[int, int] = {}  # özel sohbet: kullanıcı -> seçili grup (her kullanımda doğrulanır)
-        self._token_bekleyen: dict[int, object] = {}  # kullanıcı -> bekleme bitişi
+        # kullanıcı -> bekleme başlangıcı (duvar + monotonic). YALNIZ BELLEKTE: yeniden başlatmada geçersizdir (D7).
+        self._token_bekleyen: dict[int, ZamanDamgasi] = {}
         self._token_islem_suruyor = False  # tek uçuş: eşzamanlı ikinci token gönderimi reddedilir
         self._bekleme_yukle()
 
     _BEKLEME_ANAHTARI = "token_bekleme"
 
     def _bekleme_yukle(self) -> None:
-        """Yeniden başlatmada geçerli token-bekleme durumunu devam ettirir (yalnız kurucu id + bitiş saklanır)."""
-        r = self.conn.execute("SELECT deger FROM sistem_durumu WHERE anahtar=?", (self._BEKLEME_ANAHTARI,)).fetchone()
-        if not r:
-            return
-        try:
-            kid, bitis = r[0].split("|", 1)
-            kid = int(kid)
-            bitis = iso_coz(bitis)
-        except Exception:
-            self._bekleme_kaldir(None)
-            return
-        if kid == self.kurucu_id and self.saat() <= bitis:
-            self._token_bekleyen[kid] = bitis
-        else:
-            self._bekleme_kaldir(None)
-
-    def _bekleme_ayarla(self, kullanici_id: int, bitis) -> None:
-        self._token_bekleyen[kullanici_id] = bitis
+        """Yeniden başlatmada token-bekleme DEVAM ETMEZ (D7: monotonic başlangıç kurulamaz, geçerlilik
+        belirsiz). Önceki sürümlerden kalan kalıcı kayıt varsa silinir."""
         with db_islem(self.conn):
-            self.conn.execute(
-                "INSERT OR REPLACE INTO sistem_durumu(anahtar, deger) VALUES(?, ?)",
-                (self._BEKLEME_ANAHTARI, f"{kullanici_id}|{iso(bitis)}"),
-            )
+            self.conn.execute("DELETE FROM sistem_durumu WHERE anahtar=?", (self._BEKLEME_ANAHTARI,))
+
+    def _bekleme_ayarla(self, kullanici_id: int) -> None:
+        self._token_bekleyen[kullanici_id] = damga_al(self.saat, self._mono)
 
     def _bekleme_kaldir(self, kullanici_id: int | None) -> None:
         if kullanici_id is not None:
             self._token_bekleyen.pop(kullanici_id, None)
-        with db_islem(self.conn):
-            self.conn.execute("DELETE FROM sistem_durumu WHERE anahtar=?", (self._BEKLEME_ANAHTARI,))
 
     # ====================== yetki ===========================================
     def _durum(self):
@@ -345,8 +334,8 @@ class Arayuz:
         """Düz metin: yalnız kurucunun özel sohbetinde, token bekleniyorsa işlenir."""
         if o.sohbet_turu != "private" or o.kullanici_id is None:
             return None
-        bitis = self._token_bekleyen.get(o.kullanici_id)
-        if bitis is None:
+        damga = self._token_bekleyen.get(o.kullanici_id)
+        if damga is None:
             if _JWT_BICIMI.match(o.metin or "") and yetki.token_yonetimi_izinli_mi(
                 self._durum(), sohbet_id=o.sohbet_id, sohbet_turu=o.sohbet_turu, kullanici_id=o.kullanici_id
             ):
@@ -365,10 +354,14 @@ class Arayuz:
             self._kaydet_yetkisiz(o, "token_mesaji")
             return Yanit(KAPALI_OZEL)
         metin = (o.metin or "").strip()
-        if self.saat() > bitis:  # type: ignore[operator]
+        sure = sure_durumu(damga, TOKEN_BEKLEME_OMRU, self.saat, self._mono)
+        if sure != SURE_GECERLI:
             self._bekleme_kaldir(o.kullanici_id)
             if _JWT_BICIMI.match(metin) or (len(metin) >= 40 and not any(c.isspace() for c in metin)):
                 await self._mesaji_silmeyi_dene(o)  # token olabilir: sohbette kalmasın (değer yansıtılmaz)
+            if sure == SURE_SAAT_DEGISTI:
+                return Yanit("Sunucu saati değişti; güvenlik için token bekleme iptal edildi, mesajınız "
+                             "işlenmedi (mevcut token DEĞİŞTİRİLMEDİ). Menüden yeniden başlatın.")
             return Yanit("Token bekleme süresi doldu. Menüden yeniden başlatın.")
         if not _JWT_BICIMI.match(metin):
             # JWT biçimli olmayan düz metin token sayılmaz; bekleme tek kullanımlıktır (tüketilir)
@@ -1100,7 +1093,9 @@ class Arayuz:
         if len(p) < 3 or p[1] not in ("e", "h"):
             return None
         eylem, kid = p[1], p[2]
-        op = self.islemler.getir(kid)
+        op, neden = self.islemler.getir_ayrintili(kid)
+        if op is None and neden == SURE_SAAT_DEGISTI:
+            return Yanit(SAAT_DEGISTI, uyari="Sunucu saati değişti; işlem geçersiz.", uyari_goster=True)
         if op is None:
             return Yanit(ONAY_BITTI, uyari="Onayın süresi dolmuş veya kullanılmış.", uyari_goster=True)
         # Kapsam: aynı sohbet + aynı kullanıcı; gruba bağlı işlem kendi grubundan başka yerde kabul edilmez.
@@ -1206,7 +1201,7 @@ class Arayuz:
             self._bekleme_kaldir(o.kullanici_id)
             return Yanit("Token yenileme iptal edildi.", [[Dugme("Yönetim", "yo"), Dugme("Ana menü", "m")]])
         if a == "tn":
-            self._bekleme_ayarla(o.kullanici_id, self.saat() + TOKEN_BEKLEME_OMRU)
+            self._bekleme_ayarla(o.kullanici_id)
             return Yanit(
                 "Yeni Diplomacia token'ını <b>tek bir mesajla</b> gönderin (5 dakika içinde).\n"
                 "Mesajı silmeye çalışacağım; token loga veya veritabanına yazılmaz. "
@@ -1288,7 +1283,9 @@ class Arayuz:
             devam = " Taramalar kaldığı yerden devam ediyor."
         return Yanit(
             f"{sil_notu}\n✅ Aday token ile oyuncu isteği başarılı; kaydedildi "
-            f"(önceki token varsa .prev olarak yedeklendi). Canlı davranış ayrıca doğrulanmadı.{devam}",
+            f"(önceki token varsa .prev olarak yedeklendi; yedek yeni token ilk başarılı taramayla teyit edilince "
+            f"veya {config.TOKEN_PREV_OMRU_SANIYE // 3600} saat sonra otomatik silinir). "
+            f"Canlı davranış ayrıca doğrulanmadı.{devam}",
             [[Dugme("Ana menü", "m")]],
         )
 

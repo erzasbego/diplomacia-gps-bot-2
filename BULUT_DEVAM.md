@@ -2,6 +2,8 @@
 
 Hazırlanma: 2026-10-20 (yerel Windows oturumundan). Bu dosya bulut oturumunun **ilk okuyacağı** dosyadır. Ardından sırayla: `progress.md` (geçmiş), `task_plan.md` (durum), `findings.md` (bulgular ve kapanış özeti), `API-ARASTIRMA.md` (doğrulanan/doğrulanmayan API bilgisi), `DEVAM.md` (ayrıntılı tur planları, "TUR F" bölümü), `dp.txt` (asıl şartname).
 
+> **GÜNCEL (bulut oturumu sonu):** §6 madde 2 (Tur F2b), 3 (bağımsız doğrulama), 4 (kök README) ve 6 (VPS dosya düzeyi hazırlık) TAMAMLANDI; 679 test. Kalan: §5 kullanıcı kararları, §6 madde 7 (canlı doğrulama — `deploy/CANLI-DOGRULAMA-PLANI.md`, yalnız kullanıcı onayı ve yerel/VPS token ile). Ayrıntı: progress.md 'BULUT OTURUMU', findings.md 'BULUT QA'.
+
 ## 0. Dürüst durum (tek bakışta)
 - **Doğrulanmış son test sayısı: 631 passed, 0 failed, 0 skipped** (`python -m pytest -q`; ana oturum yerelde 3 kez çalıştırdı). **Hepsi MOCK**: sahte kaynak, `httpx.MockTransport`, sahte Telegram nesneleri.
 - **Canlı Diplomacia API'ye HİÇ istek atılmadı. Canlı Telegram'a HİÇ bağlanılmadı. VPS'e bağlanılmadı. Hiçbir şey canlıda doğrulanmadı.**

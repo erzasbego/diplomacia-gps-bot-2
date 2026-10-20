@@ -47,6 +47,15 @@ AUDIT_DEDUP_WINDOW_SECONDS = 600
 # Kurucuya saatlik toplam denetim bildirimi üst sınırı; fazlası tek özet ('N değişiklik').
 AUDIT_NOTIFY_MAX_PER_HOUR = 5
 
+# D7 saat güvenliği: süreli onay/bekleme kayıtlarında duvar saati ile monotonic saatin geçen süreleri
+# bu kadar saniyeden fazla ayrışırsa saat değişmiş sayılır ve kayıt geçersiz olur.
+SAAT_TUTARSIZLIK_TOLERANSI_SANIYE = 30.0
+
+# Token .prev yedeği süresiz tutulmaz: yeni token ilk başarılı yetkili taramayla teyit edilince VEYA
+# bu süre dolunca otomatik silinir (unlink). Kontrol aralığı: zamanlayıcı döngüsünde en sık bu kadar.
+TOKEN_PREV_OMRU_SANIYE = 24 * 3600
+TOKEN_PREV_KONTROL_ARALIGI_SANIYE = 300.0
+
 # Zamanlayıcı.
 SCHEDULER_ERROR_BACKOFF_MAX_SECONDS = 300.0
 SCAN_MAX_CONCURRENT_GROUPS = 3

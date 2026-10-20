@@ -179,14 +179,15 @@ def test_c4a_beklenmeyen_jwt_silinir_islenmez_ve_deger_sizmaz(ui, conn):
     assert run(ui.metin(_metin_olay("merhaba", sil))) is None and silindi == []
 
 
-def test_c4b_token_bekleme_yeniden_baslatmada_surer(conn, src, saat):
+def test_c4b_token_bekleme_yeniden_baslatmada_gecersiz(conn, src, saat):
+    """BİLİNÇLİ DEĞİŞİKLİK (Tur F2b/D7, kullanıcı kararı): yeniden başlatmada bekleyen token-bekleme
+    GEÇERSİZDİR (önceden sürerdi). Monotonic başlangıç kurulamadığı için geçerlilik belirsizdir; kullanıcı
+    menüden yeniden başlatır. Ayrıntılı D7 testleri: tests/test_tur_f2b.py."""
     ui1 = Arayuz(conn, src, KURUCU, saat=saat)
     run(ui1.buton(dugme("tn")))
     ui2 = Arayuz(conn, src, KURUCU, saat=saat)  # süreç yeniden başladı
-    y = run(ui2.metin(_metin_olay("iki kelime", None)))
-    assert y is not None and "Token biçimi geçersiz" in y.metin
-    # tek kullanımlık: tüketildi, kalıcı kayıt da silindi
-    assert run(Arayuz(conn, src, KURUCU, saat=saat).metin(_metin_olay("iki kelime", None))) is None
+    assert run(ui2.metin(_metin_olay("iki kelime", None))) is None  # bekleme yok: düz metin yok sayılır
+    assert conn.execute("SELECT COUNT(*) FROM sistem_durumu WHERE anahtar='token_bekleme'").fetchone()[0] == 0
 
 
 def test_c4b_suresi_dolan_bekleme_yeniden_baslatmada_gecersiz(conn, src, saat):
@@ -210,10 +211,12 @@ def test_c6b_onay_aninda_yetkisi_alinan_kullanici_butonla_parti_kaldiramaz(ui, c
 
 
 # ---------------------------------------------------------------- C7 (belgeleyici sınır testleri)
-def test_c7_o7_ayni_zaman_damgasi_gider_saat_geri_atlarsa_bayat_sayilir(conn, saat, gonderici):
-    """Sınır: onay dönemi karşılaştırması `olusturuldu >= onaylandi`. Yeniden onayla ile AYNI an
-    yazılan satır güncel dönem sayılır (gider); saat geri atlayıp daha ESKİ damgayla yazılan satır
-    bayat sayılıp iptal edilir. Bilinen sınır, düzeltme gerektirmez (belgeleme)."""
+def test_c7_o7_donem_sayac_tabanli_saat_geri_atlasa_da_taze_satir_gider(conn, saat, gonderici):
+    """BİLİNÇLİ DEĞİŞİKLİK (Tur F2b/D7, kullanıcı kararı): onay dönemi artık zaman damgası
+    karşılaştırması (`olusturuldu >= onaylandi`) değil artan tamsayı sayaçtır. Önceki belgeleyici test,
+    saat geri atlayınca TAZE satırın bayat sayılıp iptal edilmesini 'bilinen sınır' diye sabitliyordu;
+    artık güncel dönemde üretilen her satır, duvar saati ne olursa olsun gider. Bayat dönem testleri:
+    tests/test_tur_f2b.py."""
     from dipbot import outbox, yonetim
 
     yonetim.grup_kaldir(conn, saat, KURUCU, KURUCU, G1)
@@ -221,13 +224,13 @@ def test_c7_o7_ayni_zaman_damgasi_gider_saat_geri_atlarsa_bayat_sayilir(conn, sa
     yonetim.grup_onayla(conn, saat, KURUCU, KURUCU, G1)
     outbox.kuyruga_ekle(conn, hedef_sohbet=G1, grup_id=G1, tur="yeni_savas", idem_anahtari="ayni",
                         veri={"savas_id": "sA"}, simdi=saat())  # aynı damga
-    saat.ilerle(-30)  # saat geri atladı
+    saat.duvar_atla(-30)  # duvar saati geri atladı
     outbox.kuyruga_ekle(conn, hedef_sohbet=G1, grup_id=G1, tur="yeni_savas", idem_anahtari="geri",
                         veri={"savas_id": "sB"}, simdi=saat())
-    saat.ilerle(30)
+    saat.duvar_atla(30)
     o = run(outbox.bekleyenleri_gonder(conn, gonderici, saat))
-    assert [g[2]["savas_id"] for g in gonderici.gonderilen] == ["sA"]
-    assert o.gonderilen == 1 and o.iptal == 1
+    assert sorted(g[2]["savas_id"] for g in gonderici.gonderilen) == ["sA", "sB"]
+    assert o.gonderilen == 2 and o.iptal == 0
 
 
 def test_c7_cok_parcali_mesajda_ikinci_parca_hatasi_birinci_parcayi_tekrarlar():

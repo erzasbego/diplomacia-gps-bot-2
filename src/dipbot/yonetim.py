@@ -9,7 +9,7 @@ import logging
 import sqlite3
 from datetime import timedelta
 
-from . import config, outbox, yetki
+from . import config, db, outbox, yetki
 from .db import islem
 from .yetki import YetkiDurumu
 from .zaman import Saat, iso, iso_coz
@@ -56,43 +56,82 @@ def denetim_bildir(conn, saat: Saat, kurucu_id: int, *, eylem: str, aktor_id: in
     try:
         simdi = saat()
         with islem(conn):
-            anahtar = f"denetim:{eylem}:{aktor_id}:{hedef_id}"
-            r = conn.execute("SELECT son_bildirim FROM bildirim_sinirlari WHERE anahtar=?", (anahtar,)).fetchone()
-            if r is not None and not yetki.bildirim_gerekli_mi(
-                iso_coz(r[0]), simdi, timedelta(seconds=config.AUDIT_DEDUP_WINDOW_SECONDS)
-            ):
-                return False
-            n = conn.execute(
-                "SELECT COUNT(*) FROM outbox WHERE tur='denetim' AND hedef_sohbet=? AND olusturuldu>?",
-                (kurucu_id, iso(simdi - timedelta(hours=1))),
-            ).fetchone()[0]
-            if n >= config.AUDIT_NOTIFY_MAX_PER_HOUR:
-                oz = f"denetim_ozet:{simdi.strftime('%Y%m%d%H')}"
-                yeni = outbox.kuyruga_ekle(
-                    conn, hedef_sohbet=kurucu_id, grup_id=None, tur="denetim_ozet", idem_anahtari=oz,
-                    veri={"sayi": 1, "zaman": iso(simdi)}, simdi=simdi,
-                )
-                if not yeni:
-                    conn.execute(
-                        "UPDATE outbox SET veri=json_set(veri,'$.sayi',json_extract(veri,'$.sayi')+1)"
-                        " WHERE hedef_sohbet=? AND idem_anahtari=? AND durum='bekliyor'",
-                        (kurucu_id, oz),
-                    )
-                return False
-            conn.execute(
-                "INSERT INTO bildirim_sinirlari(anahtar, son_bildirim) VALUES(?,?)"
-                " ON CONFLICT(anahtar) DO UPDATE SET son_bildirim=excluded.son_bildirim",
-                (anahtar, iso(simdi)),
-            )
-            return outbox.kuyruga_ekle(
-                conn, hedef_sohbet=kurucu_id, grup_id=None, tur="denetim",
-                idem_anahtari=f"denetim:{iso(simdi)}:{eylem}:{aktor_id}:{hedef_id}",
-                veri={"eylem": eylem, "aktor_id": aktor_id, "hedef_id": hedef_id, "zaman": iso(simdi)},
-                simdi=simdi,
-            )
+            conn.execute("SAVEPOINT denetim")  # kısmi yazım (ör. dedup işareti) kuyruk hatasında geri alınır
+            try:
+                gonderildi = _denetim_yaz(conn, simdi, kurucu_id, eylem, aktor_id, hedef_id)
+            except BaseException:
+                conn.execute("ROLLBACK TO denetim")
+                conn.execute("RELEASE denetim")
+                raise
+            conn.execute("RELEASE denetim")
+            return gonderildi
     except Exception:
         log.exception("denetim bildirimi kuyruğa alınamadı (asıl işlem etkilenmedi)")
         return False
+
+
+# Karşıt eylem çiftleri: biri bildirilince diğerinin tekrar-engeli kalkar (kurucu son durumu doğru görsün).
+_KARSIT_EYLEM = {"yetki_ver": "yetki_al", "yetki_al": "yetki_ver", "grup_onayla": "grup_kaldir", "grup_kaldir": "grup_onayla"}
+_OZET_AZAMI_PARCA = 6  # saat başına en çok bu kadar ayrı özet satırı (gönderilmiş özetten sonrası için)
+
+
+def _ozet_say(conn, kurucu_id: int, simdi) -> None:
+    """Saatlik üst sınır aşıldı: değişikliği o saatin BEKLEYEN özetine ekler; özet zaten gönderilmişse yeni
+    özet satırı açar (gönderim sonrası değişiklikler kaybolmaz). Parça sayısı sınırlıdır (mesaj seli yok)."""
+    taban = f"denetim_ozet:{simdi.strftime('%Y%m%d%H')}"
+    for n in range(_OZET_AZAMI_PARCA):
+        oz = taban if n == 0 else f"{taban}:{n}"
+        r = conn.execute(
+            "SELECT durum FROM outbox WHERE hedef_sohbet=? AND idem_anahtari=?", (kurucu_id, oz)
+        ).fetchone()
+        if r is None:
+            outbox.kuyruga_ekle(
+                conn, hedef_sohbet=kurucu_id, grup_id=None, tur="denetim_ozet", idem_anahtari=oz,
+                veri={"sayi": 1, "zaman": iso(simdi)}, simdi=simdi,
+            )
+            return
+        if r[0] == "bekliyor":
+            conn.execute(
+                "UPDATE outbox SET veri=json_set(veri,'$.sayi',json_extract(veri,'$.sayi')+1)"
+                " WHERE hedef_sohbet=? AND idem_anahtari=? AND durum='bekliyor'",
+                (kurucu_id, oz),
+            )
+            return
+    log.warning("denetim özeti parça sınırı aşıldı; bu saatteki ek değişiklikler bildirilmedi")
+
+
+def _denetim_yaz(conn, simdi, kurucu_id, eylem, aktor_id, hedef_id) -> bool:
+    anahtar = f"denetim:{eylem}:{aktor_id}:{hedef_id}"
+    r = conn.execute("SELECT son_bildirim FROM bildirim_sinirlari WHERE anahtar=?", (anahtar,)).fetchone()
+    if r is not None and not yetki.bildirim_gerekli_mi(
+        iso_coz(r[0]), simdi, timedelta(seconds=config.AUDIT_DEDUP_WINDOW_SECONDS)
+    ):
+        return False
+    n = conn.execute(
+        "SELECT COUNT(*) FROM outbox WHERE tur='denetim' AND hedef_sohbet=? AND olusturuldu>?",
+        (kurucu_id, iso(simdi - timedelta(hours=1))),
+    ).fetchone()[0]
+    if n >= config.AUDIT_NOTIFY_MAX_PER_HOUR:
+        _ozet_say(conn, kurucu_id, simdi)
+        return False
+    ok = outbox.kuyruga_ekle(
+        conn, hedef_sohbet=kurucu_id, grup_id=None, tur="denetim",
+        idem_anahtari=f"denetim:{iso(simdi)}:{eylem}:{aktor_id}:{hedef_id}",
+        veri={"eylem": eylem, "aktor_id": aktor_id, "hedef_id": hedef_id, "zaman": iso(simdi)},
+        simdi=simdi,
+    )
+    conn.execute(
+        "INSERT INTO bildirim_sinirlari(anahtar, son_bildirim) VALUES(?,?)"
+        " ON CONFLICT(anahtar) DO UPDATE SET son_bildirim=excluded.son_bildirim",
+        (anahtar, iso(simdi)),
+    )
+    karsit = _KARSIT_EYLEM.get(eylem)
+    if karsit is not None:
+        conn.execute(
+            "DELETE FROM bildirim_sinirlari WHERE anahtar LIKE ? AND anahtar LIKE ?",
+            (f"denetim:{karsit}:%", f"%:{hedef_id}"),
+        )
+    return ok
 
 
 def yetki_ver(conn, saat: Saat, kurucu_id: int, aktor_id: int, hedef_id: int) -> bool:
@@ -130,11 +169,13 @@ def grup_onayla(conn, saat: Saat, kurucu_id: int, aktor_id: int, grup_id: int) -
     if not isinstance(grup_id, int) or grup_id >= 0:
         raise YonetimHatasi("grup kimliği negatif olmalı (özel sohbet kimliği onaylanamaz)")
     with islem(conn):
-        cur = conn.execute(
-            "INSERT OR IGNORE INTO onayli_gruplar(group_id, onaylandi) VALUES(?,?)",
-            (grup_id, iso(saat())),
-        )
-        yeni = cur.rowcount == 1
+        yeni = conn.execute("SELECT 1 FROM onayli_gruplar WHERE group_id=?", (grup_id,)).fetchone() is None
+        if yeni:
+            # Onay dönemi zaman damgası değil, artan tamsayıdır (D7): saat değişimi dönemi bozamaz.
+            conn.execute(
+                "INSERT INTO onayli_gruplar(group_id, onaylandi, donem) VALUES(?,?,?)",
+                (grup_id, iso(saat()), db.sonraki_onay_donemi(conn)),
+            )
         conn.execute("INSERT OR IGNORE INTO grup_ayarlari(group_id) VALUES(?)", (grup_id,))
         if yeni:
             # Yeniden etkinleştirme = ilk etkinleştirme: mevcut savaşlar bildirimsiz baseline olur.
@@ -192,10 +233,14 @@ TASIMA_ISTISNALARI = {
 }
 # sistem_durumu içinde grup kimliğini anahtara gömen girdiler ('<önek><group_id>'): taşınır.
 TASINAN_DURUM_ANAHTARLARI = ("savas_taninmayan:",)
-# Yeni grupta BOŞ olması, eski grupta en az birinin dolu olması gereken takip verisi tabloları.
+# Eski grupta en az birinin dolu olması gereken takip verisi tabloları.
 _VERI_TABLOLARI = (
     "takip_oyuncular", "takip_partiler", "parti_uyeleri", "engeller", "savaslar", "bulunamadi_sayaclari",
 )
+# Yeni grupta BOŞ olması gerekenler. 'savaslar' bilerek YOK: yeni grup onaylanınca zamanlayıcı en geç birkaç
+# saniyede ilk savaş taramasını yapıp savaş kayıtlarını ve baseline'ı yazar (bildirimsiz). Bunu "veri var"
+# saymak taşımayı kalıcı engellerdi; savaş kayıtları taşımada BİRLEŞTİRİLİR (grup_tasi).
+_YENI_BOS_TABLOLAR = tuple(t for t in _VERI_TABLOLARI if t != "savaslar")
 
 
 def _grup_kimligi_gecerli(x) -> bool:
@@ -242,11 +287,9 @@ def _tasima_kontrol(conn, eski: int, yeni: int) -> dict[str, int]:
         raise TasimaHatasi(f"yeni grup onaylı değil; önce /grup_onayla {yeni}")
     if eski in onayli:
         raise TasimaHatasi("eski grup hâlâ onaylı; taşıma için onayının düşmüş olması gerekir")
-    if any(grup_verisi_say(conn, yeni).values()):
+    yeni_say = grup_verisi_say(conn, yeni)
+    if any(yeni_say[t] for t in _YENI_BOS_TABLOLAR):
         raise TasimaHatasi("yeni grupta zaten takip verisi var; karışmaması için taşıma yapılmaz")
-    a = conn.execute("SELECT savas_baseline_tamam FROM grup_ayarlari WHERE group_id=?", (yeni,)).fetchone()
-    if a is not None and a[0]:
-        raise TasimaHatasi("yeni grupta savaş taraması başlamış; karışmaması için taşıma yapılmaz")
     sayilar = grup_verisi_say(conn, eski)
     if not any(sayilar.values()):
         raise TasimaHatasi("eski grupta taşınacak takip verisi yok")
@@ -269,7 +312,21 @@ def grup_tasi(conn, saat: Saat, kurucu_id: int, aktor_id: int | None, eski: int,
     with islem(conn):
         sayilar = _tasima_kontrol(conn, eski, yeni)
         for t in _VERI_TABLOLARI:
-            conn.execute(f"UPDATE {t} SET group_id=? WHERE group_id=?", (yeni, eski))
+            if t == "savaslar":
+                # Birleştir: yeni grubun kendi taramasında gördüğü savaşlar kalır, eskinin bilinenleri eklenir
+                # (aynı savas_id çakışmasında yeni grubun kaydı korunur).
+                conn.execute(  # çakışan kayıtta en erken ilk_gorulme korunur
+                    "UPDATE savaslar SET ilk_gorulme=(SELECT MIN(e.ilk_gorulme, savaslar.ilk_gorulme) FROM savaslar e"
+                    " WHERE e.group_id=? AND e.savas_id=savaslar.savas_id)"
+                    " WHERE group_id=? AND savas_id IN (SELECT savas_id FROM savaslar WHERE group_id=?)",
+                    (eski, yeni, eski),
+                )
+                sayilar["savaslar"] = conn.execute(
+                    "UPDATE OR IGNORE savaslar SET group_id=? WHERE group_id=?", (yeni, eski)
+                ).rowcount  # yalnız gerçekten taşınan satırlar
+                conn.execute("DELETE FROM savaslar WHERE group_id=?", (eski,))
+            else:
+                conn.execute(f"UPDATE {t} SET group_id=? WHERE group_id=?", (yeni, eski))
         # Tarama durumu: yeni grubun (boş) kayıtları atılır, eskinin kayıtları taşınır.
         conn.execute("DELETE FROM tarama_isleri WHERE group_id=?", (yeni,))
         conn.execute("UPDATE tarama_isleri SET group_id=? WHERE group_id=?", (yeni, eski))
@@ -277,10 +334,12 @@ def grup_tasi(conn, saat: Saat, kurucu_id: int, aktor_id: int | None, eski: int,
         conn.execute("INSERT OR IGNORE INTO grup_ayarlari(group_id) VALUES(?)", (yeni,))
         e = conn.execute("SELECT * FROM grup_ayarlari WHERE group_id=?", (eski,)).fetchone()
         if e is not None:
+            y = conn.execute("SELECT savas_baseline_tamam FROM grup_ayarlari WHERE group_id=?", (yeni,)).fetchone()
+            baseline = 1 if (e["savas_baseline_tamam"] or (y is not None and y[0])) else 0  # birleşik savaş kümesi
             conn.execute(
                 "UPDATE grup_ayarlari SET tarama_araligi_dk=?, savas_baseline_tamam=?, son_tarama_denemesi=?,"
                 " sonraki_tarama=?, ardisik_hata=? WHERE group_id=?",
-                (e["tarama_araligi_dk"], e["savas_baseline_tamam"], e["son_tarama_denemesi"],
+                (e["tarama_araligi_dk"], baseline, e["son_tarama_denemesi"],
                  e["sonraki_tarama"], e["ardisik_hata"], yeni),
             )
             conn.execute("DELETE FROM grup_ayarlari WHERE group_id=?", (eski,))

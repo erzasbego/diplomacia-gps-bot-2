@@ -1,0 +1,48 @@
+# Otomatik MOCK testleri. Gerçek Diplomacia, Telegram veya VPS bağlantısı KURMAZ; hiçbir secret/token kullanmaz.
+# Testler sahte kaynak, httpx.MockTransport ve sahte Telegram nesneleriyle çalışır; bu yüzden geçmesi
+# CANLI entegrasyonu kanıtlamaz (bkz. README "Doğrulananlar ve doğrulanmayanlar").
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+# En düşük izin: yalnız depoyu okuma. Başka kapsam (yazma, id-token, packages...) yok.
+permissions:
+  contents: read
+
+# Aynı ref için eski koşuyu iptal et (push + PR çift tetiklemesinde kaynak israfı olmasın).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Depoyu al
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false  # GITHUB_TOKEN git yapılandırmasında bırakılmaz
+
+      - name: Python ${{ matrix.python-version }} kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Bağımlılıkları kur (requirements.txt)
+        run: python -m pip install -r requirements.txt
+
+      - name: Testleri çalıştır (mock)
+        run: python -m pytest -q

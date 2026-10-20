@@ -9,10 +9,10 @@
 - [x] 5. Zamanlayıcı/hata sınıfları/geri çekilme/haftalık token hatırlatması — mock testli
 - [x] 6a. QA tur 1+2+doğrulama ve Opus (2 inceleme) bulgularının düzeltmeleri: Tur A, B, C, E, F1, F2a UYGULANDI
 - [~] 6b. Dağıtım (systemd, backup/restore, .env.example, deploy README) — taslak; sunucuda DOĞRULANMADI
-- [ ] 7. Tur F2b: D7 saat güvenliği (monotonic TTL, onay_donemi sayacı) + .prev silme politikası
-- [ ] 8. Bağımsız doğrulama: qa + dar kapsamlı Opus — F1, F2a (D9), F2b için (henüz hiçbir bağımsız inceleme bu üç turu görmedi)
-- [ ] 9. Kök README.md (Türkçe) — YOK
+- [x] 7. Tur F2b: D7 saat güvenliği (monotonic TTL, onay_donemi sayacı) + .prev silme politikası — UYGULANDI (bulut oturumu, mock testli)
+- [x] 8. Bağımsız doğrulama: 2 QA ajanı (F1+F2a, F2b+belgeler) TAMAM, bulgular düzeltildi; dar kapsamlı Opus: sonucu findings.md'de
+- [x] 9. Kök README.md (Türkçe) — YAZILDI; deploy/CANLI-DOGRULAMA-PLANI.md ve deploy/onkontrol.sh eklendi
 - [ ] 10. Canlı doğrulama (kullanıcı güvenli token'ı yerel ortamda sağlayınca ve izin verince)
 
-Test durumu (ana oturum, 2026-10-20): 631 passed, 0 failed (MOCK).
+Test durumu (bulut, 2026-10-20): 679 passed, 0 failed (MOCK; Python 3.11/3.12/3.13). Dal: claude/eager-gates-0sztex (PR incelemesi bekliyor).
 Kural: canlı entegrasyon doğrulanmadan "çalışıyor" denmez; mock testler ayrı raporlanır.

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import config
 
-SEMA_SURUMU = 3  # 2: takip_oyuncular.uid; 3: grup_gocleri (CREATE IF NOT EXISTS)
+SEMA_SURUMU = 4  # 2: takip_oyuncular.uid; 3: grup_gocleri; 4: onayli_gruplar.donem + outbox.onay_donemi (D7)
 
 
 def _sema() -> str:
@@ -21,9 +21,11 @@ CREATE TABLE IF NOT EXISTS yetkili_kullanicilar(
     user_id INTEGER PRIMARY KEY,
     eklendi TEXT NOT NULL
 );
+-- donem: her YENİ onayda artan tamsayı (sistem_durumu['onay_donemi_sayaci']); saat/zaman damgasına bağlı değildir.
 CREATE TABLE IF NOT EXISTS onayli_gruplar(
     group_id INTEGER PRIMARY KEY,
-    onaylandi TEXT NOT NULL
+    onaylandi TEXT NOT NULL,
+    donem INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS grup_ayarlari(
     group_id INTEGER PRIMARY KEY,
@@ -109,6 +111,7 @@ CREATE TABLE IF NOT EXISTS outbox(
     son_hata TEXT,
     olusturuldu TEXT NOT NULL,
     gonderildi TEXT,
+    onay_donemi INTEGER,          -- grup_id doluysa satır üretilirken grubun onay dönemi (0: onaysız/bayat)
     UNIQUE(hedef_sohbet, idem_anahtari)
 );
 CREATE INDEX IF NOT EXISTS ix_outbox_durum ON outbox(durum, sonraki_deneme);
@@ -170,8 +173,47 @@ def _goc(conn: sqlite3.Connection) -> None:
         sutunlar = [r[1] for r in conn.execute("PRAGMA table_info(takip_oyuncular)")]
         if "uid" not in sutunlar:
             conn.execute("ALTER TABLE takip_oyuncular ADD COLUMN uid TEXT")
+    if surum < 4:
+        _donem_goc(conn)
     if surum < SEMA_SURUMU:
         conn.execute(f"PRAGMA user_version={SEMA_SURUMU}")
+
+
+DONEM_SAYACI = "onay_donemi_sayaci"
+
+
+def _donem_goc(conn: sqlite3.Connection) -> None:
+    """v4 (D7): onay dönemini zaman damgası karşılaştırması yerine artan tamsayıya taşır.
+    Mevcut onaylı gruplar onay sırasıyla 1..N dönemini alır; bekleyen outbox satırı onaydan SONRA
+    üretilmişse güncel dönemi, ÖNCE üretilmişse 0'ı (bayat -> gönderimde iptal) alır."""
+    with islem(conn):
+        gs = [r[1] for r in conn.execute("PRAGMA table_info(onayli_gruplar)")]
+        if "donem" not in gs:
+            conn.execute("ALTER TABLE onayli_gruplar ADD COLUMN donem INTEGER NOT NULL DEFAULT 0")
+        os_ = [r[1] for r in conn.execute("PRAGMA table_info(outbox)")]
+        if "onay_donemi" not in os_:
+            conn.execute("ALTER TABLE outbox ADD COLUMN onay_donemi INTEGER")
+        n = 0
+        for r in conn.execute("SELECT group_id FROM onayli_gruplar ORDER BY onaylandi, group_id").fetchall():
+            n += 1
+            conn.execute("UPDATE onayli_gruplar SET donem=? WHERE group_id=?", (n, r[0]))
+        conn.execute(
+            "UPDATE outbox SET onay_donemi = COALESCE(("
+            " SELECT CASE WHEN outbox.olusturuldu >= o.onaylandi THEN o.donem ELSE 0 END"
+            " FROM onayli_gruplar o WHERE o.group_id=outbox.grup_id), 0)"
+            " WHERE grup_id IS NOT NULL AND onay_donemi IS NULL"
+        )
+        mevcut = conn.execute("SELECT deger FROM sistem_durumu WHERE anahtar=?", (DONEM_SAYACI,)).fetchone()
+        if mevcut is None:
+            conn.execute("INSERT INTO sistem_durumu(anahtar, deger) VALUES(?,?)", (DONEM_SAYACI, str(n)))
+
+
+def sonraki_onay_donemi(conn: sqlite3.Connection) -> int:
+    """Artan onay dönemi sayacı (hiç geri dönmez, yeniden kullanılmaz). Çağıran transaction içinde olmalı."""
+    r = conn.execute("SELECT deger FROM sistem_durumu WHERE anahtar=?", (DONEM_SAYACI,)).fetchone()
+    yeni = (int(r[0]) if r else 0) + 1
+    conn.execute("INSERT OR REPLACE INTO sistem_durumu(anahtar, deger) VALUES(?,?)", (DONEM_SAYACI, str(yeni)))
+    return yeni
 
 
 @contextmanager

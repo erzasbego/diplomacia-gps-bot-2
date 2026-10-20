@@ -6,12 +6,13 @@ Bu belge ve `deploy/` altındaki dosyalar taslaktır; gerçek bir sunucuda **den
 
 | Varsayım | Durum |
 |---|---|
-| Giriş noktası `python -m dipbot` | **Koddan doğrulandı** (`src/dipbot/__main__.py` -> `tg/calistir.py: main`). |
-| Ortam değişkenleri | **Koddan doğrulandı:** `BOT_TOKEN`, `OWNER_TELEGRAM_ID` (zorunlu); `DB_PATH`, `DIPLOMACIA_TOKEN_DOSYASI`, `DIPLOMACIA_DOGRULAMA_OYUNCU` (isteğe bağlı; token doğrulamada sorgulanan oyuncu numarası, varsayılan `72400`, geçersizse bot başlamaz; doğrulama 404 verirse "doğrulama oyuncusu bulunamadı, token geçersiz demek değildir" uyarısı çıkar ve başka bir numara verilmelidir). Başka değişken okunmaz. |
+| Giriş noktası `python -m dipbot` | **Koddan doğrulandı** (`src/dipbot/__main__.py` -> `tg/calistir.py: main`). Paket `src/` altındadır ve pip ile kurulmaz: servis `PYTHONPATH=/opt/dipbot/src` ile çalışır (unit dosyasında; bu olmadan `No module named dipbot` hatası alınır — bulutta doğrulandı). |
+| Ortam değişkenleri | **Koddan doğrulandı:** `BOT_TOKEN`, `OWNER_TELEGRAM_ID` (zorunlu); `DB_PATH`, `DIPLOMACIA_TOKEN_DOSYASI`, `DIPLOMACIA_DOGRULAMA_OYUNCU` (isteğe bağlı; token doğrulamada sorgulanan oyuncu numarası, varsayılan `72400`, geçersizse bot başlamaz; doğrulama 404 verirse "doğrulama oyuncusu bulunamadı, token geçersiz demek değildir" uyarısı çıkar ve başka bir numara verilmelidir). `DIPLOMACIA_AUTH_BASLIK` / `DIPLOMACIA_AUTH_SEMA` isteğe bağlı override'lardır ve `dipbot.env`'de **boş (`KEY=`) bırakılmamalıdır** (systemd boş dize tanımlar; boş şema `Bearer` önekini düşürür → 401): ya hiç yazmayın ya da gerçek değer verin (`.env.example`'da yorum satırıdır). Başka değişken okunmaz. |
 | SQLite yolu | `DB_PATH` ile ayarlanır (boşsa `<proje>/data/dipbot.db`). Sunucuda `/var/lib/dipbot/dipbot.db` verilir; `backup.sh`/`restore.sh` varsayılanı aynıdır. Yedek betikleri `DB_PATH` ortam değişkenini kendi ortamlarında okur (systemd env dosyasını görmezler). |
-| Debian/Ubuntu LTS, Python 3.11+ | Sürüm **varsayımdır**; `requirements.txt` ile teyit edin. |
-| `systemd-analyze verify`, gerçek polling, gerçek süreçte SIGTERM | **Doğrulanmadı** (aşağıdaki "Doğrulama durumu özeti"ne bakın). |
-| `backup.sh` / `restore.sh` davranışı | Yalnız `bash -n` sözdizimi denetimi yapıldı; sunucuda çalıştırılmadı. |
+| Ubuntu LTS, Python 3.11+ | Hedef **Ubuntu 24.04 LTS (Python 3.12)**. Mock test paketi bulutta Python 3.11, 3.12 ve 3.13'te geçti; gerçek Ubuntu makinesinde çalıştırılmadı. Ubuntu 22.04'ün varsayılan Python'u 3.10'dur ve **desteklenmez** (3.11+ ayrıca kurmanız gerekir; denenmedi). |
+| `systemd-analyze verify` | Bulutta (Ubuntu 24.04.5, systemd 255) **statik** olarak çalıştırıldı: birim, yolları var olan bir sahte düzende hatasız; gerçek `/opt/dipbot` yolunda yalnız "python bulunamadı" uyarısı (kurulu olmadığı için). **Hedef sunucuda yeniden çalıştırın.** |
+| Gerçek polling, gerçek süreçte SIGTERM | **Doğrulanmadı** (aşağıdaki "Doğrulama durumu özeti"ne bakın). |
+| `backup.sh` / `restore.sh` davranışı | `bash -n` + bulutta gerçek (WAL, başka bağlantıca açık) bir SQLite dosyasıyla çalıştırıldı (0600, `integrity_check`, `KEEP` döngüsü, geri yükleme, yanlış onayda iptal); `restore.sh`te `systemctl` **sahte** betikti. Gerçek sunucuda/systemd ile çalıştırılmadı. |
 
 ## Düzen
 
@@ -54,9 +55,10 @@ Telegram botlar bir kullanıcıya kendiliğinden yazamaz. Kurucu (`OWNER_TELEGRA
 ## Kurulum (root veya sudo ile)
 
 ```bash
-# 1. Paketler (Python sürümü varsayım: 3.11+)
+# 1. Paketler (Ubuntu 24.04 LTS: python3 = 3.12). Sürümü kontrol edin: 3.11 veya üstü olmalı.
 apt update
 apt install -y python3 python3-venv python3-pip sqlite3 git
+python3 --version
 
 # 2. Kullanıcı ve dizinler
 useradd --system --home-dir /var/lib/dipbot --shell /usr/sbin/nologin dipbot
@@ -85,6 +87,8 @@ install -m 0750 -o root -g root /opt/dipbot/deploy/restore.sh /usr/local/sbin/di
 # 6. Servis
 install -m 0644 /opt/dipbot/deploy/dipbot.service /etc/systemd/system/dipbot.service
 systemd-analyze verify /etc/systemd/system/dipbot.service   # DOGRULANMADI: sunucuda calistirin
+# Servisi başlatmadan ÖNCE salt-okunur ön kontrol (ağ/gizli bilgi kullanmaz): bkz. "Sunucu ön kontrolü"
+# ve CANLI-DOGRULAMA-PLANI.md
 systemctl daemon-reload
 systemctl enable --now dipbot
 systemctl status dipbot
@@ -134,7 +138,7 @@ systemctl restart dipbot
 journalctl -u dipbot -n 50 --utc
 ```
 
-Sorun çıkarsa önceki sürüme dönün (`git checkout <önceki_sürüm>`), gerekiyorsa aşağıdaki geri yüklemeyi uygulayın.
+Sorun çıkarsa önceki sürüme dönün (`git checkout <önceki_sürüm>`). **Dikkat:** veritabanı şeması ileri taşınır (`user_version` 4, `onayli_gruplar.donem`); eski sürüm kodu dönemleri bilmez ve onu çalıştırırken onaylanan grupların bildirimleri yeni sürüme dönüşte sessizce iptal edilebilir. Kod sürümünü geri alırken veritabanını da **güncelleme öncesi alınan yedekten** geri yükleyin (aşağıdaki geri yükleme); yalnız kodu geri almak güvenli değildir.
 
 ## Yedekleme
 
@@ -191,7 +195,9 @@ Betik sırasıyla: root kontrolü, yedek bütünlük kontrolü, `EVET` onayı, s
 
 ## Diplomacia token yenileme
 
-Yöntem: kurucu, botun **Telegram özel sohbetindeki** token menüsünü kullanır. Bot, **aday tokenı mevcut dosyaya dokunmadan** `GET /api/players/72400` ile sınar (`Authorization: Bearer` + `X-Client-Platform: web`); yalnız HTTP 200 **ve** gövde oyuncu verisi olarak ayrıştırılabiliyorsa kabul eder. HTML/boş/`{}`/ayrıştırılamayan gövde, 401, 403, 5xx ve ağ hatası **reddedilir** (403 "geçersiz" değil "doğrulanamadı" sayılır). Kabulde mevcut dosya önce 0600 `<token dosyası>.prev` olarak atomik yedeklenir (`.prev` eski tokenı içerir; paylaşmayın, yedeğe koymayın), sonra yeni token atomik yazılır (geçici dosya + `os.replace`, izin 0600). Reddedilirse dosya ve `.prev` değişmez. Başarı mesajı yalnız "aday token ile oyuncu isteği başarılı; kaydedildi" der; canlı davranışı garanti etmez. Servisin yeniden başlatılması GEREKMEZ: token her Diplomacia isteğinde dosyadan okunur (mock testlerle doğrulandı, canlıda doğrulanmadı).
+Yöntem: kurucu, botun **Telegram özel sohbetindeki** token menüsünü kullanır. Bot, **aday tokenı mevcut dosyaya dokunmadan** `GET /api/players/72400` ile sınar (`Authorization: Bearer` + `X-Client-Platform: web`); yalnız HTTP 200 **ve** gövde oyuncu verisi olarak ayrıştırılabiliyorsa kabul eder. HTML/boş/`{}`/ayrıştırılamayan gövde, 401, 403, 5xx ve ağ hatası **reddedilir** (403 "geçersiz" değil "doğrulanamadı" sayılır). Kabulde mevcut dosya önce 0600 `<token dosyası>.prev` olarak atomik yedeklenir (`.prev` eski tokenı içerir; paylaşmayın, yedeğe koymayın), sonra yeni token atomik yazılır (geçici dosya + `os.replace`, izin 0600). Reddedilirse dosya ve `.prev` değişmez.
+
+**`.prev` silme politikası (süresiz tutulmaz):** zamanlayıcı `.prev` dosyasını otomatik siler (yalnız `unlink`; üzerine yazma yoktur) — (a) yeni token, token dosyası tarama boyunca değişmemiş **ilk başarılı yetkili taramayla** (partiler, oyuncular ve savaşlar hatasız) teyit edilince, veya (b) dosya yaşı `TOKEN_PREV_OMRU_SANIYE` (`config.py`, **24 saat**) dolunca; kontrol en sık 5 dakikada bir yapılır. **Ana token dosyası yok/boşsa `.prev` silinmez** (tek kopya olabilir); dosya zamanı gelecekte görünüyorsa (saat geri gitmiş, yaş belirsiz) de **silinmez** (bir kez uyarı loglanır, saat düzelince politika uygulanır). Teyit için en az bir takipli oyuncu/parti isteği başarıyla gözlenmiş olmalıdır; takipsiz bir grubun yalnız `/api/wars` başarısı yedeği silmez. Yaş, dosya değişiklik zamanı ile duvar saati arasındaki farktır: saat 24 saatten fazla ileri atlarsa yedek erken silinebilir. Başarısız tarama (401/403/ağ) yedeği silmez. **Geri dönüş yolu** (yalnız `.prev` hâlâ varsa): servisi durdurmanız gerekmez; `sudo -u dipbot mv /var/lib/dipbot/diplomacia.token.prev /var/lib/dipbot/diplomacia.token` yeni tokenı eskisiyle değiştirir (yeni token kaybolur; onu yeniden menüden verirsiniz). Silme sonrası geri dönüş yoktur. Windows'ta (geliştirme) 0600 uygulanmaz. MOCK testli (`tests/test_tur_f2b.py`); gerçek dosya sisteminde/uzun süreli çalışmada doğrulanmadı. Başarı mesajı yalnız "aday token ile oyuncu isteği başarılı; kaydedildi" der; canlı davranışı garanti etmez. Servisin yeniden başlatılması GEREKMEZ: token her Diplomacia isteğinde dosyadan okunur (mock testlerle doğrulandı, canlıda doğrulanmadı).
 
 **Durum ve hata davranışı (mock testli, canlı DOĞRULANMADI):** token dosyası yok/boş/biçimi bozuksa istek atılmaz; durum ekranı "Diplomacia bağlantısı: token dosyası yok" der, geri çekilme ve log yağmuru olmaz. **401** → token geçersiz: taramalar duraklar, kurucuya TEK bildirim gider. **403** → "erişim reddedildi (403): kimlik biçimi veya site engeli olabilir"; geri çekilme uygulanır ama taramalar duraklatılmaz ve "token geçersiz" bildirimi gönderilmez. Çıkış kodları değişmedi (2 yapılandırma, 3 BOT_TOKEN/Conflict); Diplomacia token sorunları süreci sonlandırmaz.
 
@@ -208,14 +214,24 @@ Dosya, uygulama çalışırken de değiştirilebilir: kaynak kodu token'ı her i
 
 Windows (geliştirme) notu: Windows'ta POSIX dosya izinleri yoktur; `os.chmod` yalnız salt-okunur bayrağını etkiler. Orada koruma NTFS dizin ACL'lerine bağlıdır. Üretim hedefi Linux'tur.
 
+## Saat güvenliği (D7) ve yeniden başlatma
+
+Bekleyen onaylar (silme, yetki/grup kaldırma, `/grup_tasi` vb.; ömür 10 dk) ve token bekleme (5 dk) süreç **belleğinde**, duvar saati + monotonic saatle birlikte tutulur. İki saatin geçen süresi 30 sn'den fazla ayrışırsa (sunucu saati elle/NTP ile atladıysa) bekleyen işlem **uygulanmaz** ve "Sunucu saati değişti … işlemi yeniden başlatın" mesajı gösterilir. **Servis yeniden başlatılınca bekleyen tüm onaylar ve token bekleme geçersizdir** (kurucu işlemi yeniden başlatır). Bildirim kuyruğundaki "onay dönemi" zaman damgası değil, veritabanında artan bir tamsayı sayaçtır; saat değişimi dönem kararını bozmaz. Sınır: Linux monotonic saati askıya almayı saymaz (VPS'te askıya alma beklenmez); tarama zamanlaması, bildirim yeniden deneme beklemesi ve haftalık token hatırlatması duvar saatine bağlıdır (saat atlarsa gecikebilir/öne gelebilir, onay güvenliğini etkilemez). MOCK testli; gerçek NTP atlamasında doğrulanmadı. Sunucuda `timedatectl` ile saat senkronunu (NTP) açık tutun.
+
+## Sunucu ön kontrolü
+
+`deploy/onkontrol.sh` (ağ isteği atmaz, gizli değer yazdırmaz, dosyaları değiştirmez; DB bütünlük kontrolünü `-wal/-shm` root sahipli kalmasın diye servis kullanıcısı olarak yapar) kurulumu denetler: Python sürümü, `PYTHONPATH` ile modülün yüklenebilmesi, dizin/dosya sahipliği ve izinleri, `.prev` varlığı/yaşı, `systemd-analyze verify`, zaman senkronu. Servisi başlatmadan önce ve her güncellemeden sonra çalıştırın: `sudo /opt/dipbot/deploy/onkontrol.sh`. Betik bulutta yalnız sahte dizin düzeniyle denendi; gerçek Ubuntu sunucuda çalıştırılmadı.
+
+Canlı doğrulama adımları ve beklenen sonuçlar: [`CANLI-DOGRULAMA-PLANI.md`](CANLI-DOGRULAMA-PLANI.md).
+
 ## Doğrulama durumu özeti
 
 Doğrulandı:
-- `bash -n` ile `backup.sh` ve `restore.sh` sözdizimi (Git Bash).
+- `bash -n` ile `backup.sh`, `restore.sh` ve `onkontrol.sh` sözdizimi; `backup.sh`/`restore.sh` gerçek WAL veritabanıyla (restore'da sahte `systemctl`); `onkontrol.sh` sahte dizin düzeniyle (doğru ve bilerek bozuk kurulumda); `systemd-analyze verify` statik (bkz. yukarı).
 - Koddan: giriş noktası, ortam değişkenleri, çıkış kodları 2/3, yazılan yollar, token dosyası davranışı, 10 sn tarama kapanış beklemesi.
 
 **Doğrulanmadı:**
-- `systemd-analyze verify dipbot.service` (ve `RestartPreventExitStatus` / sertleştirme direktiflerinin hedef systemd sürümünde kabulü).
+- Hedef sunucuda `systemd-analyze verify dipbot.service`, servisin gerçekten başlaması ve sertleştirme direktiflerinin etkisi (`ProtectSystem=strict` altında yazma yolları).
 - Gerçek Telegram polling (ağ, BotFather tokenı, Conflict/InvalidToken davranışı canlıda).
 - Gerçek süreçte SIGTERM ile zarif kapanış ve süre uyumu (10 sn / `TimeoutStopSec=30`).
 - Servis başlatma, timer, yedek/geri yükleme akışı.

@@ -134,15 +134,15 @@ def test_f2_degisiklik_olmayan_islem_bildirim_uretmez(yconn, saat):
 
 
 def test_f2_ayni_eylem_pencerede_tek_bildirim_pencere_sonrasi_yeniden(yconn, saat):
-    for _ in range(3):
-        yonetim.yetki_ver(yconn, saat, KURUCU, YETKILI, 300)
-        yonetim.yetki_al(yconn, saat, KURUCU, YETKILI, 300)
-        saat.ilerle(5)
-    eylemler = [b["veri"]["eylem"] for b in _denetim(yconn)]
-    assert eylemler.count("yetki_ver") == 1 and eylemler.count("yetki_al") == 1
+    """BİLİNÇLİ DEĞİŞİKLİK (QA ORTA-3): tekrar engeli yalnız AYNI eylemin arka arkaya tekrarını bastırır;
+    karşıt eylem (ver<->al) görülünce karşıtın engeli kalkar ki kurucunun gördüğü SON bildirim gerçek durumu
+    yansıtsın. Sel koruması saatlik üst sınır + özet ile sürer (test_f2_sel_tek_ozet_ve_ust_sinir)."""
+    ayni = dict(eylem="yetki_ver", aktor_id=YETKILI, hedef_id=300)
+    assert yonetim.denetim_bildir(yconn, saat, KURUCU, **ayni) is True
+    assert yonetim.denetim_bildir(yconn, saat, KURUCU, **ayni) is False  # pencerede tekrar yok
     saat.ilerle(config.AUDIT_DEDUP_WINDOW_SECONDS + 1)
-    yonetim.yetki_ver(yconn, saat, KURUCU, YETKILI, 300)
-    assert [b["veri"]["eylem"] for b in _denetim(yconn)].count("yetki_ver") == 2
+    assert yonetim.denetim_bildir(yconn, saat, KURUCU, **ayni) is True  # pencere sonrası yeniden
+    assert [b["veri"]["eylem"] for b in _denetim(yconn)] == ["yetki_ver", "yetki_ver"]
 
 
 def test_f2_kurucunun_kendi_eylemi_bildirim_uretmez_bayrakla_acilir(yconn, saat, monkeypatch):

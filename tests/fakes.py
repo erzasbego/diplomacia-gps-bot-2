@@ -20,13 +20,24 @@ from dipbot.outbox import GonderimHatasi
 
 
 class SahteSaat:
+    """Duvar saati + ona bağlı sahte monotonic saat (D7). `ilerle` ikisini birlikte (gerçek zaman akışı),
+    `duvar_atla` yalnız duvar saatini (NTP/elle saat değişimi) oynatır."""
+
     def __init__(self):
         self.simdi = datetime(2026, 10, 19, 12, 0, 0, tzinfo=timezone.utc)
+        self._mono = 1000.0
 
     def __call__(self) -> datetime:
         return self.simdi
 
+    def monotonic(self) -> float:
+        return self._mono
+
     def ilerle(self, saniye: float) -> None:
+        self.simdi += timedelta(seconds=saniye)
+        self._mono += saniye
+
+    def duvar_atla(self, saniye: float) -> None:
         self.simdi += timedelta(seconds=saniye)
 
 

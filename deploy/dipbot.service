@@ -2,6 +2,9 @@
 # TASLAK - DOGRULANMADI: gercek sistemde `systemd-analyze verify dipbot.service` calistirilmali.
 #
 # Giris noktasi koddan dogrulandi: src/dipbot/__main__.py -> `python -m dipbot`.
+# DIKKAT: paket `src/` altindadir ve pip ile KURULMAZ (pyproject yok); bu yuzden asagidaki
+# PYTHONPATH=/opt/dipbot/src ZORUNLUDUR (yoksa "No module named dipbot"). Bulutta dogrulandi:
+# PYTHONPATH olmadan `python -m dipbot` modul bulamaz, ile birlikte yapilandirma hatasi (cikis 2) verir.
 #
 # Duzen: kod /opt/dipbot, venv /opt/dipbot/.venv, veri /var/lib/dipbot (SQLite + WAL/SHM + diplomacia.token),
 # ortam dosyasi /etc/dipbot/dipbot.env (BOT_TOKEN burada; veritabaninda degil).
@@ -26,6 +29,7 @@ Group=dipbot
 WorkingDirectory=/opt/dipbot
 EnvironmentFile=/etc/dipbot/dipbot.env
 # Kod dizini salt okunur oldugundan .pyc yazimi denenmesin; loglar aninda journal'a gitsin.
+Environment=PYTHONPATH=/opt/dipbot/src
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
 # Kayit UTC; kullaniciya gosterim Europe/Istanbul uygulama tarafinda yapilir.
