@@ -26,6 +26,7 @@ from ..zaman import (
     yerel_goster, iso,
 )
 from . import bicim
+from .baglanti import BaglantiHatasi, kimlik_coz_ayrintili
 from .bicim import esc
 from .islemler import IslemDeposu
 from .kaynak_yok import KaynakYapilandirilmadi, yapilandirildi_mi
@@ -41,12 +42,12 @@ TOKEN_BEKLEME_OMRU = timedelta(minutes=5)
 KOMUTLAR: dict[str, str] = {
     "start": "Botu başlat, ana menüyü aç",
     "yardim": "Komutlar ve kullanım yardımı",
-    "oyuncu_ekle": "Oyuncuyu takibe ekle (profil linki veya kimlik)",
+    "oyuncuekle": "Oyuncuyu takibe ekle (ID veya bağlantı)",
     "oyuncular": "Takip edilen oyuncuları listele",
-    "oyuncu_sil": "Oyuncuyu takipten çıkar (kimlik)",
-    "parti_ekle": "Partiyi takibe ekle (parti linki veya kimlik)",
+    "oyuncusil": "Oyuncuyu takipten çıkar (ID veya bağlantı)",
+    "partiekle": "Partiyi takibe ekle (ID veya bağlantı)",
     "partiler": "Takip edilen partileri listele",
-    "parti_sil": "Parti takibini kaldır (kimlik)",
+    "partisil": "Parti takibini kaldır (ID veya bağlantı)",
     "savaslar": "Aktif savaşları listele",
     "tarama": "Tarama aralığını ayarla: 5, 10, 15 veya 20 dakika",
     "durum": "Bot durumunu göster",
@@ -57,12 +58,16 @@ KOMUTLAR: dict[str, str] = {
     "grup_tasi": "Göç eden grubun verisini yeni kimliğe taşı (yalnız kurucu, özel sohbet)",
 }
 
-_KIMLIK = r"[1-9][0-9]{0,11}"  # kanonik pozitif numara; baştaki sıfır/harf/UUID reddedilir
-_URL_DESENI = {
-    "player": re.compile(rf"^(?:https?://)?(?:www\.)?diplomacia\.com\.tr/player/({_KIMLIK})/?(?:[?#].*)?$", re.I),
-    "party": re.compile(rf"^(?:https?://)?(?:www\.)?diplomacia\.com\.tr/party/({_KIMLIK})/?(?:[?#].*)?$", re.I),
+# Geriye dönük uyumluluk: eski komut adları ÇALIŞIR ama Telegram komut listesinde, yardımda ve menülerde
+# gösterilmez (yalnız yeni kısa adlar gösterilir). Yetki/onay yolu aynıdır (normalize edilip aynı işleyici).
+ESKI_KOMUTLAR: dict[str, str] = {
+    "oyuncu_ekle": "oyuncuekle",
+    "oyuncu_sil": "oyuncusil",
+    "parti_ekle": "partiekle",
+    "parti_sil": "partisil",
 }
-_HAM_KIMLIK = re.compile(rf"^{_KIMLIK}$")
+TUM_KOMUT_ADLARI = tuple(KOMUTLAR) + tuple(ESKI_KOMUTLAR)
+
 
 _GRUP_KAPSAMLI = frozenset({"ol", "od", "os", "oe", "pl", "pd", "ps", "pe", "sl", "sd", "ta", "tv"})
 
@@ -77,14 +82,12 @@ SAAT_DEGISTI = ("⏱ Sunucu saati değişti; güvenlik için bekleyen işlem ge�
 
 
 def kimlik_coz(arg: str, tur: str) -> str | None:
-    """Profil/parti bağlantısından veya düz kimlikten kimliği çıkarır (tur: player|party)."""
-    arg = (arg or "").strip()
-    if not arg or any(c.isspace() for c in arg):
+    """Kimlik veya Diplomacia bağlantısından kimliği çıkarır (tur: player|party); geçersizse None.
+    Ayrıntılı hata için baglanti.kimlik_coz_ayrintili."""
+    try:
+        return kimlik_coz_ayrintili(arg, tur)
+    except BaglantiHatasi:
         return None
-    m = _URL_DESENI[tur].match(arg)
-    if m:
-        return m.group(1)
-    return arg if _HAM_KIMLIK.match(arg) else None
 
 
 def _tam_sayi(arg: str) -> int | None:
@@ -246,7 +249,7 @@ class Arayuz:
                 "<code>/grup_onayla &lt;grup_kimligi&gt;</code>"
             )
         satirlar = [[d] for d in (_dg(f"Grup {g}", f"gs:{g}") for g in onayli[:20]) if d]
-        satirlar.append([Dugme("Ana menü", "m")])
+        satirlar.append([Dugme("🏠 Ana menü", "m")])
         return Yanit("İşlem yapmak istediğiniz grubu seçin:", satirlar)
 
     # ====================== ortak yardımcılar ===============================
@@ -262,7 +265,7 @@ class Arayuz:
     @staticmethod
     def _kaynak_hata(baslik: str, e: BaseException) -> Yanit:
         ad = "Diplomacia bağlantısı yapılandırılmadı" if isinstance(e, KaynakYapilandirilmadi) else hata_aciklamasi(e)
-        return Yanit(f"{esc(baslik)}: {esc(ad)}. Hiçbir kayıt değiştirilmedi.", [[Dugme("Ana menü", "m")]])
+        return Yanit(f"{esc(baslik)}: {esc(ad)}. Hiçbir kayıt değiştirilmedi.", [[Dugme("🏠 Ana menü", "m")]])
 
     @staticmethod
     def _sayfa(toplam: int, sayfa: int) -> tuple[int, int, int]:
@@ -297,7 +300,7 @@ class Arayuz:
 
     # ====================== giriş noktaları =================================
     async def komut(self, o: Olay) -> Yanit | None:
-        ad = o.komut
+        ad = ESKI_KOMUTLAR.get(o.komut, o.komut)
         if ad not in KOMUTLAR:
             return None
         k = self._yetki(o, f"/{ad}")
@@ -388,19 +391,28 @@ class Arayuz:
     async def _k_yardim(self, o: Olay) -> Yanit:
         return self._yardim()
 
-    async def _k_oyuncu_ekle(self, o: Olay) -> Yanit:
+    @staticmethod
+    def _kimlik_al(o: Olay, tur: str, komut: str) -> tuple[str | None, Yanit | None]:
+        """Komut argümanından (ID veya Diplomacia bağlantısı) kimliği çıkarır; geçersizse kullanım yanıtı döner."""
+        try:
+            return kimlik_coz_ayrintili(o.arg, tur), None
+        except BaglantiHatasi as e:
+            ornek = "72400" if tur == "player" else "1244"
+            return None, Yanit(f"⚠️ {esc(str(e))}\nKullanım: <code>/{komut} {ornek}</code>")
+
+    async def _k_oyuncuekle(self, o: Olay) -> Yanit:
         g, r = self._grup_gerekli(o)
         if r:
             return r
-        oid = kimlik_coz(o.arg, "player")
-        if oid is None:
-            return Yanit("Kullanım: <code>/oyuncu_ekle https://diplomacia.com.tr/player/72400</code>")
+        oid, hata = self._kimlik_al(o, "player", "oyuncuekle")
+        if hata:
+            return hata
         try:
             s = await self.servis.oyuncu_ekle(g, oid, self.kaynak)
         except KaynakHatasi as e:
             return self._kaynak_hata("Oyuncu eklenemedi", e)
         if s.durum == "zaten_takipte":
-            return Yanit(f"Bu oyuncu zaten takipte: {bicim.oyuncu_link(s.oyuncu_id)}", [[Dugme("Oyuncular", "ol:0")]])
+            return Yanit(f"Bu oyuncu zaten takipte: {bicim.oyuncu_link(s.oyuncu_id)}", [[Dugme("👤 Oyuncular", "ol:0")]])
         return Yanit(
             "\n".join(
                 [
@@ -411,35 +423,35 @@ class Arayuz:
                     "<i>Bu bir başlangıç özetidir; değişiklik bildirimi değildir.</i>",
                 ]
             ),
-            [[Dugme("Oyuncular", "ol:0"), Dugme("Ana menü", "m")]],
+            [[Dugme("👤 Oyuncular", "ol:0"), Dugme("🏠 Ana menü", "m")]],
         )
 
     async def _k_oyuncular(self, o: Olay) -> Yanit:
         g, r = self._grup_gerekli(o)
         return r or self._oyuncu_liste(g, 0)
 
-    async def _k_oyuncu_sil(self, o: Olay) -> Yanit:
+    async def _k_oyuncusil(self, o: Olay) -> Yanit:
         g, r = self._grup_gerekli(o)
         if r:
             return r
-        oid = kimlik_coz(o.arg, "player")
-        if oid is None:
-            return Yanit("Kullanım: <code>/oyuncu_sil &lt;oyuncu_kimligi&gt;</code>")
+        oid, hata = self._kimlik_al(o, "player", "oyuncusil")
+        if hata:
+            return hata
         return self._oyuncu_sil_onayi(o, g, oid)
 
-    async def _k_parti_ekle(self, o: Olay) -> Yanit:
+    async def _k_partiekle(self, o: Olay) -> Yanit:
         g, r = self._grup_gerekli(o)
         if r:
             return r
-        pid = kimlik_coz(o.arg, "party")
-        if pid is None:
-            return Yanit("Kullanım: <code>/parti_ekle https://diplomacia.com.tr/party/5830</code>")
+        pid, hata = self._kimlik_al(o, "party", "partiekle")
+        if hata:
+            return hata
         try:
             s = await self.servis.parti_ekle(g, pid, self.kaynak)
         except KaynakHatasi as e:
             return self._kaynak_hata("Parti eklenemedi", e)
         if s.durum == "zaten_takipte":
-            return Yanit(f"Bu parti zaten takipte: {bicim.parti_link(pid)}", [[Dugme("Partiler", "pl:0")]])
+            return Yanit(f"Bu parti zaten takipte: {bicim.parti_link(pid)}", [[Dugme("👥 Partiler", "pl:0")]])
         return Yanit(
             "\n".join(
                 [
@@ -448,24 +460,38 @@ class Arayuz:
                     f"Üye sayısı: {s.uye_sayisi}",
                     f"Takibe yeni alınan: {s.yeni_eklenen}; zaten takipte: {s.zaten_takipte}; "
                     f"engelli (otomatik eklenmedi): {s.engelli}",
-                    "<i>Bu bir başlangıç durumudur; katılım bildirimi üretilmez.</i>",
-                    "Üyelerin ayrıntıları ilk taramada okunacak.",
+                    *self._ilk_veri_satirlari(s),
+                    "<i>Bu bir başlangıç özetidir (tek mesaj): üye girişleri, bölge ve vatandaşlık için "
+                    "bildirim gönderilmez. Bundan sonra yalnızca gerçek değişiklikler bildirilir.</i>",
                 ]
             ),
-            [[Dugme("Partiler", "pl:0"), Dugme("Ana menü", "m")]],
+            [[Dugme("👥 Partiler", "pl:0"), Dugme("🏠 Ana menü", "m")]],
         )
+
+    @staticmethod
+    def _ilk_veri_satirlari(s) -> list[str]:
+        if not s.yeni_eklenen:
+            return []
+        satirlar = [
+            f"İlk veri alınan üye: {s.ilk_veri_alinan} (bölgesi bilinen: {s.bolge_bilinen}, "
+            f"vatandaşlık ülkesi bilinen: {s.vatandaslik_bilinen})"
+        ]
+        if s.ilk_veri_bekleyen:
+            neden = f" ({esc(s.ilk_veri_notu)})" if s.ilk_veri_notu else ""
+            satirlar.append(f"Ayrıntısı ilk taramada tamamlanacak: {s.ilk_veri_bekleyen} üye{neden}")
+        return satirlar
 
     async def _k_partiler(self, o: Olay) -> Yanit:
         g, r = self._grup_gerekli(o)
         return r or self._parti_liste(g, 0)
 
-    async def _k_parti_sil(self, o: Olay) -> Yanit:
+    async def _k_partisil(self, o: Olay) -> Yanit:
         g, r = self._grup_gerekli(o)
         if r:
             return r
-        pid = kimlik_coz(o.arg, "party")
-        if pid is None:
-            return Yanit("Kullanım: <code>/parti_sil &lt;parti_kimligi&gt;</code>")
+        pid, hata = self._kimlik_al(o, "party", "partisil")
+        if hata:
+            return hata
         return await self._parti_sil_baslat(o, g, pid)
 
     async def _k_savaslar(self, o: Olay) -> Yanit:
@@ -609,8 +635,8 @@ class Arayuz:
             return self._oyuncu_sil_onayi(o, g, arg)
         if a == "oe":
             return Yanit(
-                "Oyuncu eklemek için:\n<code>/oyuncu_ekle https://diplomacia.com.tr/player/72400</code>",
-                [[Dugme("Oyuncular", "ol:0"), Dugme("Ana menü", "m")]],
+                "Oyuncu eklemek için:\n<code>/oyuncuekle 72400</code>\nveya bağlantıyla:\n<code>/oyuncuekle https://diplomacia.com.tr/player/72400</code>",
+                [[Dugme("👤 Oyuncular", "ol:0"), Dugme("🏠 Ana menü", "m")]],
             )
         if a == "pl":
             return self._parti_liste(g, sayfa)
@@ -620,8 +646,8 @@ class Arayuz:
             return await self._parti_sil_baslat(o, g, arg)
         if a == "pe":
             return Yanit(
-                "Parti eklemek için:\n<code>/parti_ekle https://diplomacia.com.tr/party/5830</code>",
-                [[Dugme("Partiler", "pl:0"), Dugme("Ana menü", "m")]],
+                "Parti eklemek için:\n<code>/partiekle 1244</code>\nveya bağlantıyla:\n<code>/partiekle https://diplomacia.com.tr/party/1244</code>",
+                [[Dugme("👥 Partiler", "pl:0"), Dugme("🏠 Ana menü", "m")]],
             )
         if a == "sl":
             return await self._savas_liste(o, g, sayfa)
@@ -637,10 +663,10 @@ class Arayuz:
     def _yardim(self) -> Yanit:
         satirlar = ["<b>Komutlar</b>"]
         ornek = {
-            "oyuncu_ekle": "&lt;profil_linki&gt;",
-            "oyuncu_sil": "&lt;oyuncu_kimligi&gt;",
-            "parti_ekle": "&lt;parti_linki&gt;",
-            "parti_sil": "&lt;parti_kimligi&gt;",
+            "oyuncuekle": "&lt;ID veya bağlantı&gt;",
+            "oyuncusil": "&lt;ID veya bağlantı&gt;",
+            "partiekle": "&lt;ID veya bağlantı&gt;",
+            "partisil": "&lt;ID veya bağlantı&gt;",
             "tarama": "&lt;5|10|15|20&gt;",
             "yetki_ver": "&lt;kullanici_kimligi&gt;",
             "yetki_al": "&lt;kullanici_kimligi&gt;",
@@ -657,7 +683,7 @@ class Arayuz:
             "<i>Kontroller aralıklıdır; bildirimdeki zaman tespit zamanıdır, kesin değişiklik zamanı değildir. "
             "Özel sohbet yalnız kurucuya açıktır.</i>"
         )
-        return Yanit("\n".join(satirlar), [[Dugme("Ana menü", "m")]])
+        return Yanit("\n".join(satirlar), [[Dugme("🏠 Ana menü", "m")]])
 
     def _ana_menu(self, o: Olay) -> Yanit:
         satirlar = ["<b>Diplomacia GPS Botu</b>", "Bir bölüm seçin."]
@@ -665,13 +691,13 @@ class Arayuz:
             g = self._grup(o)
             satirlar.append(f"Seçili grup: <code>{g}</code>" if g is not None else "Seçili grup yok.")
         klavye: Klavye = [
-            [Dugme("Oyuncular", "ol:0"), Dugme("Partiler", "pl:0")],
-            [Dugme("Savaşlar", "sl:0"), Dugme("Tarama Ayarları", "ta")],
-            [Dugme("Bot Durumu", "du"), Dugme("Yönetim", "yo")],
-            [Dugme("Yardım", "yd")],
+            [Dugme("👤 Oyuncular", "ol:0"), Dugme("👥 Partiler", "pl:0")],
+            [Dugme("⚔️ Savaşlar", "sl:0"), Dugme("⏱️ Tarama Ayarları", "ta")],
+            [Dugme("📊 Bot Durumu", "du"), Dugme("⚙️ Yönetim", "yo")],
+            [Dugme("❓ Yardım", "yd")],
         ]
         if not o.grup_mu:
-            klavye.append([Dugme("Grup Seç", "gl")])
+            klavye.append([Dugme("📌 Grup Seç", "gl")])
         return Yanit("\n".join(satirlar), klavye)
 
     def _grup_sec(self, o: Olay, gid: int | None) -> Yanit | None:
@@ -693,8 +719,8 @@ class Arayuz:
         if toplam == 0:
             return Yanit(
                 "Bu grupta takip edilen oyuncu yok.\nEklemek için: "
-                "<code>/oyuncu_ekle &lt;profil_linki&gt;</code>",
-                [[Dugme("Oyuncu nasıl eklenir?", "oe")], [Dugme("Ana menü", "m")]],
+                "<code>/oyuncuekle &lt;ID veya bağlantı&gt;</code>",
+                [[Dugme("Oyuncu nasıl eklenir?", "oe")], [Dugme("🏠 Ana menü", "m")]],
             )
         sayfa, sayfa_sayisi, bas = self._sayfa(toplam, sayfa)
         dilim = satirlar_db[bas : bas + SAYFA_BOYUTU]
@@ -706,7 +732,7 @@ class Arayuz:
             if d:
                 klavye.append([d])
         klavye.append(self._gezinti("ol", sayfa, sayfa_sayisi))
-        klavye.append([Dugme("Ana menü", "m")])
+        klavye.append([Dugme("🏠 Ana menü", "m")])
         return Yanit("\n".join(metin), klavye)
 
     def _oyuncu_detay(self, g: int, oid: str) -> Yanit:
@@ -731,7 +757,7 @@ class Arayuz:
         sil = _dg("🗑 Takipten çıkar", f"os:{oid}")
         if sil:
             klavye.append([sil])
-        klavye.append([Dugme("‹ Liste", "ol:0"), Dugme("Ana menü", "m")])
+        klavye.append([Dugme("📋 Liste", "ol:0"), Dugme("🏠 Ana menü", "m")])
         return Yanit("\n".join(metin), klavye)
 
     def _oyuncu_sil_onayi(self, o: Olay, g: int, oid: str) -> Yanit:
@@ -760,8 +786,8 @@ class Arayuz:
         toplam = len(satirlar_db)
         if toplam == 0:
             return Yanit(
-                "Bu grupta takip edilen parti yok.\nEklemek için: <code>/parti_ekle &lt;parti_linki&gt;</code>",
-                [[Dugme("Parti nasıl eklenir?", "pe")], [Dugme("Ana menü", "m")]],
+                "Bu grupta takip edilen parti yok.\nEklemek için: <code>/partiekle &lt;ID veya bağlantı&gt;</code>",
+                [[Dugme("Parti nasıl eklenir?", "pe")], [Dugme("🏠 Ana menü", "m")]],
             )
         sayfa, sayfa_sayisi, bas = self._sayfa(toplam, sayfa)
         metin = [f"<b>Takip edilen partiler</b> (toplam {toplam})"]
@@ -774,7 +800,7 @@ class Arayuz:
             if d:
                 klavye.append([d])
         klavye.append(self._gezinti("pl", sayfa, sayfa_sayisi))
-        klavye.append([Dugme("Ana menü", "m")])
+        klavye.append([Dugme("🏠 Ana menü", "m")])
         return Yanit("\n".join(metin), klavye)
 
     def _parti_detay(self, g: int, pid: str) -> Yanit:
@@ -795,7 +821,7 @@ class Arayuz:
         sil = _dg("🗑 Parti takibini kaldır", f"ps:{pid}")
         if sil:
             klavye.append([sil])
-        klavye.append([Dugme("‹ Liste", "pl:0"), Dugme("Ana menü", "m")])
+        klavye.append([Dugme("📋 Liste", "pl:0"), Dugme("🏠 Ana menü", "m")])
         return Yanit("\n".join(metin), klavye)
 
     async def _parti_sil_baslat(self, o: Olay, g: int, pid: str) -> Yanit:
@@ -803,7 +829,7 @@ class Arayuz:
         on = await self.servis.parti_kaldirma_hazirla(g, pid, self.kaynak)
         if not on.basarili:
             return Yanit(
-                f"Parti kaldırılamadı: {esc(on.neden)}", [[Dugme("Partiler", "pl:0"), Dugme("Ana menü", "m")]]
+                f"Parti kaldırılamadı: {esc(on.neden)}", [[Dugme("👥 Partiler", "pl:0"), Dugme("🏠 Ana menü", "m")]]
             )
         return self._parti_onay_ekrani(o, g, on, tekrar=False)
 
@@ -848,24 +874,20 @@ class Arayuz:
         simdi = self.saat()
         ust = [f"<b>Aktif savaşlar</b> (toplam {toplam})", f"Güncellik: {yerel_goster(simdi)} (az önce alındı)"]
         if toplam == 0:
-            return Yanit("\n".join(ust + ["Şu an aktif savaş görünmüyor.", _SAYFALAMA_NOTU]), [[Dugme("Yenile", "sl:0"), Dugme("Ana menü", "m")]])
+            return Yanit("\n".join(ust + ["Şu an aktif savaş görünmüyor.", _SAYFALAMA_NOTU]), [[Dugme("🔄 Yenile", "sl:0"), Dugme("🏠 Ana menü", "m")]])
         sayfa, sayfa_sayisi, bas = self._sayfa(toplam, sayfa)
         klavye: Klavye = []
         for i, s in enumerate(savaslar[bas : bas + SAYFA_BOYUTU], start=bas + 1):
-            baslik = bicim.savas_baglantili(s.ad, s.war_number, s.attacker_name, s.defender_name, s.savas_id)
-            if bicim.savas_baglantisi(s.war_number) is None:
-                baslik += f" (#{esc(s.savas_id)})"  # numara yok: kimlik gösterilir
-            ek = [bicim.durum_etiketi(s.durum)] if s.durum else []
-            if s.tur:
-                ek.append(bicim.tur_etiketi(s.tur))
-            ust.append(f"{i}. {baslik}" + (f" — {', '.join(ek)}" if ek else ""))
-            d = _dg(f"{i}. {s.ad or s.war_number or s.savas_id}", f"sd:{s.savas_id}")
+            ust.append(bicim.savas_liste_satiri(i, s))
+            kisa = bicim.savas_kisa_ad(s.attacker_name, s.defender_name, s.ad, s.war_number, s.savas_id)
+            d = _dg(f"🔎 {i}. {kisa}", f"sd:{s.savas_id}")
             if d:
                 klavye.append([d])
+        ust.append(bicim.SAVAS_EMOJI_LEJANDI)
         ust.append(f'<a href="{esc(bicim.SITE)}/wars">Savaşlar sayfası</a>')
         ust.append(_SAYFALAMA_NOTU)
         klavye.append(self._gezinti("sl", sayfa, sayfa_sayisi))
-        klavye.append([Dugme("Yenile", f"sl:{sayfa}"), Dugme("Ana menü", "m")])
+        klavye.append([Dugme("🔄 Yenile", f"sl:{sayfa}"), Dugme("🏠 Ana menü", "m")])
         return Yanit("\n".join(ust), klavye)
 
     def _savas_liste_yedek(self, g: int, e: BaseException) -> Yanit:
@@ -883,14 +905,14 @@ class Arayuz:
             satirlar.append("Grup kaydındaki bilinen savaşlar (eski kayıt; bitmiş olabilir):")
             for b in bilinen:
                 satirlar.append(f"• {esc(b['ad'] or b['savas_id'])} — ilk görülme {bicim.tarih(b['ilk_gorulme'])}")
-        return Yanit("\n".join(satirlar), [[Dugme("Yenile", "sl:0"), Dugme("Ana menü", "m")]])
+        return Yanit("\n".join(satirlar), [[Dugme("🔄 Yenile", "sl:0"), Dugme("🏠 Ana menü", "m")]])
 
     async def _savas_detay(self, o: Olay, sid: str) -> Yanit:
         if not sid:
             return None  # type: ignore[return-value]
         await self._ack(o)
         gv = await self.servis.savas_detayi(sid, self.kaynak)
-        klavye = [[d for d in (_dg("Yenile", f"sd:{sid}"),) if d] + [Dugme("‹ Liste", "sl:0")], [Dugme("Ana menü", "m")]]
+        klavye = [[d for d in (_dg("🔄 Yenile", f"sd:{sid}"),) if d] + [Dugme("📋 Liste", "sl:0")], [Dugme("🏠 Ana menü", "m")]]
         neden = ""
         if gv.hata:
             neden = "Diplomacia bağlantısı yapılandırılmadı" if "yapılandırılmadı" in gv.hata else gv.hata
@@ -905,14 +927,18 @@ class Arayuz:
         baslik = bicim.savas_baglantili(d.ad, d.war_number, sad, sav, sid)
         if bicim.savas_baglantisi(d.war_number) is None:
             baslik += f" (#{esc(sid)})"
-        satirlar = [f"<b>Savaş</b>: {baslik}", f"Durum: {bicim.durum_etiketi(d.durum)}"]
+        satirlar = [
+            f"{bicim.tur_emoji(d.tur)} <b>Savaş</b>: {baslik}",
+            f"Durum: {bicim.durum_emoji(d.durum)} {bicim.durum_etiketi(d.durum)}",
+        ]
         if d.tur:
             satirlar.append(f"Tür: {bicim.tur_etiketi(d.tur)}")
         if d.taraflar:
             satirlar.append("Taraflar:")
-            for t in d.taraflar:
+            rozet = ("⚔️ Saldıran: ", "🛡️ Savunan: ") if len(d.taraflar) == 2 else ("", "")
+            for k, t in enumerate(d.taraflar):
                 guc = "veri yok" if t.guc is None else f"{t.guc:,}".replace(",", ".")
-                satirlar.append(f"• {esc(t.ad or 'bilinmiyor')} — Güç: {guc}")
+                satirlar.append(f"• {rozet[k] if len(d.taraflar) == 2 else ''}{esc(t.ad or 'bilinmiyor')} — Güç: {guc}")
             satirlar.append(_GUC_NOTU)
         else:
             satirlar.append("Taraf bilgisi: veri yok")
@@ -936,7 +962,7 @@ class Arayuz:
             Dugme(("✓ " if dk == mevcut else "") + f"{dk} dk", f"tv:{dk}")
             for dk in config.ALLOWED_SCAN_INTERVALS_MINUTES
         ]
-        return Yanit("\n".join(satirlar), [satir, [Dugme("Ana menü", "m")]])
+        return Yanit("\n".join(satirlar), [satir, [Dugme("🏠 Ana menü", "m")]])
 
     def _tarama_ayarla(self, g: int, dk: int | None) -> Yanit:
         izinli = config.ALLOWED_SCAN_INTERVALS_MINUTES
@@ -1031,7 +1057,7 @@ class Arayuz:
         if not o.grup_mu:
             satirlar.append(f"Onaylı grup: {len(d.onayli_gruplar)}; yetkili kullanıcı: {len(d.yetkililer)}")
         satirlar.append(f"Diplomacia bağlantısı: {self._baglanti_metni(g, isler)}")
-        return Yanit("\n".join(satirlar), [[Dugme("Yenile", "du"), Dugme("Ana menü", "m")]])
+        return Yanit("\n".join(satirlar), [[Dugme("🔄 Yenile", "du"), Dugme("🏠 Ana menü", "m")]])
 
     # ---- yönetim
     def _yonetim_ekrani(self, o: Olay) -> Yanit:
@@ -1061,8 +1087,8 @@ class Arayuz:
             "Grup onaylamak: <code>/grup_onayla &lt;grup_kimligi&gt;</code>"
         )
         if ozel:
-            klavye.append([Dugme("Token Yenile", "tk"), Dugme("Grup Seç", "gl")])
-        klavye.append([Dugme("Ana menü", "m")])
+            klavye.append([Dugme("🔑 Token Yenile", "tk"), Dugme("📌 Grup Seç", "gl")])
+        klavye.append([Dugme("🏠 Ana menü", "m")])
         return Yanit("\n".join(satirlar), klavye)
 
     def _yetki_al_onayi(self, o: Olay, hedef: int) -> Yanit:
@@ -1113,19 +1139,19 @@ class Arayuz:
                 return Yanit("Grup artık onaylı değil; işlem iptal edildi.", uyari="Grup onaylı değil.", uyari_goster=True)
         if eylem == "h":
             self.islemler.sil(kid)
-            return Yanit("İşlem iptal edildi.", [[Dugme("Ana menü", "m")]])
+            return Yanit("İşlem iptal edildi.", [[Dugme("🏠 Ana menü", "m")]])
         if not self.islemler.sil(kid):  # tek kullanımlık: çift tıklama ikinci kez çalıştırmaz
             return Yanit(ONAY_BITTI, uyari="Bu onay zaten kullanılmış.", uyari_goster=True)
         return await self._onay_uygula(o, op)
 
     async def _onay_uygula(self, o: Olay, op) -> Yanit:
-        geri = [[Dugme("Ana menü", "m")]]
+        geri = [[Dugme("🏠 Ana menü", "m")]]
         v = op.veri
         if op.tur == "oyuncu_sil":
             ok = self.servis.oyuncu_sil(op.grup_id, v["id"])
             return Yanit(
                 f"Oyuncu takipten çıkarıldı: #{esc(v['id'])}" if ok else "Oyuncu zaten takipte değildi.",
-                [[Dugme("Oyuncular", "ol:0"), Dugme("Ana menü", "m")]],
+                [[Dugme("👤 Oyuncular", "ol:0"), Dugme("🏠 Ana menü", "m")]],
             )
         if op.tur == "parti_sil":
             await self._ack(o)
@@ -1144,7 +1170,7 @@ class Arayuz:
                     satirlar += [f"⛔ {esc(x.ad or x.oyuncu_id)} (#{esc(x.oyuncu_id)})" for x in s.engellenen[:15]]
                     if len(s.engellenen) > 15:
                         satirlar.append(f"… ve {len(s.engellenen) - 15} oyuncu daha")
-                return Yanit("\n".join(satirlar), [[Dugme("Partiler", "pl:0"), Dugme("Ana menü", "m")]])
+                return Yanit("\n".join(satirlar), [[Dugme("👥 Partiler", "pl:0"), Dugme("🏠 Ana menü", "m")]])
             if s.durum == "tekrar_onay" and s.onizleme is not None:
                 return self._parti_onay_ekrani(o, op.grup_id, s.onizleme, tekrar=True)
             return Yanit(f"Parti kaldırılamadı: {esc(s.neden or s.durum)}. Hiçbir oyuncu silinmedi.", geri)
@@ -1199,7 +1225,7 @@ class Arayuz:
         assert o.kullanici_id is not None
         if a == "tc":
             self._bekleme_kaldir(o.kullanici_id)
-            return Yanit("Token yenileme iptal edildi.", [[Dugme("Yönetim", "yo"), Dugme("Ana menü", "m")]])
+            return Yanit("Token yenileme iptal edildi.", [[Dugme("⚙️ Yönetim", "yo"), Dugme("🏠 Ana menü", "m")]])
         if a == "tn":
             self._bekleme_ayarla(o.kullanici_id)
             return Yanit(
@@ -1223,7 +1249,7 @@ class Arayuz:
                     f"Token doğrulayıcı: {dogrulayici}",
                 ]
             ),
-            [[Dugme("Yeni token gönder", "tn")], [Dugme("Yönetim", "yo"), Dugme("Ana menü", "m")]],
+            [[Dugme("🔑 Yeni token gönder", "tn")], [Dugme("⚙️ Yönetim", "yo"), Dugme("🏠 Ana menü", "m")]],
         )
 
     async def _token_isle(self, o: Olay) -> Yanit:
@@ -1286,7 +1312,7 @@ class Arayuz:
             f"(önceki token varsa .prev olarak yedeklendi; yedek yeni token ilk başarılı taramayla teyit edilince "
             f"veya {config.TOKEN_PREV_OMRU_SANIYE // 3600} saat sonra otomatik silinir). "
             f"Canlı davranış ayrıca doğrulanmadı.{devam}",
-            [[Dugme("Ana menü", "m")]],
+            [[Dugme("🏠 Ana menü", "m")]],
         )
 
     # ====================== sohbet üyelik olayları ==========================

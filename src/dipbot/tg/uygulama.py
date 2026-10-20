@@ -21,7 +21,7 @@ from telegram.ext import (
 )
 
 from ..outbox import GonderimHatasi
-from .arayuz import KOMUTLAR, Arayuz
+from .arayuz import ESKI_KOMUTLAR, KOMUTLAR, Arayuz
 from .gonderici import TelegramGonderici
 from .modeller import Olay, Yanit
 
@@ -35,6 +35,7 @@ CIKIS_TELEGRAM_FATAL = 3  # geçersiz bot token'ı veya Conflict (başka örnek)
 
 
 def bot_komutlari() -> list[BotCommand]:
+    """Telegram komut listesi: YALNIZ yeni kısa adlar (eski adlar çalışır ama listelenmez)."""
     return [BotCommand(ad, aciklama) for ad, aciklama in KOMUTLAR.items()]
 
 
@@ -148,7 +149,7 @@ class Baglayici:
 
 def kayit_et(app: Application, b: Baglayici) -> None:
     """Tüm komut/düğme/üyelik işleyicilerini kaydeder."""
-    for ad in KOMUTLAR:
+    for ad in (*KOMUTLAR, *ESKI_KOMUTLAR):  # eski adlar da kayıtlı (geriye dönük uyumluluk)
         async def isleyici(update, context, _ad=ad):
             await b.komut_isle(update, context, _ad)
 

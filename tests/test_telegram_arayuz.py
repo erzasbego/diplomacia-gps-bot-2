@@ -252,11 +252,14 @@ def test_komut_adlari_telegram_kuralina_uyar():
         assert re.fullmatch(r"[a-z0-9_]{1,32}", ad), ad
         assert 1 <= len(aciklama) <= 256
     istenen = {
-        "oyuncu_ekle", "oyuncular", "oyuncu_sil", "parti_ekle", "partiler", "parti_sil", "savaslar",
+        "oyuncuekle", "oyuncular", "oyuncusil", "partiekle", "partiler", "partisil", "savaslar",
         "tarama", "durum", "yetki_ver", "yetki_al", "grup_onayla", "grup_kaldir", "yardim", "start",
         "grup_tasi",  # D9: kurucunun özel sohbetinde veri taşıma
     }
     assert istenen == set(KOMUTLAR)
+    # BİLİNÇLİ DEĞİŞİKLİK: eski alt çizgili adlar listeden çıktı; geriye dönük takma ad olarak çalışır
+    # (ayrıntı: tests/test_kisa_komutlar.py).
+    assert not {"oyuncu_ekle", "oyuncu_sil", "parti_ekle", "parti_sil"} & set(KOMUTLAR)
 
 
 # ---------------------------------------------------------------- komutlar
@@ -455,9 +458,10 @@ def test_savas_listesi_sayfali_ve_guncellik(ui, src):
     src.savaslar = [SavasOzet(f"s{i}", f"Savaş {i}") for i in range(1, 21)]
     y = run(ui.komut(grup_komut("savaslar")))
     assert "toplam 20" in y.metin and "Güncellik: 19.10.2026 15:00" in y.metin  # 12:00 UTC = 15:00 İstanbul
-    assert y.metin.count("(#s") == 8 and "sl:1" in veriler(y)
+    # BİLİNÇLİ DEĞİŞİKLİK (sade liste): numarasız savaşta kimlik eki yok; satır sayısı sayfa boyutu kadar
+    assert y.metin.count(". ⚔️ Savaş ") == 8 and "sl:1" in veriler(y)
     son = run(ui.buton(grup_dugme("sl:2")))
-    assert son.metin.count("(#s") == 4
+    assert son.metin.count(". ⚔️ Savaş ") == 4
     assert "sd:s17" in veriler(son)
 
 
@@ -478,7 +482,7 @@ def test_savas_detay_alanlar_ve_bilinmeyen_sifir_degildir(ui, src):
     )
     y = run(ui.buton(grup_dugme("sd:s1")))
     m = y.metin
-    assert "Büyük &lt;Savaş&gt;" in m and "Durum: Aktif" in m
+    assert "Büyük &lt;Savaş&gt;" in m and "Durum: ❔ Aktif" in m  # ham (tanınmayan) durum metni + ❔
     assert "A Tarafı — Güç: 1.234.567" in m
     assert "B Tarafı — Güç: veri yok" in m, "bilinmeyen güç sıfır gibi gösterilmemeli"
     assert "C — Güç: 0" in m, "gerçek sıfır gösterilebilir"
