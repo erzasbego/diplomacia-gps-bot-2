@@ -252,11 +252,14 @@ def test_komut_adlari_telegram_kuralina_uyar():
         assert re.fullmatch(r"[a-z0-9_]{1,32}", ad), ad
         assert 1 <= len(aciklama) <= 256
     istenen = {
-        "oyuncu_ekle", "oyuncular", "oyuncu_sil", "parti_ekle", "partiler", "parti_sil", "savaslar",
+        "oyuncuekle", "oyuncular", "oyuncusil", "partiekle", "partiler", "partisil", "savaslar",
         "tarama", "durum", "yetki_ver", "yetki_al", "grup_onayla", "grup_kaldir", "yardim", "start",
         "grup_tasi",  # D9: kurucunun özel sohbetinde veri taşıma
     }
     assert istenen == set(KOMUTLAR)
+    # BİLİNÇLİ DEĞİŞİKLİK: eski alt çizgili adlar listeden çıktı; geriye dönük takma ad olarak çalışır
+    # (ayrıntı: tests/test_kisa_komutlar.py).
+    assert not {"oyuncu_ekle", "oyuncu_sil", "parti_ekle", "parti_sil"} & set(KOMUTLAR)
 
 
 # ---------------------------------------------------------------- komutlar
