@@ -12,7 +12,7 @@ Bu belge ve `deploy/` altındaki dosyalar taslaktır; gerçek bir sunucuda **den
 | Ubuntu LTS, Python 3.11+ | Hedef **Ubuntu 24.04 LTS (Python 3.12)**. Mock test paketi bulutta Python 3.11, 3.12 ve 3.13'te geçti; gerçek Ubuntu makinesinde çalıştırılmadı. Ubuntu 22.04'ün varsayılan Python'u 3.10'dur ve **desteklenmez** (3.11+ ayrıca kurmanız gerekir; denenmedi). |
 | `systemd-analyze verify` | Bulutta (Ubuntu 24.04.5, systemd 255) **statik** olarak çalıştırıldı: birim, yolları var olan bir sahte düzende hatasız; gerçek `/opt/dipbot` yolunda yalnız "python bulunamadı" uyarısı (kurulu olmadığı için). **Hedef sunucuda yeniden çalıştırın.** |
 | Gerçek polling, gerçek süreçte SIGTERM | **Doğrulanmadı** (aşağıdaki "Doğrulama durumu özeti"ne bakın). |
-| `backup.sh` / `restore.sh` davranışı | `bash -n` + bulutta gerçek (WAL, başka bağlantıca açık) bir SQLite dosyasıyla çalıştırıldı (0600, `integrity_check`, `KEEP` döngüsü, geri yükleme, yanlış onayda iptal); `restore.sh`te `systemctl` **sahte** betikti. Gerçek sunucuda/systemd ile çalıştırılmadı. |
+| `backup.sh` / `restore.sh` / `guncelle.sh` davranışı | `bash -n` + bulutta gerçek (WAL, başka bağlantıca açık) SQLite dosyalarıyla ve **sahte `id`/`runuser`/`systemctl`/`pip`** ile çalıştırıldı (canlı DB'ye yalnız `runuser -u dipbot` ile dokunma, 0600, `integrity_check`, mevcut yedek dizinine dokunmama, `KEEP` döngüsü, geri yükleme, yanlış onayda iptal, git'in depo sahibi olarak çalışması; `tests/test_yedek_guvenligi.py`, `tests/test_guncelle.py`). Gerçek sunucuda/systemd ile, gerçek `chown`/sahiplikle çalıştırılmadı. |
 
 ## Düzen
 
@@ -129,22 +129,15 @@ Koda göre (`tg/calistir.py`) SIGTERM/SIGINT alınınca polling durur, çalışa
 
 ## Güncelleme
 
-**Önerilen:** `sudo /opt/dipbot/deploy/guncelle.sh [ref]` — yedeği ZORUNLU kılar (yedek alınamazsa hiçbir şey değişmez), kodu yalnız ileri sarar, ön kontrol yapar ve servisi en son yeniden başlatır. Adımlar, duman testi ve geri dönüş: [`GUNCELLEME-PLANI.md`](GUNCELLEME-PLANI.md). Aşağıdaki elle yöntem aynı sırayı uygular.
-
-```bash
-/usr/local/sbin/dipbot-backup                 # önce yedek
-cd /opt/dipbot
-git pull                                      # veya yeni dosyaları kopyalayın
-/opt/dipbot/.venv/bin/pip install -r requirements.txt
-systemctl restart dipbot
-journalctl -u dipbot -n 50 --utc
-```
-
-Sorun çıkarsa önceki sürüme dönün (`git checkout <önceki_sürüm>`). **Dikkat:** veritabanı şeması ileri taşınır (`user_version` 5; v4: `onayli_gruplar.donem`, v5: `takip_partiler.sinirli/toplam_uye/xp_sirali`); eski sürüm kodu dönemleri bilmez ve onu çalıştırırken onaylanan grupların bildirimleri yeni sürüme dönüşte sessizce iptal edilebilir. Kod sürümünü geri alırken veritabanını da **güncelleme öncesi alınan yedekten** geri yükleyin (aşağıdaki geri yükleme); yalnız kodu geri almak güvenli değildir.
+**Adım adım, güncel ve güvenli plan: [`GUNCELLEME-PLANI.md`](GUNCELLEME-PLANI.md)** (PR #4: İngilizce arayüz + İstanbul saati; şema DEĞİŞMEZ; ilk dağıtım için elle yol, sonraki güncellemeler için `guncelle.sh`). Özet kurallar:
+- Sıra zorunludur: **yedek → (yedek ve bütünlük doğrulaması başarılıysa) kod → ön kontrol → servis.** Yedek alınamazsa hiçbir şey değişmez.
+- Canlı SQLite'a **root dokunmaz**: yedek betikleri sqlite3'ü `dipbot` kullanıcısı olarak çalıştırır (root sahipli `-wal/-shm` olmasın). Git işlemleri **deponun sahibi** kullanıcıyla yapılır.
+- `sudo /opt/dipbot/deploy/guncelle.sh [ref]` bu sırayı uygular. Kurulu betik kopyalarını (`/usr/local/sbin/dipbot-backup`, `dipbot-restore`) depodan yenileyin: `sudo install -m 0750 -o root -g root /opt/dipbot/deploy/backup.sh /usr/local/sbin/dipbot-backup` (restore için de aynısı).
+- **Geri dönüş:** PR #4 şemayı değiştirmediği için normalde yalnız kod önceki commit'e alınır (`git checkout --detach <önceki_rev>` + `systemctl restart dipbot`); veritabanı yedeğinden geri yükleme yalnız veri bozulmuşsa. Şema geçmişi: v4 (`onayli_gruplar.donem`) ve v6 (PR #3: `takip_partiler.kismi/toplam_uye/xp_sirali`, `parti_uyeleri.xp`, `takip_oyuncular.xp_alti_sayac/xp_onayli`) yalnız **sütun ekler**; eski kod `user_version` daha yüksek bir DB'yi açar (ayrıntı ve sınırlar GUNCELLEME-PLANI.md §6).
 
 ## Yedekleme
 
-`backup.sh`, çalışan veritabanının düz kopyasını **almaz**; `sqlite3 .backup` kullanır, bütünlüğü doğrular, 0600 izinle zaman damgalı (`dipbot-YYYYMMDDTHHMMSSZ.db`, UTC) dosya yazar ve son `KEEP` (varsayılan 14) yedeği tutar. `dipbot.env` ve `diplomacia.token` yedeğe **konmaz** (betik yalnız SQLite dosyasını yedekler). Sırları ayrıca güvenli yerde (örn. parola yöneticisi) saklayın. **Geri yüklemede veya yeni sunucuya taşımada Diplomacia tokenı yeniden ayarlanmalıdır** (token dosyası yoksa aşağıdaki yöntemle). Yedekler token içermez ama oyuncu/grup verisi içerir; uzak sunucuya kopyalarken şifreli kanal kullanın.
+`backup.sh`, çalışan veritabanının düz kopyasını **almaz**; `sqlite3 .backup` kullanır (kaynak salt okunur; root ise `runuser -u dipbot --` altında, yani canlı DB'ye root dokunmaz), önce `dipbot`'a ait özel geçici dizine yazıp `PRAGMA integrity_check` ile doğrular, sonra 0600 izinle zaman damgalı (`dipbot-YYYYMMDDTHHMMSSZ.db`, UTC) dosyayı yedek dizinine taşır ve son `KEEP` (varsayılan 14) yedeği tutar. Mevcut yedek dizininin sahip/izni **değiştirilmez**; betik yalnız doğrular (sembolik bağlantı değil, grup/diğer yazamaz, sahibi root/çalıştıran/`dipbot`) ve güvensizse durur. DB veya `-wal/-shm` sahibi `dipbot` değilse yedek alınmaz. `dipbot.env` ve `diplomacia.token` yedeğe **konmaz** (betik yalnız SQLite dosyasını yedekler). Sırları ayrıca güvenli yerde (örn. parola yöneticisi) saklayın. **Geri yüklemede veya yeni sunucuya taşımada Diplomacia tokenı yeniden ayarlanmalıdır** (token dosyası yoksa aşağıdaki yöntemle). Yedekler token içermez ama oyuncu/grup verisi içerir; uzak sunucuya kopyalarken şifreli kanal kullanın.
 
 El ile: `sudo /usr/local/sbin/dipbot-backup`
 
@@ -193,7 +186,7 @@ ls -1 /var/backups/dipbot/
 sudo /usr/local/sbin/dipbot-restore /var/backups/dipbot/dipbot-YYYYMMDDTHHMMSSZ.db
 ```
 
-Betik sırasıyla: root kontrolü, yedek bütünlük kontrolü, `EVET` onayı, servisi durdurma, mevcut DB'yi `dipbot-pre-restore-*.db` olarak yedekleme, eski `-wal/-shm` dosyalarını silme, geri yükleme, sahiplik/izin (`dipbot:dipbot`, 0600) düzeltme, servisi (önceden çalışıyorsa) başlatma. Sonra `journalctl -u dipbot -n 50` ile kontrol edin. Yedek tarihinden sonraki veriler kaybolur.
+Betik sırasıyla: root kontrolü, yedek bütünlük kontrolü, `EVET` onayı, servisi durdurma, mevcut DB'yi (`dipbot` olarak, `SAFETY_DIR` sahip/izni değiştirilmeden) `dipbot-pre-restore-*.db` olarak yedekleme, eski `-wal/-shm` dosyalarını silme, geri yükleme, sahiplik/izin (`dipbot:dipbot`, 0600) düzeltme, servisi (önceden çalışıyorsa) başlatma. Sonra `journalctl -u dipbot -n 50` ile kontrol edin. Yedek tarihinden sonraki veriler kaybolur.
 
 ## Diplomacia token yenileme
 
@@ -229,7 +222,7 @@ Canlı doğrulama adımları ve beklenen sonuçlar: [`CANLI-DOGRULAMA-PLANI.md`]
 ## Doğrulama durumu özeti
 
 Doğrulandı:
-- `bash -n` ile `backup.sh`, `restore.sh` ve `onkontrol.sh` sözdizimi; `backup.sh`/`restore.sh` gerçek WAL veritabanıyla (restore'da sahte `systemctl`); `onkontrol.sh` sahte dizin düzeniyle (doğru ve bilerek bozuk kurulumda); `systemd-analyze verify` statik (bkz. yukarı).
+- `bash -n` ile `backup.sh`, `restore.sh`, `guncelle.sh` ve `onkontrol.sh` sözdizimi; `backup.sh`/`restore.sh`/`guncelle.sh` gerçek WAL veritabanıyla, sahte `id`/`runuser`/`systemctl`/`pip` ile (canlı DB'ye yalnız `runuser` ile dokunulduğu, mevcut yedek dizinine dokunulmadığı, yedek başarısızsa kodun değişmediği testli); `onkontrol.sh` sahte dizin düzeniyle (doğru ve bilerek bozuk kurulumda); `systemd-analyze verify` statik (bkz. yukarı).
 - Koddan: giriş noktası, ortam değişkenleri, çıkış kodları 2/3, yazılan yollar, token dosyası davranışı, 10 sn tarama kapanış beklemesi.
 
 **Doğrulanmadı:**

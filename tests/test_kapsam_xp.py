@@ -155,25 +155,25 @@ def _ui_parti(src, n, toplam, xp):
 def test_ozet_kismi_okuma_hepsi_esik_ustu_okunmayan_arasinda_uygun_olabilir(conn, ui, src):
     _ui_parti(src, 100, 329, xp=lambda i: ESIK + 5000 - i)
     m = run(ui.komut(grup_komut("partiekle", "1244"))).metin
-    for satir in ("Toplam üye: 329", "API'den incelenen: 100", "1.500.000+ XP ile takibe alınan: 100", "XP sınırı altında: 0"):
+    for satir in ("Total members: 329", "Reviewed from the API: 100", "Tracked with 1,500,000+ XP: 100", "Below the XP threshold: 0"):
         assert satir in m, satir
-    assert "EKSİK" in m and "100/329" in m and "229 üye okunamadı" in m
-    assert "uygun oyuncu olabilir" in m, "okunan hepsi eşik üstü: okunmayanlar arasında da uygun olabilir"
+    assert "INCOMPLETE" in m and "100/329" in m and "the other 229 members could not be read" in m
+    assert "there may also be eligible players" in m, "okunan hepsi eşik üstü: okunmayanlar arasında da uygun olabilir"
     assert "ilk 100" not in m.lower() and "en fazla 100" not in m, "sabit 100 oyuncu sınırı anlatımı yok"
 
 
 def test_ozet_kismi_okuma_en_dusuk_xp_esik_alti_ise_siralama_varsayilmaz(conn, ui, src):
     _ui_parti(src, 100, 329, xp=lambda i: ESIK + 1000 - i * 20)  # 100. üye eşik altı
     m = run(ui.komut(grup_komut("partiekle", "1244"))).metin
-    assert "EKSİK" in m and "229 üye okunamadı" in m
-    assert "doğrulanamaz" in m and "sıralamaya güvenilmediği" in m
-    assert "1.500.000+ XP ile takibe alınan: 50" in m and "XP sınırı altında: 50" in m
+    assert "INCOMPLETE" in m and "the other 229 members could not be read" in m
+    assert "cannot be verified" in m and "since the ordering is not trusted" in m
+    assert "Tracked with 1,500,000+ XP: 50" in m and "Below the XP threshold: 50" in m
 
 
 def test_ozet_tam_listede_eksik_uyarisi_yok_ve_sayfalama_kanitsiz_notu_yok(conn, ui, src):
     _ui_parti(src, 75, None, xp=lambda i: ESIK + i)
     m = run(ui.komut(grup_komut("partiekle", "1244"))).metin
-    assert "EKSİK" not in m and "okunamadı" not in m and "Toplam üye: 75" in m
+    assert "INCOMPLETE" not in m and "could not be read" not in m and "Total members: 75" in m
 
 
 # ============================================================ D) eksik/hatalı yanıtlar kimseyi takipten çıkarmaz

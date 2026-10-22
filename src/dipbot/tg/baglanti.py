@@ -17,10 +17,10 @@ GUVENILIR_ALAN_ADLARI = frozenset({"diplomacia.com.tr", "www.diplomacia.com.tr"}
 _KIMLIK = r"[1-9][0-9]{0,11}"
 _HAM = re.compile(_KIMLIK)
 _YOL = re.compile(rf"/(?:(?:profile|press)/)?(player|party)/({_KIMLIK})/?")
-_ADLAR = {"player": "oyuncu", "party": "parti"}
+_ADLAR = {"player": "player", "party": "party"}
 _ORNEK = {
-    "player": "72400 veya https://diplomacia.com.tr/player/72400",
-    "party": "1244 veya https://diplomacia.com.tr/party/1244",
+    "player": "72400 or https://diplomacia.com.tr/player/72400",
+    "party": "1244 or https://diplomacia.com.tr/party/1244",
 }
 
 
@@ -30,7 +30,7 @@ class BaglantiHatasi(ValueError):
 
 def _gecersiz(beklenen: str) -> BaglantiHatasi:
     ad = _ADLAR[beklenen]
-    return BaglantiHatasi(f"Geçerli bir {ad} kimliği veya Diplomacia {ad} bağlantısı girin (örn. {_ORNEK[beklenen]}).")
+    return BaglantiHatasi(f"Enter a valid {ad} ID or Diplomacia {ad} link (e.g. {_ORNEK[beklenen]}).")
 
 
 def kimlik_coz_ayrintili(arg: str, beklenen: str) -> str:
@@ -63,7 +63,7 @@ def kimlik_coz_ayrintili(arg: str, beklenen: str) -> str:
     tur, kimlik = m.group(1), m.group(2)
     if tur != beklenen:
         raise BaglantiHatasi(
-            f"Bu bir {_ADLAR[tur]} bağlantısı; bu komut {_ADLAR[beklenen]} bağlantısı veya kimliği bekliyor "
-            f"(örn. {_ORNEK[beklenen]})."
+            f"This is a {_ADLAR[tur]} link; this command expects a {_ADLAR[beklenen]} link or ID "
+            f"(e.g. {_ORNEK[beklenen]})."
         )
     return kimlik

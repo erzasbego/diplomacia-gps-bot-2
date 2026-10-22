@@ -350,11 +350,11 @@ def test_baslangic_ozeti_329_uyeli_parti(conn, ui, src):
     _kaynakta(100, src=src, toplam=329)
     y = run(ui.komut(grup_komut("partiekle", "1244")))
     m = y.metin
-    assert m.count("Parti takibe eklendi") == 1 and "TEKNO" in m
-    assert "Toplam üye: 329" in m and "API'den incelenen: 100" in m
-    assert "1.500.000+ XP ile takibe alınan: 100" in m and "XP sınırı altında: 0" in m
-    assert "EKSİK" in m and "100/329" in m and "229 üye okunamadı" in m
-    assert "İlk bilgisi alınan: 100" in m
+    assert m.count("Party added to tracking") == 1 and "TEKNO" in m
+    assert "Total members: 329" in m and "Reviewed from the API: 100" in m
+    assert "Tracked with 1,500,000+ XP: 100" in m and "Below the XP threshold: 0" in m
+    assert "INCOMPLETE" in m and "100/329" in m and "the other 229 members could not be read" in m
+    assert "First observation received: 100" in m
     assert conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0] == 0
 
 
@@ -362,27 +362,27 @@ def test_baslangic_ozeti_bekleyen_sayisi_ve_75_uyeli_parti(conn, ui, src, monkey
     monkeypatch.setattr(config, "PARTI_EKLE_ILK_VERI_UST", 30)
     _kaynakta(75, src=src)
     m = run(ui.komut(grup_komut("partiekle", "1244"))).metin
-    assert "Toplam üye: 75" in m and "1.500.000+ XP ile takibe alınan: 75" in m
-    assert "İlk bilgisi alınan: 30" in m and "İlk taramayı bekleyen: 45" in m
-    assert "ilk 100" not in m.lower(), "75 üyeli partide sınır notu çıkmaz"
+    assert "Total members: 75" in m and "Tracked with 1,500,000+ XP: 75" in m
+    assert "First observation received: 30" in m and "Awaiting first scan: 45" in m
+    assert "ilk 100" not in m.lower() and "first 100" not in m.lower(), "75 üyeli partide sınır notu çıkmaz"
 
 
-@pytest.mark.parametrize("xp,parca", [(None, "XP sırası doğrulanamadı"), (False, "XP azalan sırada DEĞİL"),
-                                       (True, "XP azalan sırada görünüyor")])
+@pytest.mark.parametrize("xp,parca", [(None, "order could not be verified"), (False, "is NOT in descending order"),
+                                       (True, "appears to be in descending order")])
 def test_ozet_xp_sirasi_durumunu_dogru_belirtir_varsayim_yapmaz(conn, ui, src, xp, parca):
     _kaynakta(100, src=src, toplam=329)
     src.partiler["1244"] = PartiAnlik("1244", "TEKNO", src.partiler["1244"].uyeler, False,
                                        kismi=True, toplam_uye=329, xp_sirali=xp)
     m = run(ui.komut(grup_komut("partiekle", "1244"))).metin
-    assert parca in m and "sıralamaya güvenilmez" in m and "EKSİK" in m
+    assert parca in m and "the ordering is not trusted" in m and "INCOMPLETE" in m
 
 
 def test_parti_listesi_ve_detayinda_kismi_okuma_gosterimi(conn, ui, src):
     _kaynakta(100, src=src, toplam=329)
     run(ui.komut(grup_komut("partiekle", "1244")))
-    assert "100/329 üye" in run(ui.komut(grup_komut("partiler"))).metin
+    assert "100/329 members" in run(ui.komut(grup_komut("partiler"))).metin
     d = run(ui.buton(grup_dugme("pd:1244"))).metin
-    assert "Toplam üye: 329" in d and "OKUNABİLDİ" in d and "1.500.000" in d
+    assert "Total members: 329" in d and "COULD BE READ" in d and "1,500,000" in d
 
 
 def test_sinirli_partiyi_kaldirma_onizlemesi_uyari_verir_yalniz_dogrulananlari_siler(conn, ui, servis, src):
@@ -391,7 +391,7 @@ def test_sinirli_partiyi_kaldirma_onizlemesi_uyari_verir_yalniz_dogrulananlari_s
     src.oyuncu("500", "U500", "Bursa", "TR")
     run(servis.oyuncu_ekle(G1, "500", src))  # listede olmayan elle eklenmiş üye (belki partidedir, doğrulanamaz)
     y = run(ui.komut(grup_komut("partisil", "1244")))
-    assert "329" in y.metin and "EKSİK" in y.metin and "çıkarılmaz" in y.metin
+    assert "329" in y.metin and "INCOMPLETE" in y.metin and "are not removed from tracking" in y.metin
     run(ui.buton(grup_dugme(f"c:e:{onay_kimligi(y)}")))
     assert takipte(conn, G1) == {"500"}, "yalnız doğrulanan ilk 100 çıkar; doğrulanamayan manuel kayıt korunur"
 
@@ -402,7 +402,7 @@ def test_kaldirma_eksik_liste_ise_hala_silinmez(conn, ui, servis, src):
     src.partiler["1244"] = PartiAnlik("1244", "T", tuple(PartiUyesi(str(i)) for i in range(1, 51)), False,
                                        kismi=False, toplam_uye=329)
     y = run(ui.komut(grup_komut("partisil", "1244")))
-    assert "kaldırılamadı" in y.metin and len(takipte(conn, G1)) == 100
+    assert "Could not remove party" in y.metin and len(takipte(conn, G1)) == 100
 
 
 # ============================================================ F) şema v5: mevcut kayıtlar korunur

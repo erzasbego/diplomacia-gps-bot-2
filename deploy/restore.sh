@@ -14,11 +14,11 @@ SAFETY_DIR="${SAFETY_DIR:-/var/backups/dipbot}"
 [[ $# -eq 1 ]] || { echo "Kullanim: $0 <yedek_dosyasi.db>" >&2; exit 2; }
 BACKUP="$1"
 
-[[ $EUID -eq 0 ]] || { echo "HATA: root olarak calistirin (sudo)." >&2; exit 1; }
+[[ "$(id -u)" == "0" ]] || { echo "HATA: root olarak calistirin (sudo)." >&2; exit 1; }
 command -v sqlite3 >/dev/null 2>&1 || { echo "HATA: sqlite3 kurulu degil." >&2; exit 1; }
 [[ -f "$BACKUP" ]] || { echo "HATA: yedek dosyasi yok: $BACKUP" >&2; exit 1; }
 
-RESULT="$(sqlite3 "$BACKUP" 'PRAGMA integrity_check;')"
+RESULT="$(sqlite3 "file:$BACKUP?immutable=1" 'PRAGMA integrity_check;')"
 [[ "$RESULT" == "ok" ]] || { echo "HATA: yedek bozuk: $RESULT" >&2; exit 1; }
 
 echo "Geri yuklenecek yedek : $BACKUP"
@@ -34,27 +34,36 @@ echo "Servis durduruluyor..."
 systemctl stop "$SERVICE"
 
 # Mevcut DB'yi (varsa) geri yuklemeden once guvenlik yedegine al; servis durdu, .backup guvenli.
+# Canli DB'ye root dokunmaz: sqlite3 APP_USER olarak calisir (root sahipli -wal/-shm olusmaz); mevcut SAFETY_DIR'in
+# sahibi/izni degistirilmez (yoksa 0700 olusturulur).
 if [[ -f "$DB_PATH" ]]; then
-  mkdir -p "$SAFETY_DIR"
-  chmod 700 "$SAFETY_DIR"
+  if [[ -L "$SAFETY_DIR" ]]; then echo "HATA: SAFETY_DIR sembolik baglanti: $SAFETY_DIR" >&2; exit 1; fi
+  [[ -d "$SAFETY_DIR" ]] || mkdir -p -m 700 -- "$SAFETY_DIR"
+  command -v runuser >/dev/null 2>&1 || { echo "HATA: runuser yok; canli DB'ye root olarak dokunulmaz." >&2; exit 1; }
+  STAGE="$(mktemp -d "${TMPDIR:-/tmp}/dipbot-restore.XXXXXX")"
+  trap 'rm -rf -- "$STAGE"; rm -f -- "${TMP:-}"' EXIT
+  chown "$APP_USER" -- "$STAGE"
+  chmod 700 -- "$STAGE"
+  runuser -u "$APP_USER" -- sqlite3 -readonly "$DB_PATH" ".backup '$STAGE/guvenlik.db'"
   SAFETY="$SAFETY_DIR/dipbot-pre-restore-$(date -u +%Y%m%dT%H%M%SZ).db"
-  sqlite3 "$DB_PATH" ".backup '$SAFETY'"
+  cp -- "$STAGE/guvenlik.db" "$SAFETY"
   chmod 600 "$SAFETY"
   echo "Mevcut DB yedeklendi: $SAFETY"
 fi
 
 # Yedegi hedef dizinde gecici dosyaya kopyala, sonra atomik yer degistir.
 TMP="$DB_PATH.restoring"
-trap 'rm -f "$TMP"' EXIT
+trap 'rm -rf -- "${STAGE:-}"; rm -f -- "$TMP"' EXIT
 cp -- "$BACKUP" "$TMP"
-chown "$APP_USER:$APP_USER" "$TMP"
+chown "$APP_USER:$(id -gn "$APP_USER")" "$TMP"
 chmod 600 "$TMP"
 # Eski WAL/SHM artiklari yeni DB ile karisip bozulmaya yol acmasin.
 rm -f -- "$DB_PATH-wal" "$DB_PATH-shm"
 mv -f -- "$TMP" "$DB_PATH"
 trap - EXIT
+rm -rf -- "${STAGE:-}"
 
-chown "$APP_USER:$APP_USER" "$DB_PATH"
+chown "$APP_USER:$(id -gn "$APP_USER")" "$DB_PATH"
 chmod 600 "$DB_PATH"
 echo "Geri yukleme tamamlandi."
 

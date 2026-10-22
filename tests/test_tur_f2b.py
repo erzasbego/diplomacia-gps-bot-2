@@ -68,7 +68,7 @@ def test_d7_onay_duvar_saati_atlarsa_islem_yapilmaz_ve_aciklama_verilir(ui, conn
     saat.ilerle(30)
     saat.duvar_atla(atlama)
     y = run(ui.buton(grup_dugme(f"c:e:{kid}")))
-    assert "saat" in (y.metin or "").lower() and "yeniden" in (y.metin or "").lower()
+    assert "clock changed" in (y.metin or "").lower() and "start the action again" in (y.metin or "").lower()
     assert "5" in takipte(conn, G1), "saat değiştiyse onayla işlem yapılamaz"
     assert conn.execute("SELECT COUNT(*) FROM tg_islemler").fetchone()[0] == 0, "geçersiz onay silinmeli"
     # kaldığı yerden de kullanılamaz (geri alınan saat eski onayı yeniden canlandırmaz)
@@ -89,7 +89,7 @@ def test_d7_normal_akista_onay_calisir_ve_kucuk_sapma_gecerli(ui, conn, src, saa
     saat.ilerle(9 * 60)
     saat.duvar_atla(config.SAAT_TUTARSIZLIK_TOLERANSI_SANIYE - 1)
     y = run(ui.buton(grup_dugme(f"c:e:{kid}")))
-    assert "çıkarıldı" in y.metin and "5" not in takipte(conn, G1)
+    assert "removed from tracking" in y.metin and "5" not in takipte(conn, G1)
 
 
 def test_d7_yeniden_baslatmada_bekleyen_onay_gecersiz(ui, conn, src, saat):
@@ -120,11 +120,11 @@ def test_d7_token_bekleme_saat_degisirse_token_islenmez_ve_silinmeye_calisilir(c
     silinen = []
     y = _token_mesaji(ui, JWT, silinen)
     assert silinen == [1], "token olabilecek mesaj silinmeye çalışılmalı"
-    assert "saat" in y.metin.lower() and "yeniden" in y.metin.lower() and JWT not in y.metin
+    assert "clock changed" in y.metin.lower() and "restart from the menu" in y.metin.lower() and JWT not in y.metin
     assert d.alinan == [] and depo.oku() == "eski-token-XYZ"
     # bekleme tüketildi: sonraki JWT biçimli mesaj da işlenmez
     y2 = _token_mesaji(ui, JWT)
-    assert d.alinan == [] and "Önce menüden" in y2.metin
+    assert d.alinan == [] and "First choose Renew Token from the menu" in y2.metin
 
 
 def test_d7_token_bekleme_normal_akista_calisir(conn, src, saat, tmp_path):
@@ -133,7 +133,7 @@ def test_d7_token_bekleme_normal_akista_calisir(conn, src, saat, tmp_path):
     run(ui.buton(dugme("tn")))
     saat.ilerle(4 * 60)
     y = _token_mesaji(ui, JWT)
-    assert d.alinan == [JWT] and "kaydedildi" in y.metin
+    assert d.alinan == [JWT] and "saved" in y.metin
 
 
 def test_d7_token_bekleme_yeniden_baslatmada_gecersiz_ve_kalici_kayit_yok(conn, src, saat, tmp_path):
@@ -145,7 +145,7 @@ def test_d7_token_bekleme_yeniden_baslatmada_gecersiz_ve_kalici_kayit_yok(conn, 
     ui2 = Arayuz(conn, src, KURUCU, saat=saat, zamanlayici=z, token_deposu=depo, dogrulayici=d)
     silinen = []
     y = _token_mesaji(ui2, JWT, silinen)
-    assert d.alinan == [] and "Önce menüden" in y.metin and silinen == [1]
+    assert d.alinan == [] and "First choose Renew Token from the menu" in y.metin and silinen == [1]
     assert depo.oku() == "eski-token-XYZ"
 
 
@@ -403,7 +403,7 @@ def test_prev_politikasi_arayuz_mesajinda_ve_belgelerde(conn, src, saat, tmp_pat
     ui, depo, z = tui(conn, src, saat, tmp_path, SahteDogrulayici("gecerli"))
     run(ui.buton(dugme("tn")))
     y = _token_mesaji(ui, JWT)
-    assert ".prev" in y.metin and "otomatik" in y.metin and "24" in y.metin
+    assert ".prev" in y.metin and "deleted automatically" in y.metin and "24" in y.metin
     kok = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     deploy = open(os.path.join(kok, "deploy", "README-DEPLOY.md"), encoding="utf-8").read()
     assert ".prev" in deploy and "TOKEN_PREV_OMRU" in deploy and "geri dön" in deploy.lower()

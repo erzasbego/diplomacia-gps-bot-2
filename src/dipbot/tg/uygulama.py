@@ -21,7 +21,7 @@ from telegram.ext import (
 )
 
 from ..outbox import GonderimHatasi
-from .arayuz import ESKI_KOMUTLAR, KOMUTLAR, Arayuz
+from .arayuz import ESKI_KOMUTLAR, KOMUTLAR, TR_KOMUTLAR, Arayuz
 from .gonderici import TelegramGonderici
 from .modeller import Olay, Yanit
 
@@ -90,7 +90,7 @@ class Baglayici:
         o = self._olay(update, veri=q.data or "", mesaj_id=mesaj.message_id if mesaj else None)
         if o is None:
             # Sohbet bilinmiyor (satır içi/erişilemez mesaj): yine de callback'i yanıtla.
-            await self.gonderici.callback_yanitla(q.id, "Bu düğme artık geçerli değil.", True)
+            await self.gonderici.callback_yanitla(q.id, "This button is no longer valid.", True)
             return
         o.ack = lambda: self._ack(q.id)
         y = await self.arayuz.buton(o)
@@ -149,7 +149,7 @@ class Baglayici:
 
 def kayit_et(app: Application, b: Baglayici) -> None:
     """Tüm komut/düğme/üyelik işleyicilerini kaydeder."""
-    for ad in (*KOMUTLAR, *ESKI_KOMUTLAR):  # eski adlar da kayıtlı (geriye dönük uyumluluk)
+    for ad in (*KOMUTLAR, *ESKI_KOMUTLAR, *TR_KOMUTLAR):  # legacy Turkish names stay registered (backward compatibility)
         async def isleyici(update, context, _ad=ad):
             await b.komut_isle(update, context, _ad)
 

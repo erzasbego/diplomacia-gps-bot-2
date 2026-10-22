@@ -83,7 +83,7 @@ def test_e2_suresi_dolmus_beklemeden_sonra_gelen_token_silinmeye_calisilir(conn,
     silinen = []
     y = _token_mesaji(ui, JWT_SAHTE, silinen)
     assert silinen == [1], "süresi dolmuş beklemeden sonra gelen token mesajı silinmeye çalışılmalı"
-    assert "süresi doldu" in y.metin and JWT_SAHTE not in y.metin and d.alinan == []
+    assert "wait time has expired" in y.metin and JWT_SAHTE not in y.metin and d.alinan == []
     assert depo.oku() == "eski-token-XYZ"
 
 
@@ -117,7 +117,7 @@ def test_e9_bekleme_penceresinde_jwt_olmayan_metin_token_sayilmaz(conn, src, saa
     silinen = []
     y = _token_mesaji(ui, "merhaba-bu-duz-metin", silinen)
     assert d.alinan == [] and silinen == [1]
-    assert "token biçimi geçersiz" in y.metin.lower() and "merhaba-bu-duz-metin" not in y.metin
+    assert "invalid token format" in y.metin.lower() and "merhaba-bu-duz-metin" not in y.metin
     assert depo.oku() == "eski-token-XYZ"
 
 
@@ -157,7 +157,7 @@ def test_e3_dogrulama_oyuncusu_env_ile_secilir_ve_istek_o_yola_gider(tmp_path):
     s = run(d.dogrula(JWT_SAHTE))
     assert yollar == ["/api/players/555"]
     assert s.durum == "hata"
-    assert "doğrulama oyuncusu bulunamadı" in s.aciklama and "geçersiz demek değildir" in s.aciklama
+    assert "verification player not found" in s.aciklama and "does not mean the token is invalid" in s.aciklama
     assert "DIPLOMACIA_DOGRULAMA_OYUNCU" in s.aciklama
 
 
@@ -180,7 +180,7 @@ def test_e3_404_kurucuya_ayri_aciklama_token_yazilmaz(conn, src, saat, tmp_path)
     depo = TokenDeposu(tmp_path / "t")
     ui = Arayuz(conn, src, KURUCU, saat=saat, dogrulayici=d, token_deposu=depo)
     y = run(ui._token_isle(Olay(sohbet_id=KURUCU, sohbet_turu="private", kullanici_id=KURUCU, metin=JWT_SAHTE)))
-    assert "doğrulama oyuncusu bulunamadı" in y.metin and "DEĞİŞTİRİLMEDİ" in y.metin
+    assert "verification player not found" in y.metin and "NOT CHANGED" in y.metin
     assert depo.oku() == "ESKI-TOKEN-ABC"
 
 
@@ -209,7 +209,7 @@ def test_e6_mukerrer_uid_zaten_takipte_yaniti_asil_numaraya_baglanir(conn, src, 
     run(servis.oyuncu_ekle(G1, "11", src))
     ui = Arayuz(conn, src, KURUCU, saat=saat)
     y = run(ui.komut(grup_komut("oyuncu_ekle", "12")))
-    assert "zaten takipte" in y.metin
+    assert "already tracked" in y.metin
     assert "/player/11" in y.metin and "/player/12" not in y.metin
 
 
@@ -217,21 +217,21 @@ def test_e6_mukerrer_uid_zaten_takipte_yaniti_asil_numaraya_baglanir(conn, src, 
 def test_e7_401_metinleri_kesin_degil_ve_dogrulanmadi_yorumu():
     from dipbot.tg import bicim
     m = bicim.bildirim_metni("token_gecersiz", {"zaman": "2026-10-20T10:00:00+00:00"})
-    assert "geçersiz veya süresi dolmuş" not in m and "reddetti (401)" in m
+    assert "invalid or expired" not in m and "rejected the token (401)" in m
     from pathlib import Path
     kaynak = (Path(__file__).parent.parent / "src/dipbot/diplomacia/istemci.py").read_text(encoding="utf-8")
     assert "DOĞRULANMADI" in kaynak and "# DOĞRULANDI (başlıksız istek 401 aldı)" not in kaynak
     from dipbot.kaynak import hata_aciklamasi, TokenGecersiz
-    assert "geçersiz veya süresi dolmuş" not in hata_aciklamasi(TokenGecersiz("401"))
+    assert "invalid or expired" not in hata_aciklamasi(TokenGecersiz("401"))
 
 
 # ------------------------------------------------------------------ E8
 def test_e8_grup_goc_bildirimi_celiskisiz():
     from dipbot.tg import bicim
     m = bicim.bildirim_metni("grup_goc", {"eski": -100111, "yeni": -100222, "zaman": "2026-10-20T10:00:00+00:00"})
-    assert "/grup_onayla -100222" in m
-    assert "/grup_kaldir" not in m, "eski kimlik zaten otomatik düşürüldü; kaldırma önerisi çelişkili"
-    assert "otomatik düşürüldü" in m
+    assert "/approve_group -100222" in m
+    assert "/remove_group" not in m, "eski kimlik zaten otomatik düşürüldü; kaldırma önerisi çelişkili"
+    assert "automatically revoked" in m
 
 
 # ------------------------------------------------------------------ E10
@@ -326,5 +326,5 @@ def test_e12_es_zamanli_ikinci_token_gonderimi_reddedilir(conn, src, saat, tmp_p
         return await ilk, ikinci
 
     ilk, ikinci = run(sen())
-    assert "Devam eden doğrulama" in ikinci.metin and cagri == [JWT_SAHTE]
-    assert "kaydedildi" in ilk.metin
+    assert "verification is already in progress" in ikinci.metin and cagri == [JWT_SAHTE]
+    assert "saved" in ilk.metin

@@ -100,9 +100,9 @@ def test_liste_baglanti_etiket_ve_kacis(ui, src):
     m = run(ui.komut(grup_komut("savaslar"))).metin
     assert 'href="https://diplomacia.com.tr/wars/war/5333"' in m
     # BİLİNÇLİ DEĞİŞİKLİK (sade liste): 'Saldıran – Savunan · Durum · #numara'; tür yalnız emoji (ayrıntıda metin)
-    assert "&lt;b&gt;Ali&lt;/b&gt; &amp; Ortakları – مملكة</a> · Hazırlık · #5333" in m
-    assert "🔥" in m and "Ayaklanma" not in m  # ayaklanma = 🔥
-    assert "Hazırlık" in m and "Aktif" in m
+    assert "&lt;b&gt;Ali&lt;/b&gt; &amp; Ortakları – مملكة</a> · Preparing · #5333" in m
+    assert "🔥" in m and "Rebellion" not in m  # ayaklanma = 🔥
+    assert "Preparing" in m and "Active" in m
     assert 'href="https://diplomacia.com.tr/wars/war/7"' in m and "Adlı &lt;Savaş&gt;" in m
     assert "yeni&lt;durum&gt;" in m and "yeni<durum>" not in m
     assert m.count("wars/war/") == 2  # yalnız geçerli numaralılar
@@ -118,11 +118,11 @@ def test_detay_guc_none_ve_sifir_ayri_ve_baglanti(ui, src):
     )
     m = run(ui.buton(grup_dugme("sd:s1"))).metin
     assert 'href="https://diplomacia.com.tr/wars/war/5333"' in m
-    assert "Durum: ⏳ Hazırlık" in m and "Bağımsızlık" in m and m.startswith("🏳️")
-    assert "A — Güç: 1.234.567" in m and "B — Güç: veri yok" in m and "C — Güç: 0" in m
-    # 'hasar' yalnız C1c güvence notunda ("hasar olduğu doğrulanmadı") geçebilir; hasar iddiası yok.
-    assert "hasar" not in m.lower().replace("hasar olduğu doğrulanmadı", "")
-    assert "hasar olduğu doğrulanmadı" in m
+    assert "Status: ⏳ Preparing" in m and "Independence" in m and m.startswith("🏳️")
+    assert "A — Power: 1,234,567" in m and "B — Power: no data" in m and "C — Power: 0" in m
+    # "damage" may appear only in the C1c caveat ("not been verified that the 'Power' value represents damage").
+    assert "damage" not in m.lower().replace("represents damage", "")
+    assert "has not been verified that the 'power' value represents damage" in m.lower()
 
 
 def test_yeni_savas_bildirimi_baglanti_ve_kacis():
@@ -130,7 +130,7 @@ def test_yeni_savas_bildirimi_baglanti_ve_kacis():
                                       "attacker_name": "<i>X</i>", "defender_name": "Y", "durum": "preparing",
                                       "tespit": "2026-10-19T12:00:00.000000Z"})
     assert 'href="https://diplomacia.com.tr/wars/war/5333"' in m and "&lt;i&gt;X&lt;/i&gt;" in m
-    assert "Hazırlık" in m and "hasar" not in m.lower()
+    assert "Preparing" in m and "damage" not in m.lower()
     m2 = bildirim_metni("yeni_savas", {"savas_id": UUID5333, "ad": "Ad", "war_number": None})
     assert "wars/war/" not in m2 and "Ad" in m2
 

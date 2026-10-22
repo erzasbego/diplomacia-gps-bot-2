@@ -78,17 +78,17 @@ class TaramaZamanlayici:
         simdi = self.saat()
         if self._token_dur:
             e = TokenGecersiz("token duraklatıldı")
-            e.kullanici_mesaji = "token geçersiz, kurucu yenilemeli"  # type: ignore[attr-defined]
+            e.kullanici_mesaji = "token is invalid; the owner must renew it"  # type: ignore[attr-defined]
             raise e
         if self._engel_bitis is not None and simdi < self._engel_bitis:
             n = max(1, int((self._engel_bitis - simdi).total_seconds() + 0.999))
             e = IstekSiniri("istek sınırı penceresi", float(n))
-            e.kullanici_mesaji = f"istek sınırı, {n} sn sonra dene"  # type: ignore[attr-defined]
+            e.kullanici_mesaji = f"rate limit; try again in {n} s"  # type: ignore[attr-defined]
             raise e
         if self._erisim_reddi_bitis is not None and simdi < self._erisim_reddi_bitis:
             n = max(1, int((self._erisim_reddi_bitis - simdi).total_seconds() + 0.999))
             e = ErisimReddedildi("erişim reddi geri çekilmesi")
-            e.kullanici_mesaji = f"Diplomacia bağlantısı yok (erişim reddedildi), {n} sn sonra dene"  # type: ignore[attr-defined]
+            e.kullanici_mesaji = f"Diplomacia connection unavailable (access denied); try again in {n} s"  # type: ignore[attr-defined]
             raise e
 
     def token_gecersiz_bildir(self, kusak: int | None = None) -> None:
@@ -229,7 +229,7 @@ class TaramaZamanlayici:
             else:
                 self.conn.execute(
                     "UPDATE tarama_isleri SET son_deneme=?, son_hata=? WHERE group_id=? AND is_tipi=?",
-                    (simdi, (hata or "hata")[:300], grup_id, is_tipi),
+                    (simdi, (hata or "error")[:300], grup_id, is_tipi),
                 )
 
     def _sonraki_planla(self, grup_id: int, hepsi_ok: bool) -> None:
@@ -299,7 +299,7 @@ class TaramaZamanlayici:
                         sonuc = await fn(gid, kaynak)
                     except TokenGecersiz as e:
                         self._token_duraklat(getattr(e, "kusak", None))
-                        sonuc = TaramaSonucu(is_tipi, hatalar=["token geçersiz"])
+                        sonuc = TaramaSonucu(is_tipi, hatalar=["token invalid"])
                     except ErisimReddedildi as e:
                         reddedildi = True
                         self.erisim_reddi_bildir()
@@ -310,12 +310,12 @@ class TaramaZamanlayici:
                         sonuc = TaramaSonucu(is_tipi, hatalar=[hata_aciklamasi(e)])
                     except IstekSiniri as e:
                         self._istek_siniri(e)
-                        sonuc = TaramaSonucu(is_tipi, hatalar=["istek sınırı"])
+                        sonuc = TaramaSonucu(is_tipi, hatalar=["rate limit"])
                     except KaynakHatasi as e:
                         sonuc = TaramaSonucu(is_tipi, hatalar=[hata_aciklamasi(e)])
                     except Exception as e:  # beklenmeyen: tarama çökmesin, başarılı sayılmasın
                         log.exception("beklenmeyen tarama hatası (grup=%s, is=%s)", gid, is_tipi)
-                        sonuc = TaramaSonucu(is_tipi, hatalar=[f"beklenmeyen hata: {type(e).__name__}"])
+                        sonuc = TaramaSonucu(is_tipi, hatalar=[f"unexpected error: {type(e).__name__}"])
                     sonuclar.append(sonuc)
                     if sonuc.yapilandirma and is_tipi not in self._yapilandirma_uyarildi:
                         self._yapilandirma_uyarildi.add(is_tipi)

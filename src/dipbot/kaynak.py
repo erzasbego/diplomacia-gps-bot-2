@@ -73,14 +73,14 @@ class VarlikBulunamadi(KaynakHatasi):
 
 
 _ACIKLAMA = {
-    TokenYok: "token dosyası yok veya geçersiz biçimde (istek atılmadı)",
-    ErisimReddedildi: "erişim reddedildi (403): kimlik biçimi veya site engeli olabilir",
-    TokenGecersiz: "site token'ı reddetti (401)",
-    AgZamanAsimi: "ağ zaman aşımı",
-    SiteErisilemez: "site geçici olarak erişilemiyor",
-    IstekSiniri: "site istek sınırına takıldı",
-    EksikVeri: "eksik veya beklenmeyen veri",
-    VarlikBulunamadi: "kayıt bulunamadı",
+    TokenYok: "token file is missing or invalid (no request was made)",
+    ErisimReddedildi: "access denied (403): the ID format or a site block may be the cause",
+    TokenGecersiz: "the site rejected the token (401)",
+    AgZamanAsimi: "network timeout",
+    SiteErisilemez: "the site is temporarily unavailable",
+    IstekSiniri: "the site rate limit was hit",
+    EksikVeri: "incomplete or unexpected data",
+    VarlikBulunamadi: "record not found",
 }
 
 
@@ -91,7 +91,7 @@ def hata_aciklamasi(exc: BaseException) -> str:
     for tip, metin in _ACIKLAMA.items():
         if isinstance(exc, tip):
             return metin
-    return "bilinmeyen kaynak hatası"
+    return "unknown source error"
 
 
 # ---- Sonuç tipleri --------------------------------------------------------
@@ -215,7 +215,7 @@ class SinirliKaynak:
             try:
                 return await asyncio.wait_for(coro_fn(*args), self._zaman_asimi)
             except asyncio.TimeoutError as e:
-                raise AgZamanAsimi("istek zaman aşımına uğradı") from e
+                raise AgZamanAsimi("request timed out") from e
             except TokenGecersiz as e:
                 e.kusak = kusak  # type: ignore[attr-defined]
                 raise

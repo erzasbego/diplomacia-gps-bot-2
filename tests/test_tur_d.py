@@ -40,7 +40,7 @@ def test_c1_taninmayan_durum_yeni_savas_bildirimi_uretmez(conn, servis, src):
     r = run(servis.savaslari_tara(G1, src))
     assert [b["veri"]["savas_id"] for b in bildirimler(conn, "yeni_savas")] == ["id-002"]
     assert conn.execute("SELECT COUNT(*) FROM savaslar WHERE savas_id='id-001'").fetchone()[0] == 1
-    assert any("tanınmıyor" in u for u in r.uyarilar)
+    assert any("unrecognized" in u for u in r.uyarilar)
     sayac = conn.execute("SELECT deger FROM sistem_durumu WHERE anahtar=?", (f"savas_taninmayan:{G1}",)).fetchone()
     assert sayac and int(sayac[0]) == 1
     run(servis.savaslari_tara(G1, src))  # tek seferlik: sayaç artmaz
@@ -66,15 +66,16 @@ def ui(conn, src, saat):
 def test_c1c_savas_listesi_ve_durumda_guvence_notu(ui, src):
     src.savaslar = [_s(1)]
     liste = run(ui.komut(grup_komut("savaslar"))).metin
-    assert "Liste sayfalamasız varsayılmıştır (doğrulanmadı)" in liste
+    assert "the list is assumed to be unpaginated (unverified)" in liste
     durum = run(ui.komut(grup_komut("durum"))).metin
-    assert "Liste sayfalamasız varsayılmıştır (doğrulanmadı)" in durum
+    # the redesigned status screen intentionally no longer carries the pagination note
+    assert "unpaginated" not in durum
 
 
 def test_c1c_guc_etiketi_hasar_notu(ui, src):
     src.savas_detay["s1"] = SavasDetay("s1", "Savaş", "Aktif", (SavasTaraf("A", 10), SavasTaraf("B", 20)))
     y = run(ui.buton(__import__("tg_fakes").grup_dugme("sd:s1"))).metin
-    assert "Güç" in y and "hasar olduğu doğrulanmadı" in y
+    assert "Power" in y and "has not been verified that the 'Power' value represents damage" in y
 
 
 def test_c1b_durum_ekraninda_tanınmayan_sayaci(ui, conn, servis, src):
@@ -82,7 +83,7 @@ def test_c1b_durum_ekraninda_tanınmayan_sayaci(ui, conn, servis, src):
     run(servis.savaslari_tara(G1, src))
     src.savaslar = [_s(0), _s(1, "ended", True)]
     run(servis.savaslari_tara(G1, src))
-    assert "Durumu tanınmayan savaş: 1" in run(ui.komut(grup_komut("durum"))).metin
+    assert "Wars with an unrecognized status: 1" in run(ui.komut(grup_komut("durum"))).metin
 
 
 def test_c6a_durum_toplu_bulunamiyor_ozeti(ui, conn, servis, src):
@@ -94,7 +95,7 @@ def test_c6a_durum_toplu_bulunamiyor_ozeti(ui, conn, servis, src):
     for _ in range(config.NOT_FOUND_STREAK_THRESHOLD):
         run(servis.oyuncular_tara(G1, src))
     assert servis.bulunamayan_oyuncular(G1) == ["2", "3"]
-    assert "Bulunamıyor (art arda 404): 2 oyuncu" in run(ui.komut(grup_komut("durum"))).metin
+    assert "Not found (consecutive 404s): 2 players" in run(ui.komut(grup_komut("durum"))).metin
 
 
 # ---------------------------------------------------------------- C2
@@ -173,7 +174,7 @@ def test_c4a_beklenmeyen_jwt_silinir_islenmez_ve_deger_sizmaz(ui, conn):
 
     y = run(ui.metin(_metin_olay("eyJSAHTExx.SAHTExx.SAHTExx", sil)))
     assert y is not None and silindi == [1]
-    assert "Önce menüden Token yenile'yi seçin; bu mesaj işlenmedi" in y.metin
+    assert "First choose Renew Token from the menu; this message was not processed" in y.metin
     assert "SAHTExx" not in y.metin
     dump = "".join(str(tuple(r)) for t in ("outbox", "sistem_durumu", "yetkisiz_denemeler")
                    for r in conn.execute(f"SELECT * FROM {t}"))

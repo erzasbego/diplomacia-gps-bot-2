@@ -1,11 +1,11 @@
 # Diplomacia GPS Botu
 
-[Diplomacia](https://diplomacia.com.tr) oyunundaki **oyuncuları, partileri ve savaşları** izleyen, Telegram'dan yönetilen, tek VPS'te sürekli çalışacak bir bot. Değişiklikleri (isim, bölge, vatandaşlık ülkesi, parti girişi/çıkışı, yeni savaş) ilgili onaylı Telegram grubuna Türkçe bildirir.
+[Diplomacia](https://diplomacia.com.tr) oyunundaki **oyuncuları, partileri ve savaşları** izleyen, Telegram'dan yönetilen, tek VPS'te sürekli çalışacak bir bot. Değişiklikleri (isim, bölge, vatandaşlık ülkesi, parti girişi/çıkışı, yeni savaş) ilgili onaylı Telegram grubuna **İngilizce** bildirir.
 
-Python 3.11+ · `python-telegram-bot` 22.8 (long polling; alan adı/HTTPS gerekmez) · SQLite · Telegram arayüzü ve mesajlar Türkçe · gösterilen zamanlar `Europe/Istanbul`, kayıtlar UTC.
+Python 3.11+ · `python-telegram-bot` 22.8 (long polling; alan adı/HTTPS gerekmez) · SQLite · Telegram arayüzü ve mesajlar **İngilizce** (belgeler Türkçe) · gösterilen zamanlar `Europe/Istanbul` 24 saat, kayıtlar UTC.
 
 > ## ⚠️ Doğrulama durumu — önce bunu okuyun
-> Bu bot **henüz gerçek Diplomacia'ya veya gerçek Telegram'a bağlanılarak denenmedi.** Şu an elde olan: **978 otomatik test** (sahte veri kaynağı, `httpx.MockTransport`, sahte Telegram nesneleri; Python 3.11/3.12/3.13'te geçti). Bunlar iş kurallarını kanıtlar; **canlı entegrasyonu kanıtlamaz.** Ayrıntı için [Doğrulananlar ve doğrulanmayanlar](#doğrulananlar-ve-doğrulanmayanlar).
+> Bu bot **henüz gerçek Diplomacia'ya veya gerçek Telegram'a bağlanılarak denenmedi.** Şu an elde olan: **1217 otomatik test** (sahte veri kaynağı, `httpx.MockTransport`, sahte Telegram nesneleri; Python 3.11/3.12/3.13'te geçti). Bunlar iş kurallarını kanıtlar; **canlı entegrasyonu kanıtlamaz.** Ayrıntı için [Doğrulananlar ve doğrulanmayanlar](#doğrulananlar-ve-doğrulanmayanlar).
 
 ## İçindekiler
 1. [Nasıl çalışır](#nasıl-çalışır)
@@ -34,7 +34,7 @@ Bot olayları **dinlemez, aralıklarla yoklar.** Bu yüzden: iki kontrol arasın
 ```bash
 python3.11 -m venv .venv && . .venv/bin/activate     # Python 3.11+ (3.12 ve 3.13 de denendi)
 pip install -r requirements.txt
-python -m pytest -q                                  # beklenen: 978 passed (MOCK)
+python -m pytest -q                                  # beklenen: 1217 passed (MOCK)
 ```
 Paket `src/` altındadır ve pip ile **kurulmaz**; çalıştırırken `PYTHONPATH=src` verilir (testler için `pytest.ini` bunu zaten yapar):
 ```bash
@@ -72,8 +72,24 @@ Kod sabitleri (`src/dipbot/config.py`): tarama aralıkları `[5,10,15,20]`, dene
 - Kurucuya **denetim bildirimi** gider: yetki verme/alma, grup onaylama/kaldırma, grup göçü/taşıma (yalnız kimlikler ve zaman; token yok). Kurucunun kendi eylemleri bildirilmez; aynı eylem 10 dk içinde tek bildirim, saatte en çok 5, fazlası tek özet.
 - Bir grubun onayı kaldırılınca o grubun taramaları ve **bekleyen bildirimleri durur** (veri silinmez; yeniden onayda korunur).
 
+## Arayüz dili ve saat (İngilizce arayüz, Europe/Istanbul)
+Telegram arayüzünün **tamamı İngilizcedir** (tek dil; dil seçeneği yoktur): komut yanıtları, menüler, düğmeler, açılır uyarılar, hata/yetki mesajları, bildirimler. Oyuncu/parti adları ve oyun adları çevrilmez. Telegram komut menüsü İngilizcedir:
+
+| İngilizce komut (menüde/yardımda) | Eski Türkçe adlar (hâlâ çalışır, İngilizce yanıt verir) |
+|---|---|
+| `/start`, `/help` | `/yardim` |
+| `/addplayer`, `/players`, `/removeplayer` | `/oyuncuekle`, `/oyuncular`, `/oyuncusil`, `/oyuncu_ekle`, `/oyuncu_sil` |
+| `/addparty`, `/parties`, `/removeparty` | `/partiekle`, `/partiler`, `/partisil`, `/parti_ekle`, `/parti_sil` |
+| `/wars`, `/scan`, `/status` | `/savaslar`, `/tarama`, `/durum` |
+| `/grant`, `/revoke` | `/yetki_ver`, `/yetki_al` |
+| `/approve_group`, `/remove_group`, `/move_group` | `/grup_onayla`, `/grup_kaldir`, `/grup_tasi` |
+
+Eski ve yeni adlar **aynı işleyiciye, aynı yetki ve onay kurallarına** gider; callback verileri (düğme kimlikleri) değişmedi, bu yüzden eski mesajlardaki düğmeler çalışır.
+
+**Saat:** kullanıcıya gösterilen tüm tarih/saatler **Europe/Istanbul** (`zoneinfo`), 24 saat, `DD.MM.YYYY HH:mm` (ör. `22.10.2026 21:56`; AM/PM yoktur). Bu **yalnız gösterim** dönüşümüdür: veritabanı, zamanlayıcı ve API zaman damgaları UTC ve sabit biçimli ISO olarak kalır; dönüşüm yalnız metin üretilirken yapılır. Sunucunun saat dilimi değiştirilmez (gösterim ondan bağımsızdır).
+
 ## Komutlar ve butonlar
-Gruplarda komutlar yalnız **onaylı grupta yetkili kullanıcıya** açıktır. Kurucu özel sohbette önce **Grup Seç** ile bir onaylı grup seçer, sonra aynı komutları/butonları kullanır. `/start` ana menüyü açar.
+Aşağıdaki tabloda komutlar eski (Türkçe) adlarıyla yazılıdır; İngilizce menü adları yukarıdaki eşleme tablosundadır (ikisi de çalışır). Gruplarda komutlar yalnız **onaylı grupta yetkili kullanıcıya** açıktır. Kurucu özel sohbette önce **Grup Seç** ile bir onaylı grup seçer, sonra aynı komutları/butonları kullanır. `/start` ana menüyü açar.
 
 | Komut | Ne yapar |
 |---|---|
@@ -83,7 +99,7 @@ Gruplarda komutlar yalnız **onaylı grupta yetkili kullanıcıya** açıktır. 
 | `/partiler`, `/partisil <ID veya bağlantı>` | Listeler / parti takibini kaldırır (aşağıdaki "Parti kaldırma"). |
 | `/savaslar` | Aktif savaşları listeler; ayrıntı ekranında `…/wars/war/{numara}` bağlantısı bulunur. |
 | `/tarama <5\|10\|15\|20>` | Grubun tarama aralığı. |
-| `/durum` | Bot durumu: son tarama zamanları, hatalar, token durumu. |
+| `/durum` (`/status`) | Bot durumu (İngilizce): grup, takip edilen oyuncu/parti sayısı, tarama aralığı, son başarılı tarama (oyuncular/partiler/savaşlar), sonraki planlı tarama, devam eden tarama, bekleyen bildirim. "Diplomacia connection" satırı yalnız gerçek bir sorun varsa görünür (sabit "doğrulanmadı" notları kaldırıldı). |
 | `/yetki_ver <kullanıcı_id>`, `/yetki_al <kullanıcı_id>` | Yetki verir/alır. |
 | `/grup_onayla <grup_id>` | Grubu onaylar (grup kimlikleri negatiftir). |
 | `/grup_kaldir <grup_id>` | Grup onayını kaldırır — **yalnız kurucu** (komut ve düğme aynı kural). |
@@ -124,8 +140,9 @@ Token **veritabanında, ortam değişkeninde, logda ve Git'te tutulmaz**; yalnı
 
 ## Veri klasörü, yedek ve geri yükleme
 - **Veri:** varsayılan `<proje>/data/` (sunucuda `/var/lib/dipbot`): `dipbot.db` (+ `-wal`, `-shm`) ve `diplomacia.token`. Servis yeniden başlatmalarında ve güncellemelerde korunur. Yetkili kullanıcılar, onaylı gruplar, ayarlar, takipler, son bilgiler, bilinen savaşlar, bildirim durumu ve engeller veritabanındadır; **Telegram mesaj geçmişi yerine kullanılmaz.**
-- **Yedek:** `deploy/backup.sh` çalışan DB'nin düz kopyasını almaz; `sqlite3 .backup` kullanır, bütünlüğü doğrular (0600, zaman damgalı, son 14 tutulur). **Token dosyası, `.prev` ve `dipbot.env` yedeğe girmez**; sırları ayrıca güvenli yerde saklayın. Geri yüklemede/yeni sunucuda Diplomacia token'ı yeniden verilmelidir.
-- **Geri yükleme:** `deploy/restore.sh <yedek.db>` (servisi durdurur, mevcut DB'yi güvenlik yedeğine alır, yedeği yükler). Yedek tarihinden sonraki veriler kaybolur.
+- **Yedek:** `deploy/backup.sh` çalışan DB'nin düz kopyasını almaz; `sqlite3 .backup` kullanır (root ise `runuser -u dipbot` altında: canlı DB'ye root dokunmaz, root sahipli `-wal/-shm` oluşmaz), bütünlüğü doğrular (0600, zaman damgalı, son 14 tutulur) ve mevcut yedek dizininin sahip/iznini değiştirmez, yalnız doğrular. **Token dosyası, `.prev` ve `dipbot.env` yedeğe girmez**; sırları ayrıca güvenli yerde saklayın. Geri yüklemede/yeni sunucuda Diplomacia token'ı yeniden verilmelidir.
+- **Geri yükleme:** `deploy/restore.sh <yedek.db>` (servisi durdurur, mevcut DB'yi `dipbot` olarak güvenlik yedeğine alır, yedeği yükler). Yedek tarihinden sonraki veriler kaybolur; **yalnız veri bozulmuşsa** gerekir. Kod sürümünü geri almak için veritabanını geri yüklemek normalde gerekmez (şema geçmişi yalnız sütun ekler; ayrıntı: `deploy/GUNCELLEME-PLANI.md` §6).
+- **Güncelleme/dağıtım:** `deploy/GUNCELLEME-PLANI.md` (yedek → kod → ön kontrol → servis; git işlemleri deponun sahibiyle, SQLite işlemleri `dipbot` ile). PR #4 şemayı değiştirmez.
 - Ayrıntı ve zamanlama: [`deploy/README-DEPLOY.md`](deploy/README-DEPLOY.md).
 
 ## VPS (Ubuntu) kurulumu
@@ -134,6 +151,7 @@ Hedef: **Ubuntu 24.04 LTS** (Python 3.12), tek VPS, tek bot süreci, systemd. Ad
 Özet: `/opt/dipbot` (kod), `/var/lib/dipbot` (veri), `/etc/dipbot/dipbot.env` (0600 root; `BOT_TOKEN`, `OWNER_TELEGRAM_ID`), servis kullanıcısı `dipbot`; `PYTHONPATH=/opt/dipbot/src` birim dosyasında tanımlıdır. Önce kurucunun botla **özel sohbette `/start`** göndermesi gerekir (Telegram botlar kullanıcıya kendiliğinden yazamaz).
 
 ## Bilinen sınırlar
+- İngilizce arayüz: yalnız Telegram'a giden metinler çevrildi. Günlük (log) satırları, kod yorumları, belgeler ve konsol/başlangıç hataları (`BOT_TOKEN` eksik vb.) Türkçe kalabilir. Veritabanında önceki sürümden kalmış **eski Türkçe** `tarama_isleri.son_hata` değerleri, ilgili iş bir sonraki başarılı taramada temizlenene kadar durum ekranında olduğu gibi görünebilir. Kuyrukta bekleyen bildirimler gönderim anında biçimlendirildiği için İngilizce gider.
 - Kontroller aralıklıdır (yukarıya bakın); gerçek hareket zamanı bilinmez.
 - Outbox teslimi "en az bir kez"dir; çok parçalı mesajda parça tekrarı olabilir.
 - `/grup_tasi`: `bildirim_sinirlari` ve `yetkisiz_denemeler` taşınmaz; eski id'de gönderilmiş outbox geçmişi kalır.
@@ -142,14 +160,14 @@ Hedef: **Ubuntu 24.04 LTS** (Python 3.12), tek VPS, tek bot süreci, systemd. Ad
 - Tarama zamanlaması, outbox yeniden deneme beklemesi (ve 24 saatlik yaş sınırı), haftalık hatırlatma, `.prev` yaşı ve yetkisiz-deneme/denetim bildirimlerinin tekrar-engel pencereleri duvar saatine bağlıdır; saat atlarsa gecikebilir, öne gelebilir veya bildirim kısa süre bastırılabilir (bekleyen **onayların** güvenliğini etkilemez). Linux monotonic saati askıya almayı saymaz (VM duraklaması yanlış "saat değişti" üretebilir; güvenli yöndedir).
 - `/grup_tasi`: eski grubun onayı düştükten sonra yeni grup onaylanana kadar başlayan savaşlar, yeni grubun ilk (bildirimsiz) taramasında baseline'a girer ve taşımadan sonra da bildirilmez (kısa pencere; kabul edilen sınır). İki grupta ortak savaşın kaydı yeni grubunkiyle birleşir (en erken ilk görülme korunur).
 - Token `.prev` yedeği tektir: üst üste iki yenilemede (A→B→C) ilk token kaybolur (`.prev` = B). Yedek, taramalar token nedeniyle duraklatılmışken yaş nedeniyle silinmez.
-- Kod sürümünü geri alırken veritabanını da güncelleme öncesi yedekten geri yükleyin (şema ileri taşınır; bkz. `deploy/README-DEPLOY.md`).
+- Kod sürümünü geri almak normalde veritabanını geri yüklemeyi gerektirmez (PR #4 şemayı değiştirmez; şema geçmişi yalnız sütun ekler). Yedekten geri yükleme yalnız veri bozulmuşsa kullanılır; ayrıntı: `deploy/GUNCELLEME-PLANI.md` §6.
 - Savaş listesi sayfalaması **canlıda doğrulanmadı**; bot "tam liste" bayrağı gelmeyen listeyi eksik sayar. `/members` büyük partide tek istekte **100 üye** döndürür (VPS günlüklerinden); **sayfalama yöntemi, sıralama ölçütü (XP) ve bunun dışındaki üyelere nasıl ulaşılacağı doğrulanmadı** → büyük partilerde okunamayan üyeler izlenemez (özet bunu belirtir). Çözüm, gerçek Network kaydına dayanmalıdır (bkz. `API-ARASTIRMA.md` §9c).
 - XP süzgeci için API'deki `xp` alanının **toplam XP** olduğu varsayılır (örnek yanıtlarla tutarlı, canlıda doğrulanmadı). Aynı eşik-altı oyuncu birden fazla takipli partide görünürse (çift üyelik olmamalı) sayaç oyuncu başınadır; nitelikli bir gözlem sayacı sıfırlar. Gecikmiş (eski) bir parti yanıtı tek seferlik bir katılma/ayrılma çifti üretebilir (gerçek taşınmadan ayırt edilemez); aynı yanıtın tekrar taranması yeni bildirim üretmez.
 - Bu sürümden önce otomatik eklenmiş oyuncular (düşük XP'liler dahil) silinmez; XP kuralına yalnız XP süzgecinden geçtikten sonra tabi olurlar. Mevcut partilerde yeni katılan düşük XP'li üyeler artık otomatik eklenmez.
 
 ## Doğrulananlar ve doğrulanmayanlar
 **Doğrulandı (otomatik test / araç ile; hepsi MOCK ya da yerel):**
-- 978 test: ilk ekleme bildirimsiz, kimlik üzerinden değişiklik, bölge/vatandaşlık bağımsızlığı, tekrar bildirim yok, eksik cevap veriyi bozmaz, parti ilk kayıt/giriş/çıkış/kaldırma kuralları, grup izolasyonu, yetki matrisi (komut+buton), eski buton reddi, yeniden başlatmada veri korunumu, ilk savaş taramasında bildirim yok, outbox yeniden deneme/iptal, token doğrulama/`.prev`/maskeleme, D7 saat güvenliği, göç taşıma.
+- 1217 test: ilk ekleme bildirimsiz, kimlik üzerinden değişiklik, bölge/vatandaşlık bağımsızlığı, tekrar bildirim yok, eksik cevap veriyi bozmaz, parti ilk kayıt/giriş/çıkış/kaldırma kuralları, grup izolasyonu, yetki matrisi (komut+buton), eski buton reddi, yeniden başlatmada veri korunumu, ilk savaş taramasında bildirim yok, outbox yeniden deneme/iptal, token doğrulama/`.prev`/maskeleme, D7 saat güvenliği, göç taşıma.
 - Python 3.11, 3.12 ve 3.13'te test paketi geçti (Ubuntu 24.04 tabanlı bulut ortamında).
 - `deploy/dipbot.service` için `systemd-analyze verify` (systemd 255, **statik**; yollar sahte düzende) hatasız; `backup.sh`/`restore.sh` gerçek WAL veritabanı ve **sahte** `systemctl` ile çalıştı; `onkontrol.sh` sahte dizin düzeniyle çalıştı.
 - Kullanıcı DevTools'ta doğruladı (ben bağımsız doğrulamadım): `Authorization: Bearer <JWT>` + `X-Client-Platform: web` ile `GET /api/players/72400` → 200; savaş bağlantısı biçimi `…/wars/war/{numara}`; oturum token'ı JWT'dir.

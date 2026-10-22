@@ -96,10 +96,10 @@ def test_oyuncu_degisti_tek_alan_ve_zaman_istanbul():
     m = bicim.bildirim_metni("oyuncu_degisti", {
         "oyuncu_id": "72400", "ad": "Örnek Oyuncu", "tespit": "2026-10-19T12:20:00.000000Z",
         "degisimler": [{"alan": "bolge", "eski": "Varna", "yeni": "İstanbul"}]})
-    assert "📍 Oyuncu bölge değiştirdi" in m
-    assert "Önceki bölge: Varna" in m and "Yeni bölge: İstanbul" in m
-    assert "Tespit: 19.10.2026 15:20" in m
-    assert "kesin değişiklik zamanı değildir" in m
+    assert "📍 Player changed region" in m
+    assert "Previous region: Varna" in m and "New region: İstanbul" in m
+    assert "Detected: 19.10.2026 15:20" in m
+    assert "not the exact time of the change" in m
     assert 'href="https://diplomacia.com.tr/player/72400"' in m
 
 
@@ -108,14 +108,14 @@ def test_oyuncu_degisti_birden_fazla_alan_tek_mesaj():
         "oyuncu_id": "1", "ad": "A", "tespit": "2026-10-19T12:20:00.000000Z",
         "degisimler": [{"alan": "bolge", "eski": "a", "yeni": "b"},
                        {"alan": "vatandaslik_ulkesi", "eski": "c", "yeni": "d"}]})
-    assert "Oyuncu bilgileri değişti" in m
-    assert "Önceki bölge: a" in m and "Yeni vatandaşlık ülkesi: d" in m
+    assert "Player details changed" in m
+    assert "Previous region: a" in m and "New citizenship country: d" in m
 
 
 def test_onaysiz_ekleme_bildirimi_onay_komutunu_icerir():
     m = bicim.bildirim_metni("yetkisiz_deneme", {"kullanici_id": 77, "grup_id": -1003,
                                                   "islem": "onaysiz_gruba_eklendi", "zaman": "2026-10-19T12:00:00.000000Z"})
-    assert "onaysız bir gruba eklendi" in m and "<code>/grup_onayla -1003</code>" in m
+    assert "added to an unapproved group" in m and "<code>/approve_group -1003</code>" in m
 
 
 # ---------------------------------------------------------------- bölme

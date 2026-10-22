@@ -202,7 +202,7 @@ def test_kimlik_yapilandirilmamis_istek_atilmaz(tmp_path, ortam):
     assert k.yapilandirildi is False and yapilandirildi_mi(k) is False
     with pytest.raises(KimlikYapilandirilmadi) as e:
         run(k.fetch_player("72400"))
-    assert "geçersiz" in str(e.value)  # Tur A: varsayılan Bearer geçerli; yalnız GEÇERSİZ override yapılandırılmamış sayılır
+    assert "invalid" in str(e.value)  # Tur A: varsayılan Bearer geçerli; yalnız GEÇERSİZ override yapılandırılmamış sayılır
     with pytest.raises(KimlikYapilandirilmadi):
         run(k.fetch_party("5830"))
     assert len(s.istekler) == 0

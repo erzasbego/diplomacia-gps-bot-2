@@ -85,7 +85,7 @@ def test_menuyle_guncelleme_sayaci_sifirlar(conn, src, saat, tmp_path):
 
     ui = Arayuz(conn, YapilandirilmamisKaynak(), KURUCU, saat=saat, zamanlayici=z, dogrulayici=Dog(), token_deposu=depo)
     y = run(ui._token_isle(Olay(sohbet_id=KURUCU, sohbet_turu="private", kullanici_id=KURUCU, metin="YENI")))
-    assert "kaydedildi" in y.metin and _durum(conn) == iso(saat())
+    assert "saved" in y.metin and _durum(conn) == iso(saat())
     saat.ilerle(3 * GUN)  # eski sayaca göre 9. gün
     z.token_hatirlat()
     assert bildirimler(conn, "token_hatirlatma") == []
@@ -93,4 +93,4 @@ def test_menuyle_guncelleme_sayaci_sifirlar(conn, src, saat, tmp_path):
 
 def test_mesaj_metni_omur_dogrulanmadi_notu():
     m = bildirim_metni("token_hatirlatma", {"gun": 7})
-    assert "doğrulanmad" in m.lower() and "token" in m.lower()
+    assert "has not been verified" in m.lower() and "token" in m.lower()

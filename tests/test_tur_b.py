@@ -86,7 +86,7 @@ def test_arayuz_token_duraklatmasinda_aga_cikmaz_ve_acik_mesaj_verir(conn, saat,
     z._token_duraklat()
     y = run(ui.komut(grup_komut("oyuncu_ekle", "5")))
     assert src.cagri_say("oyuncu") == 0
-    assert "kurucu yenilemeli" in y.metin
+    assert "owner must renew it" in y.metin
 
 
 def test_arayuz_istek_siniri_penceresinde_aga_cikmaz(conn, saat, src):
@@ -97,7 +97,7 @@ def test_arayuz_istek_siniri_penceresinde_aga_cikmaz(conn, saat, src):
     z._istek_siniri(IstekSiniri("x", 120))
     y = run(ui.komut(grup_komut("oyuncu_ekle", "5")))
     assert src.cagri_say("oyuncu") == 0
-    assert "istek sınırı" in y.metin and "sn sonra dene" in y.metin
+    assert "rate limit" in y.metin and "try again in" in y.metin
 
 
 def test_arayuzde_yakalanan_token_gecersiz_zamanlayiciyi_duraklatir_tek_bildirim(conn, saat, src):
@@ -123,7 +123,7 @@ def test_arayuzde_erisim_reddi_sonrasi_geri_cekilme_penceresinde_aga_cikmaz(conn
     run(ui.komut(grup_komut("oyuncu_ekle", "5")))
     y = run(ui.komut(grup_komut("oyuncu_ekle", "5")))
     assert src.cagri_say("oyuncu") == 1
-    assert "Diplomacia bağlantısı yok" in y.metin and not z.token_duraklatildi
+    assert "Diplomacia connection unavailable" in y.metin and not z.token_duraklatildi
 
 
 # ------------------------------------------------------------------ D6 / D10
@@ -139,7 +139,7 @@ def test_yetki_ver_komutu_ozel_kimlikte_anlasilir_mesaj_verir(conn, saat, src):
     from tg_fakes import komut
     ui, _ = _ui_ve_zamanlayici(conn, saat, src)
     y = run(ui.komut(komut("yetki_ver", "1087968824")))
-    assert "Yetki verilemedi" in y.metin and "Yetki verildi" not in y.metin
+    assert "Could not grant access" in y.metin and "Access granted" not in y.metin
 
 
 def test_tam_sayi_asiri_buyuk_degeri_reddeder():

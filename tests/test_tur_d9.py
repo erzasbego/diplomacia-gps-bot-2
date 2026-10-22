@@ -107,7 +107,7 @@ def test_kurucu_ozelde_tasir_tum_tablolar(ui, conn, saat):
     assert bek
     ui.islemler.olustur("oyuncu_sil", G1, YETKILI, G1, {"id": "11"})
     y = _tasi(ui)
-    assert "Oyuncu: 2" in y.metin and "parti: 1" in y.metin, y.metin
+    assert "Players: 2" in y.metin and "parties: 1" in y.metin, y.metin
     assert _say(conn, YENI) == onceki
     assert all(v == 0 for v in _say(conn, G1).values())
     assert conn.execute("SELECT COUNT(*) FROM grup_ayarlari WHERE group_id=?", (G1,)).fetchone()[0] == 0
@@ -277,7 +277,7 @@ def test_transaction_ortasinda_hata_tam_geri_alinir(ui, conn, saat, monkeypatch)
     # UI yolu da çökmeden "değişmedi" söyler
     monkeypatch.setattr(outbox, "grup_bekleyenlerini_iptal_et", patla)
     y = _tasi(ui)
-    assert y is not None and "geri alındı" in y.metin and "hiçbir şey taşınmadı" in y.metin
+    assert y is not None and "rolled back" in y.metin and "nothing was moved" in y.metin
     assert _anlik(conn)["takip_oyuncular"] == once["takip_oyuncular"]
 
 

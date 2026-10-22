@@ -38,47 +38,89 @@ log = logging.getLogger("dipbot.tg.arayuz")
 SAYFA_BOYUTU = 8
 TOKEN_BEKLEME_OMRU = timedelta(minutes=5)
 
-# Telegram komut adları yalnız [a-z0-9_] ve en çok 32 karakter. Açıklamalar Türkçe (<=256).
+# Telegram command names: [a-z0-9_] only, at most 32 characters. Descriptions are English (<=256).
+# The English names below are the ones shown in the Telegram command menu, in /help and in on-screen hints.
+# Internal handlers (`_k_<name>`), audit names and the permission policy keep the original (Turkish) command
+# identifiers; every English name is normalised to that identifier before dispatch (see EN_KOMUTLAR).
 KOMUTLAR: dict[str, str] = {
-    "start": "Botu başlat, ana menüyü aç",
-    "yardim": "Komutlar ve kullanım yardımı",
-    "oyuncuekle": "Oyuncuyu takibe ekle (ID veya bağlantı)",
-    "oyuncular": "Takip edilen oyuncuları listele",
-    "oyuncusil": "Oyuncuyu takipten çıkar (ID veya bağlantı)",
-    "partiekle": "Partiyi takibe ekle (ID veya bağlantı)",
-    "partiler": "Takip edilen partileri listele",
-    "partisil": "Parti takibini kaldır (ID veya bağlantı)",
-    "savaslar": "Aktif savaşları listele",
-    "tarama": "Tarama aralığını ayarla: 5, 10, 15 veya 20 dakika",
-    "durum": "Bot durumunu göster",
-    "yetki_ver": "Kullanıcıya yetki ver (Telegram kullanıcı kimliği)",
-    "yetki_al": "Kullanıcının yetkisini al (Telegram kullanıcı kimliği)",
-    "grup_onayla": "Grubu onayla (Telegram grup kimliği)",
-    "grup_kaldir": "Grup onayını kaldır (Telegram grup kimliği)",
-    "grup_tasi": "Göç eden grubun verisini yeni kimliğe taşı (yalnız kurucu, özel sohbet)",
+    "start": "Start the bot and open the main menu",
+    "help": "Show commands and usage help",
+    "addplayer": "Track a player (ID or link)",
+    "players": "List tracked players",
+    "removeplayer": "Stop tracking a player (ID or link)",
+    "addparty": "Track a party (ID or link)",
+    "parties": "List tracked parties",
+    "removeparty": "Stop tracking a party (ID or link)",
+    "wars": "List active wars",
+    "scan": "Set the scan interval: 5, 10, 15 or 20 minutes",
+    "status": "Show bot status",
+    "grant": "Grant access to a user (Telegram user ID)",
+    "revoke": "Revoke a user's access (Telegram user ID)",
+    "approve_group": "Approve a group (Telegram group ID)",
+    "remove_group": "Remove a group's approval (Telegram group ID)",
+    "move_group": "Move a migrated group's data to its new ID (owner only, private chat)",
 }
 
-# Geriye dönük uyumluluk: eski komut adları ÇALIŞIR ama Telegram komut listesinde, yardımda ve menülerde
-# gösterilmez (yalnız yeni kısa adlar gösterilir). Yetki/onay yolu aynıdır (normalize edilip aynı işleyici).
+# English command name -> internal command identifier.
+EN_KOMUTLAR: dict[str, str] = {
+    "start": "start",
+    "help": "yardim",
+    "addplayer": "oyuncuekle",
+    "players": "oyuncular",
+    "removeplayer": "oyuncusil",
+    "addparty": "partiekle",
+    "parties": "partiler",
+    "removeparty": "partisil",
+    "wars": "savaslar",
+    "scan": "tarama",
+    "status": "durum",
+    "grant": "yetki_ver",
+    "revoke": "yetki_al",
+    "approve_group": "grup_onayla",
+    "remove_group": "grup_kaldir",
+    "move_group": "grup_tasi",
+}
+# Internal identifier -> English command name (for messages shown to users).
+KOMUT_GOSTER: dict[str, str] = {v: k for k, v in EN_KOMUTLAR.items()}
+
+# Backward compatibility: legacy Turkish command names keep working (same handler, same authorization and
+# confirmation path) but are not listed in the Telegram menu or in /help.
 ESKI_KOMUTLAR: dict[str, str] = {
     "oyuncu_ekle": "oyuncuekle",
     "oyuncu_sil": "oyuncusil",
     "parti_ekle": "partiekle",
     "parti_sil": "partisil",
 }
-TUM_KOMUT_ADLARI = tuple(KOMUTLAR) + tuple(ESKI_KOMUTLAR)
+# The short Turkish names (/oyuncuekle, /durum, /grup_onayla, ...) also keep working.
+TR_KOMUTLAR: tuple[str, ...] = tuple(v for v in EN_KOMUTLAR.values() if v != "start")
+TUM_KOMUT_ADLARI = tuple(KOMUTLAR) + tuple(ESKI_KOMUTLAR) + TR_KOMUTLAR
+
+
+def komut_ic_adi(ad: str | None) -> str | None:
+    """English or legacy command name -> internal identifier; None if unknown."""
+    if ad in EN_KOMUTLAR:
+        return EN_KOMUTLAR[ad]
+    if ad in ESKI_KOMUTLAR:
+        return ESKI_KOMUTLAR[ad]
+    return ad if ad in TR_KOMUTLAR else None
+
+
+def komut_goster(ic: str) -> str:
+    """Internal identifier (or legacy name) -> English command name shown to users."""
+    ic = ESKI_KOMUTLAR.get(ic, ic)
+    return KOMUT_GOSTER.get(ic, ic)
 
 
 _GRUP_KAPSAMLI = frozenset({"ol", "od", "os", "oe", "pl", "pd", "ps", "pe", "sl", "sd", "ta", "tv"})
 
-KAPALI_OZEL = "Bu bot özel sohbette yalnızca kurucuya açıktır."
-YETKISIZ = "Bu işlem için yetkiniz yok."
-YALNIZ_KURUCU = "Bu işlemi yalnızca kurucu yapabilir."
-GRUP_ONAYSIZ_YANIT = "Bu grup artık onaylı değil; işlem yapılmadı."
-ESKI_DUGME = "Bu düğme artık geçerli değil. /start ile yeni menü açın."
-ONAY_BITTI = "⌛ Bu onayın süresi dolmuş veya zaten kullanılmış. İşlemi yeniden başlatın."
-SAAT_DEGISTI = ("⏱ Sunucu saati değişti; güvenlik için bekleyen işlem geçersiz sayıldı ve uygulanmadı. "
-                "İşlemi yeniden başlatın.")
+KAPALI_OZEL = "In private chat, this bot is available to the owner only."
+YETKISIZ = "You are not authorized to perform this action."
+YALNIZ_KURUCU = "Only the owner can perform this action."
+GRUP_ONAYSIZ_YANIT = "This group is no longer approved; no action was taken."
+ESKI_DUGME = "This button is no longer valid. Open a new menu with /start."
+ONAY_BITTI = "⌛ This confirmation has expired or has already been used. Please start the action again."
+SAAT_DEGISTI = ("⏱ The server clock changed; for safety, the pending action was invalidated and not applied. "
+                "Please start the action again.")
 
 
 def kimlik_coz(arg: str, tur: str) -> str | None:
@@ -100,8 +142,8 @@ def _tam_sayi(arg: str) -> int | None:
 
 def _tasima_ozeti(s: dict) -> str:
     return (
-        f"Oyuncu: {s['takip_oyuncular']}, parti: {s['takip_partiler']}, parti üyesi: {s['parti_uyeleri']}, "
-        f"engel: {s['engeller']}, savaş kaydı: {s['savaslar']}."
+        f"Players: {s['takip_oyuncular']}, parties: {s['takip_partiler']}, party members: {s['parti_uyeleri']}, "
+        f"blocks: {s['engeller']}, war records: {s['savaslar']}."
     )
 
 
@@ -114,8 +156,8 @@ def _dg(etiket: str, veri: str) -> Dugme | None:
 
 
 _JWT_BICIMI = re.compile(r"^eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}$")
-_SAYFALAMA_NOTU = "<i>Not: Liste sayfalamasız varsayılmıştır (doğrulanmadı).</i>"
-_GUC_NOTU = "<i>Not: 'Güç' değerinin hasar olduğu doğrulanmadı.</i>"
+_SAYFALAMA_NOTU = "<i>Note: the list is assumed to be unpaginated (unverified).</i>"
+_GUC_NOTU = "<i>Note: it has not been verified that the 'Power' value represents damage.</i>"
 
 
 class Arayuz:
@@ -192,7 +234,7 @@ class Arayuz:
         if k.neden == "desteklenmeyen_sohbet":
             return None
         if o.dugme_mi:
-            metin = {"ozel_sohbet_kapali": KAPALI_OZEL, "grup_onaysiz": "Bu grup onaylı değil."}.get(
+            metin = {"ozel_sohbet_kapali": KAPALI_OZEL, "grup_onaysiz": "This group is not approved."}.get(
                 k.neden, YETKISIZ
             )
             return Yanit(uyari=metin, uyari_goster=True, sessiz=True)
@@ -245,12 +287,12 @@ class Arayuz:
         onayli = sorted(self._durum().onayli_gruplar)
         if not onayli:
             return Yanit(
-                "Henüz onaylı grup yok. Bir grubu onaylamak için: "
-                "<code>/grup_onayla &lt;grup_kimligi&gt;</code>"
+                "No approved groups yet. To approve a group: "
+                "<code>/approve_group &lt;group_id&gt;</code>"
             )
-        satirlar = [[d] for d in (_dg(f"Grup {g}", f"gs:{g}") for g in onayli[:20]) if d]
-        satirlar.append([Dugme("🏠 Ana menü", "m")])
-        return Yanit("İşlem yapmak istediğiniz grubu seçin:", satirlar)
+        satirlar = [[d] for d in (_dg(f"Group {g}", f"gs:{g}") for g in onayli[:20]) if d]
+        satirlar.append([Dugme("🏠 Main menu", "m")])
+        return Yanit("Select the group you want to work with:", satirlar)
 
     # ====================== ortak yardımcılar ===============================
     async def _ack(self, o: Olay) -> None:
@@ -264,8 +306,8 @@ class Arayuz:
 
     @staticmethod
     def _kaynak_hata(baslik: str, e: BaseException) -> Yanit:
-        ad = "Diplomacia bağlantısı yapılandırılmadı" if isinstance(e, KaynakYapilandirilmadi) else hata_aciklamasi(e)
-        return Yanit(f"{esc(baslik)}: {esc(ad)}. Hiçbir kayıt değiştirilmedi.", [[Dugme("🏠 Ana menü", "m")]])
+        ad = "Diplomacia connection is not configured" if isinstance(e, KaynakYapilandirilmadi) else hata_aciklamasi(e)
+        return Yanit(f"{esc(baslik)}: {esc(ad)}. No record was changed.", [[Dugme("🏠 Main menu", "m")]])
 
     @staticmethod
     def _sayfa(toplam: int, sayfa: int) -> tuple[int, int, int]:
@@ -277,10 +319,10 @@ class Arayuz:
     def _gezinti(onek: str, sayfa: int, sayfa_sayisi: int) -> list[Dugme]:
         satir = []
         if sayfa > 0:
-            satir.append(Dugme("‹ Önceki", f"{onek}:{sayfa - 1}"))
+            satir.append(Dugme("‹ Previous", f"{onek}:{sayfa - 1}"))
         satir.append(Dugme(f"{sayfa + 1}/{sayfa_sayisi}", "nop"))
         if sayfa < sayfa_sayisi - 1:
-            satir.append(Dugme("Sonraki ›", f"{onek}:{sayfa + 1}"))
+            satir.append(Dugme("Next ›", f"{onek}:{sayfa + 1}"))
         return satir
 
     @staticmethod
@@ -295,13 +337,13 @@ class Arayuz:
         kid = self.islemler.olustur(tur, o.sohbet_id, o.kullanici_id, grup_id, veri)
         return Yanit(
             metin,
-            [[Dugme("✅ Onayla", f"c:e:{kid}"), Dugme("❌ Vazgeç", f"c:h:{kid}")]],
+            [[Dugme("✅ Confirm", f"c:e:{kid}"), Dugme("❌ Cancel", f"c:h:{kid}")]],
         )
 
     # ====================== giriş noktaları =================================
     async def komut(self, o: Olay) -> Yanit | None:
-        ad = ESKI_KOMUTLAR.get(o.komut, o.komut)
-        if ad not in KOMUTLAR:
+        ad = komut_ic_adi(o.komut)
+        if ad is None:
             return None
         k = self._yetki(o, f"/{ad}")
         if not k:
@@ -312,7 +354,7 @@ class Arayuz:
             return Yanit(GRUP_ONAYSIZ_YANIT)
         except Exception:
             log.exception("komut işlenirken beklenmeyen hata: /%s", ad)
-            return Yanit("Beklenmeyen bir hata oluştu; işlem tamamlanmadı. Ayrıntı kurucunun günlüğündedir.")
+            return Yanit("An unexpected error occurred; the action was not completed. Details are in the owner's log.")
 
     async def buton(self, o: Olay) -> Yanit:
         veri = o.veri or ""
@@ -323,10 +365,10 @@ class Arayuz:
         try:
             y = await self._buton_yonlendir(o, parca)
         except GrupOnaysiz:
-            y = Yanit(GRUP_ONAYSIZ_YANIT, uyari="Grup onaylı değil.", uyari_goster=True)
+            y = Yanit(GRUP_ONAYSIZ_YANIT, uyari="Group is not approved.", uyari_goster=True)
         except Exception:
             log.exception("düğme işlenirken beklenmeyen hata: %s", parca[0])
-            y = Yanit(uyari="Beklenmeyen bir hata oluştu.", uyari_goster=True, sessiz=True)
+            y = Yanit(uyari="An unexpected error occurred.", uyari_goster=True, sessiz=True)
         if y is None:
             y = Yanit(uyari=ESKI_DUGME, uyari_goster=True, sessiz=True)
         if y.metin and not y.sessiz:
@@ -347,7 +389,7 @@ class Arayuz:
                         await o.sil()
                     except Exception:
                         pass
-                return Yanit("Önce menüden Token yenile'yi seçin; bu mesaj işlenmedi.")
+                return Yanit("First choose Renew Token from the menu; this message was not processed.")
             return None
         k = yetki.token_yonetimi_izinli_mi(
             self._durum(), sohbet_id=o.sohbet_id, sohbet_turu=o.sohbet_turu, kullanici_id=o.kullanici_id
@@ -363,15 +405,15 @@ class Arayuz:
             if _JWT_BICIMI.match(metin) or (len(metin) >= 40 and not any(c.isspace() for c in metin)):
                 await self._mesaji_silmeyi_dene(o)  # token olabilir: sohbette kalmasın (değer yansıtılmaz)
             if sure == SURE_SAAT_DEGISTI:
-                return Yanit("Sunucu saati değişti; güvenlik için token bekleme iptal edildi, mesajınız "
-                             "işlenmedi (mevcut token DEĞİŞTİRİLMEDİ). Menüden yeniden başlatın.")
-            return Yanit("Token bekleme süresi doldu. Menüden yeniden başlatın.")
+                return Yanit("The server clock changed; for safety, the token wait was cancelled and your message "
+                             "was not processed (the current token was NOT CHANGED). Restart from the menu.")
+            return Yanit("The token wait time has expired. Restart from the menu.")
         if not _JWT_BICIMI.match(metin):
             # JWT biçimli olmayan düz metin token sayılmaz; bekleme tek kullanımlıktır (tüketilir)
             self._bekleme_kaldir(o.kullanici_id)
             await self._mesaji_silmeyi_dene(o)
-            return Yanit("Token biçimi geçersiz (JWT biçiminde tek bir token bekleniyor). Mesajınız silinmeye "
-                         "çalışıldı; mevcut token DEĞİŞTİRİLMEDİ. Menüden yeniden başlatın.")
+            return Yanit("Invalid token format (a single token in JWT format is expected). An attempt was made to "
+                         "delete your message; the current token was NOT CHANGED. Restart from the menu.")
         self._bekleme_kaldir(o.kullanici_id)  # tek kullanımlık bekleme
         return await self._token_isle(o)
 
@@ -398,7 +440,7 @@ class Arayuz:
             return kimlik_coz_ayrintili(o.arg, tur), None
         except BaglantiHatasi as e:
             ornek = "72400" if tur == "player" else "1244"
-            return None, Yanit(f"⚠️ {esc(str(e))}\nKullanım: <code>/{komut} {ornek}</code>")
+            return None, Yanit(f"⚠️ {esc(str(e))}\nUsage: <code>/{komut_goster(komut)} {ornek}</code>")
 
     async def _k_oyuncuekle(self, o: Olay) -> Yanit:
         g, r = self._grup_gerekli(o)
@@ -410,20 +452,20 @@ class Arayuz:
         try:
             s = await self.servis.oyuncu_ekle(g, oid, self.kaynak)
         except KaynakHatasi as e:
-            return self._kaynak_hata("Oyuncu eklenemedi", e)
+            return self._kaynak_hata("Could not add player", e)
         if s.durum == "zaten_takipte":
-            return Yanit(f"Bu oyuncu zaten takipte: {bicim.oyuncu_link(s.oyuncu_id)}", [[Dugme("👤 Oyuncular", "ol:0")]])
+            return Yanit(f"This player is already tracked: {bicim.oyuncu_link(s.oyuncu_id)}", [[Dugme("👤 Players", "ol:0")]])
         return Yanit(
             "\n".join(
                 [
-                    "✅ <b>Oyuncu takibe eklendi</b>",
+                    "✅ <b>Player added to tracking</b>",
                     bicim.oyuncu_link(oid, s.ad),
-                    f"Bölge: {esc(s.bolge or 'bilinmiyor')}",
-                    f"Vatandaşlık ülkesi: {esc(s.vatandaslik_ulkesi or 'bilinmiyor')}",
-                    "<i>Bu bir başlangıç özetidir; değişiklik bildirimi değildir.</i>",
+                    f"Region: {esc(s.bolge or 'unknown')}",
+                    f"Citizenship: {esc(s.vatandaslik_ulkesi or 'unknown')}",
+                    "<i>This is an initial summary; it is not a change notification.</i>",
                 ]
             ),
-            [[Dugme("👤 Oyuncular", "ol:0"), Dugme("🏠 Ana menü", "m")]],
+            [[Dugme("👤 Players", "ol:0"), Dugme("🏠 Main menu", "m")]],
         )
 
     async def _k_oyuncular(self, o: Olay) -> Yanit:
@@ -449,31 +491,31 @@ class Arayuz:
         try:
             s = await self.servis.parti_ekle(g, pid, self.kaynak)
         except KaynakHatasi as e:
-            return self._kaynak_hata("Parti eklenemedi", e)
+            return self._kaynak_hata("Could not add party", e)
         if s.durum == "zaten_takipte":
-            return Yanit(f"Bu parti zaten takipte: {bicim.parti_link(pid)}", [[Dugme("👥 Partiler", "pl:0")]])
-        esik = f"{config.PARTI_XP_ESIGI:,}".replace(",", ".")
+            return Yanit(f"This party is already tracked: {bicim.parti_link(pid)}", [[Dugme("👥 Parties", "pl:0")]])
+        esik = f"{config.PARTI_XP_ESIGI:,}"
         satirlar = [
-            "✅ <b>Parti takibe eklendi</b>",
+            "✅ <b>Party added to tracking</b>",
             bicim.parti_link(pid, s.ad),
-            f"Toplam üye: {s.toplam_uye or s.uye_sayisi}",
-            f"API'den incelenen: {s.incelenen or s.uye_sayisi}",
-            f"{esik}+ XP ile takibe alınan: {s.takip_edilen}",
-            f"XP sınırı altında: {s.xp_alti}",
+            f"Total members: {s.toplam_uye or s.uye_sayisi}",
+            f"Reviewed from the API: {s.incelenen or s.uye_sayisi}",
+            f"Tracked with {esik}+ XP: {s.takip_edilen}",
+            f"Below the XP threshold: {s.xp_alti}",
         ]
         if s.xp_bilinmeyen:
-            satirlar.append(f"XP bilgisi eksik/geçersiz (takibe alınmadı): {s.xp_bilinmeyen}")
+            satirlar.append(f"XP missing/invalid (not tracked): {s.xp_bilinmeyen}")
         if s.engelli:
-            satirlar.append(f"Elle silindiği için eklenmeyen (engelli): {s.engelli}")
-        satirlar.append(f"İlk bilgisi alınan: {s.ilk_veri_alinan}")
-        satirlar.append(f"İlk taramayı bekleyen: {s.ilk_veri_bekleyen}" + (f" ({esc(s.ilk_veri_notu)})" if s.ilk_veri_bekleyen and s.ilk_veri_notu else ""))
+            satirlar.append(f"Not added because they were removed manually (blocked): {s.engelli}")
+        satirlar.append(f"First observation received: {s.ilk_veri_alinan}")
+        satirlar.append(f"Awaiting first scan: {s.ilk_veri_bekleyen}" + (f" ({esc(s.ilk_veri_notu)})" if s.ilk_veri_bekleyen and s.ilk_veri_notu else ""))
         satirlar += self._kismi_not(s)
         satirlar.append(
-            "<i>Bu bir başlangıç özetidir (tek mesaj): üye girişleri, bölge ve vatandaşlık için bildirim "
-            "gönderilmez; oyuncular için ayrı mesaj gönderilmez. Bundan sonra yalnızca gerçek değişiklikler "
-            "bildirilir.</i>"
+            "<i>This is an initial summary (a single message): no notifications are sent for member joins, "
+            "region or citizenship; no separate messages are sent for players. From now on, only real changes "
+            "are reported.</i>"
         )
-        return Yanit("\n".join(satirlar), [[Dugme("👥 Partiler", "pl:0"), Dugme("🏠 Ana menü", "m")]])
+        return Yanit("\n".join(satirlar), [[Dugme("👥 Parties", "pl:0"), Dugme("🏠 Main menu", "m")]])
 
     @staticmethod
     def _kismi_not(s) -> list[str]:
@@ -483,19 +525,19 @@ class Arayuz:
             return []
         kalan = max((s.toplam_uye or 0) - (s.incelenen or 0), 0)
         satirlar = [
-            f"⚠️ <b>Üye listesi EKSİK okundu: {s.incelenen}/{s.toplam_uye}.</b> API tek istekte {s.incelenen} üye döndürdü; "
-            f"diğer {kalan} üye okunamadı (XP'leri bilinmiyor, takibe alınamadı). Sayfalama yöntemi doğrulanmadı, "
-            "ek sayfa istenmedi.",
+            f"⚠️ <b>Member list read INCOMPLETE: {s.incelenen}/{s.toplam_uye}.</b> The API returned {s.incelenen} members in a single request; "
+            f"the other {kalan} members could not be read (their XP is unknown, so they could not be tracked). The pagination method is unverified; "
+            "no additional pages were requested.",
         ]
         if s.min_xp is not None and s.min_xp >= config.PARTI_XP_ESIGI:
-            satirlar.append("Okunan üyelerin hepsi eşiğin üstünde: okunamayan üyeler arasında da uygun oyuncu olabilir.")
+            satirlar.append("All members read are above the threshold: there may also be eligible players among the members that could not be read.")
         else:
             satirlar.append(
-                "Okunan en düşük XP eşiğin altında; ancak sıralamaya güvenilmediği için okunamayan üyelerin de eşiğin "
-                "altında olduğu doğrulanamaz."
+                "The lowest XP read is below the threshold; however, since the ordering is not trusted, it cannot be "
+                "verified that the unread members are also below the threshold."
             )
-        xp = {True: "azalan sırada görünüyor", False: "azalan sırada DEĞİL", None: "sırası doğrulanamadı"}[s.xp_sirali]
-        satirlar.append(f"Bilgi: okunan üyelerde XP {xp} (sıralamaya güvenilmez; her üyenin XP'si ayrı denetlendi).")
+        xp = {True: "appears to be in descending order", False: "is NOT in descending order", None: "order could not be verified"}[s.xp_sirali]
+        satirlar.append(f"Note: XP among the members read: {xp} (the ordering is not trusted; each member's XP was checked individually).")
         return satirlar
 
     async def _k_partiler(self, o: Olay) -> Yanit:
@@ -530,45 +572,45 @@ class Arayuz:
     async def _k_yetki_ver(self, o: Olay) -> Yanit:
         hedef = _tam_sayi(o.arg)
         if hedef is None or hedef <= 0:
-            return Yanit("Kullanım: <code>/yetki_ver &lt;telegram_kullanici_kimligi&gt;</code> (pozitif sayı)")
+            return Yanit("Usage: <code>/grant &lt;telegram_user_id&gt;</code> (positive number)")
         try:
             yeni = yonetim.yetki_ver(self.conn, self.saat, self.kurucu_id, o.kullanici_id, hedef)
         except yonetim.YetkiHatasi:
             return Yanit(YETKISIZ)
         except yonetim.YonetimHatasi as e:
-            return Yanit(esc(f"Yetki verilemedi: {e}"))
+            return Yanit(esc(f"Could not grant access: {e}"))
         if hedef == self.kurucu_id:
-            return Yanit("Kurucu zaten her zaman yetkilidir.")
+            return Yanit("The owner is always authorized.")
         return Yanit(
-            f"Yetki verildi: <code>{hedef}</code>. (Özel sohbet yalnız kurucuya açıktır.)"
+            f"Access granted: <code>{hedef}</code>. (Private chat is open to the owner only.)"
             if yeni
-            else f"Kullanıcı zaten yetkili: <code>{hedef}</code>."
+            else f"User is already authorized: <code>{hedef}</code>."
         )
 
     async def _k_yetki_al(self, o: Olay) -> Yanit:
         hedef = _tam_sayi(o.arg)
         if hedef is None or hedef <= 0:
-            return Yanit("Kullanım: <code>/yetki_al &lt;telegram_kullanici_kimligi&gt;</code> (pozitif sayı)")
+            return Yanit("Usage: <code>/revoke &lt;telegram_user_id&gt;</code> (positive number)")
         return self._yetki_al_onayi(o, hedef)
 
     async def _k_grup_onayla(self, o: Olay) -> Yanit:
         gid = _tam_sayi(o.arg)
         if gid is None or gid >= 0:
-            return Yanit("Kullanım: <code>/grup_onayla &lt;telegram_grup_kimligi&gt;</code> (negatif sayı)")
+            return Yanit("Usage: <code>/approve_group &lt;telegram_group_id&gt;</code> (negative number)")
         try:
             yeni = yonetim.grup_onayla(self.conn, self.saat, self.kurucu_id, o.kullanici_id, gid)
         except yonetim.YetkiHatasi:
             return Yanit(YETKISIZ)
         return Yanit(
-            f"Grup onaylandı: <code>{gid}</code>. Grupta oyuncu/parti ekleyebilirsiniz."
+            f"Group approved: <code>{gid}</code>. You can add players/parties in the group."
             if yeni
-            else f"Grup zaten onaylı: <code>{gid}</code>."
+            else f"Group is already approved: <code>{gid}</code>."
         )
 
     async def _k_grup_kaldir(self, o: Olay) -> Yanit:
         gid = _tam_sayi(o.arg)
         if gid is None or gid >= 0:
-            return Yanit("Kullanım: <code>/grup_kaldir &lt;telegram_grup_kimligi&gt;</code> (negatif sayı)")
+            return Yanit("Usage: <code>/remove_group &lt;telegram_group_id&gt;</code> (negative number)")
         r = self._kurucu_eylemi(o, "grup_kaldir")
         if r is not None:
             return r
@@ -580,10 +622,10 @@ class Arayuz:
         if r is not None:
             return r
         if o.grup_mu:
-            return Yanit("Grup verisi taşıma yalnızca kurucunun özel sohbetinde yapılabilir.")
+            return Yanit("Moving group data can only be done in the owner's private chat.")
         kullanim = (
-            "Kullanım: <code>/grup_tasi &lt;eski_kimlik&gt; &lt;yeni_kimlik&gt;</code> "
-            "(ikisi de negatif; Telegram göç olayıyla kayıtlı çift)"
+            "Usage: <code>/move_group &lt;old_id&gt; &lt;new_id&gt;</code> "
+            "(both negative; a pair registered through a Telegram migration event)"
         )
         parcalar = (o.arg or "").split()
         kimlikler = [_tam_sayi(x) for x in parcalar] if len(parcalar) == 2 else []
@@ -594,12 +636,12 @@ class Arayuz:
         try:
             sayilar = yonetim.tasima_degerlendir(self.conn, eski, yeni)
         except yonetim.TasimaHatasi as e:
-            return Yanit(f"Taşıma yapılamadı: {esc(str(e))}. Hiçbir şey değiştirilmedi.")
+            return Yanit(f"Could not move: {esc(str(e))}. Nothing was changed.")
         return self._onay_yaniti(
             o, "grup_tasi", None, {"eski": eski, "yeni": yeni},
-            f"<b>Grup verisi taşınsın mı?</b>\nEski: <code>{eski}</code> → Yeni: <code>{yeni}</code>\n"
+            f"<b>Move group data?</b>\nOld: <code>{eski}</code> → New: <code>{yeni}</code>\n"
             f"{_tasima_ozeti(sayilar)}\n"
-            "Tek işlemde taşınır; eski kimlikte veri kalmaz, eski kimliğin bekleyen bildirimleri iptal edilir.",
+            "Moved in a single operation; no data remains under the old ID, and pending notifications for the old ID are cancelled.",
         )
 
     # ====================== düğmeler ========================================
@@ -652,8 +694,8 @@ class Arayuz:
             return self._oyuncu_sil_onayi(o, g, arg)
         if a == "oe":
             return Yanit(
-                "Oyuncu eklemek için:\n<code>/oyuncuekle 72400</code>\nveya bağlantıyla:\n<code>/oyuncuekle https://diplomacia.com.tr/player/72400</code>",
-                [[Dugme("👤 Oyuncular", "ol:0"), Dugme("🏠 Ana menü", "m")]],
+                "To add a player:\n<code>/addplayer 72400</code>\nor with a link:\n<code>/addplayer https://diplomacia.com.tr/player/72400</code>",
+                [[Dugme("👤 Players", "ol:0"), Dugme("🏠 Main menu", "m")]],
             )
         if a == "pl":
             return self._parti_liste(g, sayfa)
@@ -663,8 +705,8 @@ class Arayuz:
             return await self._parti_sil_baslat(o, g, arg)
         if a == "pe":
             return Yanit(
-                "Parti eklemek için:\n<code>/partiekle 1244</code>\nveya bağlantıyla:\n<code>/partiekle https://diplomacia.com.tr/party/1244</code>",
-                [[Dugme("👥 Partiler", "pl:0"), Dugme("🏠 Ana menü", "m")]],
+                "To add a party:\n<code>/addparty 1244</code>\nor with a link:\n<code>/addparty https://diplomacia.com.tr/party/1244</code>",
+                [[Dugme("👥 Parties", "pl:0"), Dugme("🏠 Main menu", "m")]],
             )
         if a == "sl":
             return await self._savas_liste(o, g, sayfa)
@@ -678,18 +720,18 @@ class Arayuz:
 
     # ====================== ekranlar ========================================
     def _yardim(self) -> Yanit:
-        satirlar = ["<b>Komutlar</b>"]
+        satirlar = ["<b>Commands</b>"]
         ornek = {
-            "oyuncuekle": "&lt;ID veya bağlantı&gt;",
-            "oyuncusil": "&lt;ID veya bağlantı&gt;",
-            "partiekle": "&lt;ID veya bağlantı&gt;",
-            "partisil": "&lt;ID veya bağlantı&gt;",
-            "tarama": "&lt;5|10|15|20&gt;",
-            "yetki_ver": "&lt;kullanici_kimligi&gt;",
-            "yetki_al": "&lt;kullanici_kimligi&gt;",
-            "grup_onayla": "&lt;grup_kimligi&gt;",
-            "grup_kaldir": "&lt;grup_kimligi&gt;",
-            "grup_tasi": "&lt;eski_kimlik&gt; &lt;yeni_kimlik&gt;",
+            "addplayer": "&lt;ID or link&gt;",
+            "removeplayer": "&lt;ID or link&gt;",
+            "addparty": "&lt;ID or link&gt;",
+            "removeparty": "&lt;ID or link&gt;",
+            "scan": "&lt;5|10|15|20&gt;",
+            "grant": "&lt;user_id&gt;",
+            "revoke": "&lt;user_id&gt;",
+            "approve_group": "&lt;group_id&gt;",
+            "remove_group": "&lt;group_id&gt;",
+            "move_group": "&lt;old_id&gt; &lt;new_id&gt;",
         }
         for ad, aciklama in KOMUTLAR.items():
             if ad in ("start",):
@@ -697,31 +739,31 @@ class Arayuz:
             satirlar.append(f"/{ad} {ornek.get(ad, '')}".rstrip() + f" — {esc(aciklama)}")
         satirlar.append("")
         satirlar.append(
-            "<i>Kontroller aralıklıdır; bildirimdeki zaman tespit zamanıdır, kesin değişiklik zamanı değildir. "
-            "Özel sohbet yalnız kurucuya açıktır.</i>"
+            "<i>Checks run at intervals; the time in a notification is the detection time, not the exact time of "
+            "the change. Private chat is open to the owner only. All times are Europe/Istanbul (24-hour clock).</i>"
         )
-        return Yanit("\n".join(satirlar), [[Dugme("🏠 Ana menü", "m")]])
+        return Yanit("\n".join(satirlar), [[Dugme("🏠 Main menu", "m")]])
 
     def _ana_menu(self, o: Olay) -> Yanit:
-        satirlar = ["<b>Diplomacia GPS Botu</b>", "Bir bölüm seçin."]
+        satirlar = ["<b>Diplomacia GPS Bot</b>", "Choose a section."]
         if not o.grup_mu:
             g = self._grup(o)
-            satirlar.append(f"Seçili grup: <code>{g}</code>" if g is not None else "Seçili grup yok.")
+            satirlar.append(f"Selected group: <code>{g}</code>" if g is not None else "No group selected.")
         klavye: Klavye = [
-            [Dugme("👤 Oyuncular", "ol:0"), Dugme("👥 Partiler", "pl:0")],
-            [Dugme("⚔️ Savaşlar", "sl:0"), Dugme("⏱️ Tarama Ayarları", "ta")],
-            [Dugme("📊 Bot Durumu", "du"), Dugme("⚙️ Yönetim", "yo")],
-            [Dugme("❓ Yardım", "yd")],
+            [Dugme("👤 Players", "ol:0"), Dugme("👥 Parties", "pl:0")],
+            [Dugme("⚔️ Wars", "sl:0"), Dugme("⏱️ Scan Settings", "ta")],
+            [Dugme("📊 Bot Status", "du"), Dugme("⚙️ Administration", "yo")],
+            [Dugme("❓ Help", "yd")],
         ]
         if not o.grup_mu:
-            klavye.append([Dugme("📌 Grup Seç", "gl")])
+            klavye.append([Dugme("📌 Select Group", "gl")])
         return Yanit("\n".join(satirlar), klavye)
 
     def _grup_sec(self, o: Olay, gid: int | None) -> Yanit | None:
         if o.grup_mu or gid is None or o.kullanici_id is None:
             return None
         if not self._onayli(gid):
-            return Yanit(uyari="Bu grup artık onaylı değil.", uyari_goster=True, sessiz=True)
+            return Yanit(uyari="This group is no longer approved.", uyari_goster=True, sessiz=True)
         self._secili[o.kullanici_id] = gid
         return self._ana_menu(o)
 
@@ -735,13 +777,13 @@ class Arayuz:
         toplam = len(satirlar_db)
         if toplam == 0:
             return Yanit(
-                "Bu grupta takip edilen oyuncu yok.\nEklemek için: "
-                "<code>/oyuncuekle &lt;ID veya bağlantı&gt;</code>",
-                [[Dugme("Oyuncu nasıl eklenir?", "oe")], [Dugme("🏠 Ana menü", "m")]],
+                "No players are tracked in this group.\nTo add one: "
+                "<code>/addplayer &lt;ID or link&gt;</code>",
+                [[Dugme("How to add a player?", "oe")], [Dugme("🏠 Main menu", "m")]],
             )
         sayfa, sayfa_sayisi, bas = self._sayfa(toplam, sayfa)
         dilim = satirlar_db[bas : bas + SAYFA_BOYUTU]
-        metin = [f"<b>Takip edilen oyuncular</b> (toplam {toplam})"]
+        metin = [f"<b>Tracked players</b> (total {toplam})"]
         klavye: Klavye = []
         for i, r in enumerate(dilim, start=bas + 1):
             metin.append(f"{i}. {bicim.oyuncu_link(r['oyuncu_id'], r['ad'])} (#{esc(r['oyuncu_id'])})")
@@ -749,7 +791,7 @@ class Arayuz:
             if d:
                 klavye.append([d])
         klavye.append(self._gezinti("ol", sayfa, sayfa_sayisi))
-        klavye.append([Dugme("🏠 Ana menü", "m")])
+        klavye.append([Dugme("🏠 Main menu", "m")])
         return Yanit("\n".join(metin), klavye)
 
     def _oyuncu_detay(self, g: int, oid: str) -> Yanit:
@@ -757,24 +799,24 @@ class Arayuz:
             "SELECT * FROM takip_oyuncular WHERE group_id=? AND oyuncu_id=?", (g, oid)
         ).fetchone()
         if r is None:
-            return Yanit(uyari="Bu oyuncu bu grupta takipte değil (silinmiş olabilir).", uyari_goster=True, sessiz=True)
+            return Yanit(uyari="This player is not tracked in this group (may have been removed).", uyari_goster=True, sessiz=True)
         metin = [
-            f"<b>Oyuncu</b>: {bicim.oyuncu_link(oid, r['ad'])} (#{esc(oid)})",
-            f"Bölge: {esc(r['bolge'] or 'bilinmiyor')}",
-            f"Vatandaşlık ülkesi: {esc(r['vatandaslik_ulkesi'] or 'bilinmiyor')}",
-            f"Son gözlem: {bicim.tarih(r['son_gozlem'])}",
-            "Ekleme: " + ("elle" if r["elle_eklendi"] else "parti üyeliğiyle"),
+            f"<b>Player</b>: {bicim.oyuncu_link(oid, r['ad'])} (#{esc(oid)})",
+            f"Region: {esc(r['bolge'] or 'unknown')}",
+            f"Citizenship: {esc(r['vatandaslik_ulkesi'] or 'unknown')}",
+            f"Last observation: {bicim.tarih(r['son_gozlem'])}",
+            "Added: " + ("manually" if r["elle_eklendi"] else "via party membership"),
         ]
         if oid in self.servis.bulunamayan_oyuncular(g):
             metin.append(
-                "⚠ Bulunamıyor: art arda birkaç taramada kaynakta bulunamadı (kayıt silinmedi; "
-                "gerekirse elle takipten çıkarın)."
+                "⚠ Not found: the player was not found at the source in several consecutive scans (the record "
+                "was not deleted; stop tracking manually if needed)."
             )
         klavye: Klavye = []
-        sil = _dg("🗑 Takipten çıkar", f"os:{oid}")
+        sil = _dg("🗑 Stop tracking", f"os:{oid}")
         if sil:
             klavye.append([sil])
-        klavye.append([Dugme("📋 Liste", "ol:0"), Dugme("🏠 Ana menü", "m")])
+        klavye.append([Dugme("📋 List", "ol:0"), Dugme("🏠 Main menu", "m")])
         return Yanit("\n".join(metin), klavye)
 
     def _oyuncu_sil_onayi(self, o: Olay, g: int, oid: str) -> Yanit:
@@ -782,14 +824,14 @@ class Arayuz:
             "SELECT ad FROM takip_oyuncular WHERE group_id=? AND oyuncu_id=?", (g, oid)
         ).fetchone()
         if r is None:
-            return self._bilgi(o, "Bu oyuncu bu grupta takipte değil.")
+            return self._bilgi(o, "This player is not tracked in this group.")
         return self._onay_yaniti(
             o,
             "oyuncu_sil",
             g,
             {"id": oid},
-            f"<b>Oyuncu takipten çıkarılsın mı?</b>\n{bicim.oyuncu_link(oid, r['ad'])} (#{esc(oid)})\n"
-            "Yalnız bu grubun takibinden çıkar. Takip edilen bir partinin üyesiyse otomatik yeniden eklenmez.",
+            f"<b>Stop tracking this player?</b>\n{bicim.oyuncu_link(oid, r['ad'])} (#{esc(oid)})\n"
+            "Only removes the player from this group's tracking. If the player is a member of a tracked party, they will not be re-added automatically.",
         )
 
     # ---- partiler
@@ -803,22 +845,22 @@ class Arayuz:
         toplam = len(satirlar_db)
         if toplam == 0:
             return Yanit(
-                "Bu grupta takip edilen parti yok.\nEklemek için: <code>/partiekle &lt;ID veya bağlantı&gt;</code>",
-                [[Dugme("Parti nasıl eklenir?", "pe")], [Dugme("🏠 Ana menü", "m")]],
+                "No parties are tracked in this group.\nTo add one: <code>/addparty &lt;ID or link&gt;</code>",
+                [[Dugme("How to add a party?", "pe")], [Dugme("🏠 Main menu", "m")]],
             )
         sayfa, sayfa_sayisi, bas = self._sayfa(toplam, sayfa)
-        metin = [f"<b>Takip edilen partiler</b> (toplam {toplam})"]
+        metin = [f"<b>Tracked parties</b> (total {toplam})"]
         klavye: Klavye = []
         for i, r in enumerate(satirlar_db[bas : bas + SAYFA_BOYUTU], start=bas + 1):
             metin.append(
                 f"{i}. {bicim.parti_link(r['parti_id'], r['ad'])} (#{esc(r['parti_id'])}) — "
-                + (f"{r['uye']}/{r['toplam_uye']} üye" if r["kismi"] and r["toplam_uye"] else f"{r['uye']} üye")
+                + (f"{r['uye']}/{r['toplam_uye']} members" if r["kismi"] and r["toplam_uye"] else f"{r['uye']} members")
             )
             d = _dg(f"{i}. {r['ad'] or r['parti_id']} #{r['parti_id']}", f"pd:{r['parti_id']}")
             if d:
                 klavye.append([d])
         klavye.append(self._gezinti("pl", sayfa, sayfa_sayisi))
-        klavye.append([Dugme("🏠 Ana menü", "m")])
+        klavye.append([Dugme("🏠 Main menu", "m")])
         return Yanit("\n".join(metin), klavye)
 
     def _parti_detay(self, g: int, pid: str) -> Yanit:
@@ -826,24 +868,24 @@ class Arayuz:
             "SELECT * FROM takip_partiler WHERE group_id=? AND parti_id=?", (g, pid)
         ).fetchone()
         if r is None:
-            return Yanit(uyari="Bu parti bu grupta takipte değil (kaldırılmış olabilir).", uyari_goster=True, sessiz=True)
+            return Yanit(uyari="This party is not tracked in this group (may have been removed).", uyari_goster=True, sessiz=True)
         uye = self.conn.execute(
             "SELECT COUNT(*) FROM parti_uyeleri WHERE group_id=? AND parti_id=?", (g, pid)
         ).fetchone()[0]
         metin = [
-            f"<b>Parti</b>: {bicim.parti_link(pid, r['ad'])} (#{esc(pid)})",
-            f"Bilinen üye sayısı: {uye}",
-            f"Son doğrulama: {bicim.tarih(r['son_dogrulama'])}",
+            f"<b>Party</b>: {bicim.parti_link(pid, r['ad'])} (#{esc(pid)})",
+            f"Known member count: {uye}",
+            f"Last verification: {bicim.tarih(r['son_dogrulama'])}",
         ]
         if r["kismi"]:
-            metin.insert(2, f"Toplam üye: {r['toplam_uye'] or '?'} — son taramada yalnız {uye} üye OKUNABİLDİ "
-                            "(liste eksik; okunmayanlar izlenemez, görünmeme üyelik değişikliği sayılmaz).")
-        metin.insert(2, f"Otomatik takip: {config.PARTI_XP_ESIGI:,} XP ve üzeri".replace(",", "."))
+            metin.insert(2, f"Total members: {r['toplam_uye'] or '?'} — only {uye} members COULD BE READ in the last scan "
+                            "(list incomplete; unread members cannot be monitored, and not appearing does not count as a membership change).")
+        metin.insert(2, f"Automatic tracking: {config.PARTI_XP_ESIGI:,} XP and above")
         klavye: Klavye = []
-        sil = _dg("🗑 Parti takibini kaldır", f"ps:{pid}")
+        sil = _dg("🗑 Remove party tracking", f"ps:{pid}")
         if sil:
             klavye.append([sil])
-        klavye.append([Dugme("📋 Liste", "pl:0"), Dugme("🏠 Ana menü", "m")])
+        klavye.append([Dugme("📋 List", "pl:0"), Dugme("🏠 Main menu", "m")])
         return Yanit("\n".join(metin), klavye)
 
     async def _parti_sil_baslat(self, o: Olay, g: int, pid: str) -> Yanit:
@@ -851,7 +893,7 @@ class Arayuz:
         on = await self.servis.parti_kaldirma_hazirla(g, pid, self.kaynak)
         if not on.basarili:
             return Yanit(
-                f"Parti kaldırılamadı: {esc(on.neden)}", [[Dugme("👥 Partiler", "pl:0"), Dugme("🏠 Ana menü", "m")]]
+                f"Could not remove party: {esc(on.neden)}", [[Dugme("👥 Parties", "pl:0"), Dugme("🏠 Main menu", "m")]]
             )
         return self._parti_onay_ekrani(o, g, on, tekrar=False)
 
@@ -862,27 +904,27 @@ class Arayuz:
                 "SELECT ad FROM takip_oyuncular WHERE group_id=? AND oyuncu_id=?", (g, oid)
             ).fetchone()
             adlar[oid] = r["ad"] if r else None
-        satirlar = ["<b>Parti takibi kaldırılsın mı?</b>"]
+        satirlar = ["<b>Remove party tracking?</b>"]
         if tekrar:
-            satirlar.append("⚠️ Üyelik onay sırasında değişti; güncel özeti yeniden onaylayın.")
+            satirlar.append("⚠️ Membership changed during confirmation; please confirm the updated summary again.")
         satirlar += [
-            f"Parti: {bicim.parti_link(on.parti_id, on.parti_ad)} (#{esc(on.parti_id)})",
-            f"Güncel üye sayısı: {on.uye_sayisi}" if not on.kismi else
-            f"Toplam üye: {on.toplam_uye} (liste EKSİK: yalnız {on.uye_sayisi} üye okunabildi)",
-            f"Bu grubun takibinden çıkarılacak oyuncu: <b>{len(on.etkilenen)}</b>",
+            f"Party: {bicim.parti_link(on.parti_id, on.parti_ad)} (#{esc(on.parti_id)})",
+            f"Current member count: {on.uye_sayisi}" if not on.kismi else
+            f"Total members: {on.toplam_uye} (list INCOMPLETE: only {on.uye_sayisi} members could be read)",
+            f"Players to be removed from this group's tracking: <b>{len(on.etkilenen)}</b>",
         ]
         for oid, ad in adlar.items():
             satirlar.append(f"• {esc(ad or oid)} (#{esc(oid)})")
         if len(on.etkilenen) > len(adlar):
-            satirlar.append(f"… ve {len(on.etkilenen) - len(adlar)} oyuncu daha")
+            satirlar.append(f"… and {len(on.etkilenen) - len(adlar)} more players")
         satirlar.append(
-            "Partiden önceden ayrılmış oyuncuların takibi sürer; diğer gruplar etkilenmez. "
-            "Elle eklenmiş olsalar da şu anki üyeler çıkarılır."
+            "Players who left the party earlier remain tracked; other groups are not affected. "
+            "Current members are removed even if they were added manually."
         )
         if on.kismi:
             satirlar.append(
-                "⚠️ Büyük parti: üye listesi eksik okundu; okunamayan üyeler (elle eklenmiş olsalar bile) bu işlemle "
-                "takipten çıkarılmaz."
+                "⚠️ Large party: the member list was read incompletely; members who could not be read (even if "
+                "added manually) are not removed from tracking by this action."
             )
         return self._onay_yaniti(
             o, "parti_sil", g, {"parti_id": on.parti_id, "ozet": on.ozet_anahtari}, "\n".join(satirlar)
@@ -896,13 +938,13 @@ class Arayuz:
         except KaynakHatasi as e:
             return self._savas_liste_yedek(g, e)
         if not liste.tamam:  # eksik liste 'savaş yok' gibi gösterilmez
-            return self._savas_liste_yedek(g, EksikVeri('savaş listesi tamamlanmadı'))
+            return self._savas_liste_yedek(g, EksikVeri('war list was not completed'))
         savaslar = liste.savaslar
         toplam = len(savaslar)
         simdi = self.saat()
-        ust = [f"<b>Aktif savaşlar</b> (toplam {toplam})", f"Güncellik: {yerel_goster(simdi)} (az önce alındı)"]
+        ust = [f"<b>Active wars</b> (total {toplam})", f"Data as of: {yerel_goster(simdi)} (fetched just now)"]
         if toplam == 0:
-            return Yanit("\n".join(ust + ["Şu an aktif savaş görünmüyor.", _SAYFALAMA_NOTU]), [[Dugme("🔄 Yenile", "sl:0"), Dugme("🏠 Ana menü", "m")]])
+            return Yanit("\n".join(ust + ["No active wars are currently shown.", _SAYFALAMA_NOTU]), [[Dugme("🔄 Refresh", "sl:0"), Dugme("🏠 Main menu", "m")]])
         sayfa, sayfa_sayisi, bas = self._sayfa(toplam, sayfa)
         klavye: Klavye = []
         for i, s in enumerate(savaslar[bas : bas + SAYFA_BOYUTU], start=bas + 1):
@@ -912,41 +954,42 @@ class Arayuz:
             if d:
                 klavye.append([d])
         ust.append(bicim.SAVAS_EMOJI_LEJANDI)
-        ust.append(f'<a href="{esc(bicim.SITE)}/wars">Savaşlar sayfası</a>')
+        ust.append(f'<a href="{esc(bicim.SITE)}/wars">Wars page</a>')
         ust.append(_SAYFALAMA_NOTU)
         klavye.append(self._gezinti("sl", sayfa, sayfa_sayisi))
-        klavye.append([Dugme("🔄 Yenile", f"sl:{sayfa}"), Dugme("🏠 Ana menü", "m")])
+        klavye.append([Dugme("🔄 Refresh", f"sl:{sayfa}"), Dugme("🏠 Main menu", "m")])
         return Yanit("\n".join(ust), klavye)
 
     def _savas_liste_yedek(self, g: int, e: BaseException) -> Yanit:
-        neden = "Diplomacia bağlantısı yapılandırılmadı" if isinstance(e, KaynakYapilandirilmadi) else hata_aciklamasi(e)
-        satirlar = ["<b>Savaşlar</b>", f"⚠️ Güncel veri alınamadı ({esc(neden)}): veriye erişilemedi."]
+        neden = "Diplomacia connection is not configured" if isinstance(e, KaynakYapilandirilmadi) else hata_aciklamasi(e)
+        satirlar = ["<b>Wars</b>", f"⚠️ Current data could not be fetched ({esc(neden)}): the data was unreachable."]
         r = self.conn.execute(
             "SELECT son_basari FROM tarama_isleri WHERE group_id=? AND is_tipi='savaslar'", (g,)
         ).fetchone()
-        satirlar.append(f"Son başarılı savaş taraması: {bicim.tarih(r['son_basari']) if r and r['son_basari'] else 'yok'}")
+        satirlar.append(f"Last successful war scan: {bicim.tarih(r['son_basari']) if r and r['son_basari'] else 'none'}")
         bilinen = self.conn.execute(
             "SELECT savas_id, ad, ilk_gorulme FROM savaslar WHERE group_id=? ORDER BY ilk_gorulme DESC LIMIT ?",
             (g, SAYFA_BOYUTU),
         ).fetchall()
         if bilinen:
-            satirlar.append("Grup kaydındaki bilinen savaşlar (eski kayıt; bitmiş olabilir):")
+            satirlar.append("Known wars in the group record (old record; may have ended):")
             for b in bilinen:
-                satirlar.append(f"• {esc(b['ad'] or b['savas_id'])} — ilk görülme {bicim.tarih(b['ilk_gorulme'])}")
-        return Yanit("\n".join(satirlar), [[Dugme("🔄 Yenile", "sl:0"), Dugme("🏠 Ana menü", "m")]])
+                satirlar.append(f"• {esc(b['ad'] or b['savas_id'])} — first seen {bicim.tarih(b['ilk_gorulme'])}")
+        return Yanit("\n".join(satirlar), [[Dugme("🔄 Refresh", "sl:0"), Dugme("🏠 Main menu", "m")]])
 
     async def _savas_detay(self, o: Olay, sid: str) -> Yanit:
         if not sid:
             return None  # type: ignore[return-value]
         await self._ack(o)
         gv = await self.servis.savas_detayi(sid, self.kaynak)
-        klavye = [[d for d in (_dg("🔄 Yenile", f"sd:{sid}"),) if d] + [Dugme("📋 Liste", "sl:0")], [Dugme("🏠 Ana menü", "m")]]
+        klavye = [[d for d in (_dg("🔄 Refresh", f"sd:{sid}"),) if d] + [Dugme("📋 List", "sl:0")], [Dugme("🏠 Main menu", "m")]]
         neden = ""
         if gv.hata:
-            neden = "Diplomacia bağlantısı yapılandırılmadı" if "yapılandırılmadı" in gv.hata else gv.hata
+            neden = ("Diplomacia connection is not configured"
+                     if "not configured" in gv.hata.lower() else gv.hata)
         if gv.detay is None:
             return Yanit(
-                f"<b>Savaş</b> #{esc(sid)}\n⚠️ Veriye erişilemedi ({esc(neden)}). Daha önce alınmış veri yok.",
+                f"<b>War</b> #{esc(sid)}\n⚠️ Data unreachable ({esc(neden)}). No previously fetched data.",
                 klavye,
             )
         d = gv.detay
@@ -956,54 +999,54 @@ class Arayuz:
         if bicim.savas_baglantisi(d.war_number) is None:
             baslik += f" (#{esc(sid)})"
         satirlar = [
-            f"{bicim.tur_emoji(d.tur)} <b>Savaş</b>: {baslik}",
-            f"Durum: {bicim.durum_emoji(d.durum)} {bicim.durum_etiketi(d.durum)}",
+            f"{bicim.tur_emoji(d.tur)} <b>War</b>: {baslik}",
+            f"Status: {bicim.durum_emoji(d.durum)} {bicim.durum_etiketi(d.durum)}",
         ]
         if d.tur:
-            satirlar.append(f"Tür: {bicim.tur_etiketi(d.tur)}")
+            satirlar.append(f"Type: {bicim.tur_etiketi(d.tur)}")
         if d.taraflar:
-            satirlar.append("Taraflar:")
-            rozet = ("⚔️ Saldıran: ", "🛡️ Savunan: ") if len(d.taraflar) == 2 else ("", "")
+            satirlar.append("Sides:")
+            rozet = ("⚔️ Attacker: ", "🛡️ Defender: ") if len(d.taraflar) == 2 else ("", "")
             for k, t in enumerate(d.taraflar):
-                guc = "veri yok" if t.guc is None else f"{t.guc:,}".replace(",", ".")
-                satirlar.append(f"• {rozet[k] if len(d.taraflar) == 2 else ''}{esc(t.ad or 'bilinmiyor')} — Güç: {guc}")
+                guc = "no data" if t.guc is None else f"{t.guc:,}"
+                satirlar.append(f"• {rozet[k] if len(d.taraflar) == 2 else ''}{esc(t.ad or 'unknown')} — Power: {guc}")
             satirlar.append(_GUC_NOTU)
         else:
-            satirlar.append("Taraf bilgisi: veri yok")
-        satirlar.append(f'<a href="{esc(bicim.SITE)}/wars">Savaşlar sayfası</a>')
-        zaman = yerel_goster(gv.zaman) if gv.zaman else "bilinmiyor"
+            satirlar.append("Side information: no data")
+        satirlar.append(f'<a href="{esc(bicim.SITE)}/wars">Wars page</a>')
+        zaman = yerel_goster(gv.zaman) if gv.zaman else "unknown"
         if gv.guncel:
-            satirlar.append(f"Güncellik: {zaman} (az önce alındı)")
+            satirlar.append(f"Data as of: {zaman} (fetched just now)")
         else:
-            satirlar.append(f"⚠️ Güncel veri alınamadı ({esc(neden)}). Gösterilen veri {zaman} tarihlidir.")
-        satirlar.append("<i>Güç değişimleri ve durum geçişleri için otomatik bildirim gönderilmez.</i>")
+            satirlar.append(f"⚠️ Current data could not be fetched ({esc(neden)}). The data shown is from {zaman}.")
+        satirlar.append("<i>No automatic notifications are sent for power changes or status transitions.</i>")
         return Yanit("\n".join(satirlar), klavye)
 
     # ---- tarama ayarı
     def _tarama_ekrani(self, g: int, not_: str = "") -> Yanit:
         mevcut = yonetim.tarama_araligi(self.conn, g)
-        satirlar = [f"<b>Tarama ayarları</b>", f"Mevcut aralık: {mevcut} dakika"]
+        satirlar = [f"<b>Scan Settings</b>", f"Current interval: {mevcut} minutes"]
         if not_:
             satirlar.append(not_)
-        satirlar.append("Seçilen aralık oyuncu, parti ve yeni savaş kontrollerinde geçerlidir.")
+        satirlar.append("The selected interval applies to player, party and new-war checks.")
         satir = [
-            Dugme(("✓ " if dk == mevcut else "") + f"{dk} dk", f"tv:{dk}")
+            Dugme(("✓ " if dk == mevcut else "") + f"{dk} min", f"tv:{dk}")
             for dk in config.ALLOWED_SCAN_INTERVALS_MINUTES
         ]
-        return Yanit("\n".join(satirlar), [satir, [Dugme("🏠 Ana menü", "m")]])
+        return Yanit("\n".join(satirlar), [satir, [Dugme("🏠 Main menu", "m")]])
 
     def _tarama_ayarla(self, g: int, dk: int | None) -> Yanit:
         izinli = config.ALLOWED_SCAN_INTERVALS_MINUTES
         if dk is None or dk not in izinli:
             return Yanit(
-                f"Geçersiz aralık. İzinli değerler: {', '.join(map(str, izinli))} (dakika).",
-                uyari="Geçersiz aralık", uyari_goster=True, sessiz=True,
+                f"Invalid interval. Allowed values: {', '.join(map(str, izinli))} (minutes).",
+                uyari="Invalid interval", uyari_goster=True, sessiz=True,
             )
         try:
             yonetim.tarama_araligi_ayarla(self.conn, g, dk)
         except (ValueError, yonetim.YonetimHatasi) as e:
-            return Yanit(uyari=f"Ayarlanamadı: {e}"[:200], uyari_goster=True, sessiz=True)
-        return self._tarama_ekrani(g, f"✅ Aralık {dk} dakika olarak ayarlandı (bir sonraki taramadan itibaren).")
+            return Yanit(uyari=f"Could not be set: {e}"[:200], uyari_goster=True, sessiz=True)
+        return self._tarama_ekrani(g, f"✅ Interval set to {dk} minutes (effective from the next scan).")
 
     # ---- durum
     def _token_duraklatildi(self) -> bool:
@@ -1012,34 +1055,29 @@ class Arayuz:
         r = self.conn.execute("SELECT deger FROM sistem_durumu WHERE anahtar='token_duraklatildi'").fetchone()
         return bool(r and r[0] == "1")
 
-    def _baglanti_metni(self, g: int | None, isler: dict) -> str:
+    def _baglanti_metni(self, g: int | None, isler: dict) -> str | None:
+        """Problem description for the status screen, or None when there is nothing to report.
+        No fixed "configured / not verified" boilerplate is shown: only real, current conditions."""
         if not yapilandirildi_mi(self.kaynak):
-            return "yapılandırılmadı"
+            return "not configured"
         ic = getattr(self.kaynak, "_ic", self.kaynak)
         if getattr(ic, "token_hazir", True) is False:
-            return "token dosyası yok (Diplomacia isteği atılmıyor; Yönetim > Token menüsünden token verin)"
-        if getattr(ic, "canli_dogrulanmadi", False):
-            return ("yapılandırıldı (kimlik biçimi kullanıcı DevTools'ta doğruladı, canlı bağlantı test edilmedi); "
-                    + self._tarama_metni(g, isler))
+            return "no token file (no Diplomacia requests are sent; provide a token via Administration > Token)"
         return self._tarama_metni(g, isler)
 
-    def _tarama_metni(self, g: int | None, isler: dict) -> str:
+    def _tarama_metni(self, g: int | None, isler: dict) -> str | None:
         if self._token_duraklatildi():
-            return "site token'ı reddetti (401); taramalar duraklatıldı"
-        if g is None:
-            return "yapılandırıldı (grup seçilmediği için tarama durumu gösterilemiyor)"
+            return "the site rejected the token (401); scans are paused"
         hatali = [t for t, r in isler.items() if r["son_hata"]]
         if hatali:
             ilk = isler[hatali[0]]["son_hata"]
-            return esc(f"son tarama hatalı ({', '.join(hatali)}): {ilk[:80]}")
-        if any(r["son_basari"] for r in isler.values()):
-            return "son taramalar başarılı"
-        return "henüz tarama yapılmadı"
+            return esc(f"last scan failed ({', '.join(hatali)}): {ilk[:80]}")
+        return None
 
     def _durum_ekrani(self, o: Olay) -> Yanit:
         g = self._grup(o)
         d = self._durum()
-        satirlar = ["<b>Bot durumu</b>"]
+        satirlar = ["<b>Bot Status</b>"]
         isler: dict = {}
         if g is not None:
             isler = {
@@ -1049,97 +1087,97 @@ class Arayuz:
             n_oyuncu = self.conn.execute("SELECT COUNT(*) FROM takip_oyuncular WHERE group_id=?", (g,)).fetchone()[0]
             n_parti = self.conn.execute("SELECT COUNT(*) FROM takip_partiler WHERE group_id=?", (g,)).fetchone()[0]
             ayar = self.conn.execute("SELECT * FROM grup_ayarlari WHERE group_id=?", (g,)).fetchone()
-            satirlar.append(f"Grup: <code>{g}</code>")
-            satirlar.append(f"Oyuncu sayısı: {n_oyuncu}")
-            satirlar.append(f"Parti sayısı: {n_parti}")
-            satirlar.append(f"Tarama aralığı: {yonetim.tarama_araligi(self.conn, g)} dakika")
-            son = []
-            for tip, etiket in (("oyuncular", "oyuncular"), ("partiler", "partiler"), ("savaslar", "savaşlar")):
+            satirlar.append(f"Group: <code>{g}</code>")
+            satirlar.append(f"Tracked Players: {n_oyuncu}")
+            satirlar.append(f"Tracked Parties: {n_parti}")
+            satirlar.append(f"Scan Interval: {yonetim.tarama_araligi(self.conn, g)} minutes")
+            satirlar.append("Last Successful Scan:")
+            for tip, etiket in (("oyuncular", "Players"), ("partiler", "Parties"), ("savaslar", "Wars")):
                 r = isler.get(tip)
-                son.append(f"{etiket}: {bicim.tarih(r['son_basari']) if r and r['son_basari'] else 'henüz yok'}")
-            satirlar.append("Son başarılı kontrol: " + "; ".join(son))
+                satirlar.append(f"• {etiket}: {bicim.tarih(r['son_basari']) if r and r['son_basari'] else 'none yet'}")
             if self._token_duraklatildi():
-                sonraki = "duraklatıldı (token)"
+                sonraki = "paused (token)"
             elif ayar is not None and ayar["sonraki_tarama"]:
                 sonraki = bicim.tarih(ayar["sonraki_tarama"])
             else:
-                sonraki = "ilk tarama bekleniyor"
-            satirlar.append(f"Sonraki planlanan kontrol: {esc(sonraki)}")
+                sonraki = "waiting for the first scan"
+            satirlar.append(f"Next Scheduled Scan: {esc(sonraki)}")
             calisiyor = bool(self.zamanlayici and self.zamanlayici.calisiyor_mu(g))
-            satirlar.append(f"Devam eden tarama: {'evet' if calisiyor else 'hayır'}")
+            satirlar.append(f"Scan in Progress: {'Yes' if calisiyor else 'No'}")
             bekleyen = self.conn.execute(
                 "SELECT COUNT(*) FROM outbox WHERE grup_id=? AND durum='bekliyor'", (g,)
             ).fetchone()[0]
-            satirlar.append(f"Bekleyen bildirim: {bekleyen}")
+            satirlar.append(f"Pending Notifications: {bekleyen}")
             n_bulunamayan = len(self.servis.bulunamayan_oyuncular(g))
             if n_bulunamayan:
-                satirlar.append(f"Bulunamıyor (art arda 404): {n_bulunamayan} oyuncu")
+                satirlar.append(f"Not found (consecutive 404s): {n_bulunamayan} players")
             tanimayan = self.conn.execute(
                 "SELECT deger FROM sistem_durumu WHERE anahtar=?", (f"savas_taninmayan:{g}",)
             ).fetchone()
             if tanimayan and int(tanimayan[0]) > 0:
-                satirlar.append(f"Durumu tanınmayan savaş: {int(tanimayan[0])} (kaydedildi, bildirilmedi)")
-            satirlar.append(_SAYFALAMA_NOTU)
+                satirlar.append(f"Wars with an unrecognized status: {int(tanimayan[0])} (recorded, not announced)")
         else:
-            satirlar.append("Grup seçilmedi (özel sohbet): genel durum.")
+            satirlar.append("No group selected (private chat): general status.")
         if not o.grup_mu:
-            satirlar.append(f"Onaylı grup: {len(d.onayli_gruplar)}; yetkili kullanıcı: {len(d.yetkililer)}")
-        satirlar.append(f"Diplomacia bağlantısı: {self._baglanti_metni(g, isler)}")
-        return Yanit("\n".join(satirlar), [[Dugme("🔄 Yenile", "du"), Dugme("🏠 Ana menü", "m")]])
+            satirlar.append(f"Approved groups: {len(d.onayli_gruplar)}; authorized users: {len(d.yetkililer)}")
+        baglanti = self._baglanti_metni(g, isler)
+        if baglanti:
+            satirlar.append(f"Diplomacia connection: {baglanti}")
+        return Yanit("\n".join(satirlar), [[Dugme("🔄 Refresh", "du"), Dugme("🏠 Main menu", "m")]])
 
     # ---- yönetim
     def _yonetim_ekrani(self, o: Olay) -> Yanit:
         d = self._durum()
         ozel = not o.grup_mu
-        satirlar = ["<b>Yönetim</b>"]
+        satirlar = ["<b>Administration</b>"]
         klavye: Klavye = []
         yetkililer = sorted(d.yetkililer)
-        satirlar.append(f"Yetkili kullanıcılar ({len(yetkililer)}):" if yetkililer else "Ek yetkili kullanıcı yok.")
+        satirlar.append(f"Authorized users ({len(yetkililer)}):" if yetkililer else "No additional authorized users.")
         for uid in yetkililer[:10]:
             satirlar.append(f"• <code>{uid}</code>")
-            b = _dg(f"Yetkiyi kaldır #{uid}", f"yk:{uid}")
+            b = _dg(f"Revoke access #{uid}", f"yk:{uid}")
             if b:
                 klavye.append([b])
         if len(yetkililer) > 10:
-            satirlar.append("… (tamamı için /yetki_al komutunu kullanın)")
+            satirlar.append("… (use the /revoke command for the full list)")
         if ozel:
             gruplar = sorted(d.onayli_gruplar)
-            satirlar.append(f"Onaylı gruplar ({len(gruplar)}):" if gruplar else "Onaylı grup yok.")
+            satirlar.append(f"Approved groups ({len(gruplar)}):" if gruplar else "No approved groups.")
             for gid in gruplar[:10]:
                 satirlar.append(f"• <code>{gid}</code>")
-                b = _dg(f"Onayı kaldır {gid}", f"gk:{gid}")
+                b = _dg(f"Remove approval {gid}", f"gk:{gid}")
                 if b:
                     klavye.append([b])
         satirlar.append(
-            "Yetki vermek: <code>/yetki_ver &lt;kullanici_kimligi&gt;</code>\n"
-            "Grup onaylamak: <code>/grup_onayla &lt;grup_kimligi&gt;</code>"
+            "To grant access: <code>/grant &lt;user_id&gt;</code>\n"
+            "To approve a group: <code>/approve_group &lt;group_id&gt;</code>"
         )
         if ozel:
-            klavye.append([Dugme("🔑 Token Yenile", "tk"), Dugme("📌 Grup Seç", "gl")])
-        klavye.append([Dugme("🏠 Ana menü", "m")])
+            klavye.append([Dugme("🔑 Renew Token", "tk"), Dugme("📌 Select Group", "gl")])
+        klavye.append([Dugme("🏠 Main menu", "m")])
         return Yanit("\n".join(satirlar), klavye)
 
     def _yetki_al_onayi(self, o: Olay, hedef: int) -> Yanit:
         k = yetki.yetki_alinabilir_mi(self._durum(), hedef)
         if not k:
             return self._bilgi(
-                o, "Kurucunun yetkisi alınamaz." if k.neden == "kurucu_yetkisi_alinamaz" else YETKISIZ
+                o, "The owner's authorization cannot be revoked." if k.neden == "kurucu_yetkisi_alinamaz" else YETKISIZ
             )
         if hedef not in self._durum().yetkililer:
-            return self._bilgi(o, f"Bu kullanıcı yetkili listesinde değil: {hedef}.")
+            return self._bilgi(o, f"This user is not in the authorized list: {hedef}.")
         return self._onay_yaniti(
             o, "yetki_al", None, {"hedef": hedef},
-            f"<b>Yetki kaldırılsın mı?</b>\nKullanıcı: <code>{hedef}</code>\n"
-            "Eski düğmeleriyle de işlem yapamaz.",
+            f"<b>Revoke access?</b>\nUser: <code>{hedef}</code>\n"
+            "They also will not be able to act with their old buttons.",
         )
 
     def _grup_kaldir_onayi(self, o: Olay, gid: int) -> Yanit:
         if not self._onayli(gid):
-            return self._bilgi(o, f"Bu grup zaten onaylı değil: {gid}.")
+            return self._bilgi(o, f"This group is already not approved: {gid}.")
         return self._onay_yaniti(
             o, "grup_kaldir", None, {"grup": gid},
-            f"<b>Grup onayı kaldırılsın mı?</b>\nGrup: <code>{gid}</code>\n"
-            "Taramalar ve bekleyen bildirimler durur; takip verisi silinmez (yeniden onayda korunur).",
+            f"<b>Remove group approval?</b>\nGroup: <code>{gid}</code>\n"
+            "Scans and pending notifications stop; tracking data is not deleted (it is preserved if the group is approved again).",
         )
 
     # ====================== onay işleme =====================================
@@ -1149,94 +1187,94 @@ class Arayuz:
         eylem, kid = p[1], p[2]
         op, neden = self.islemler.getir_ayrintili(kid)
         if op is None and neden == SURE_SAAT_DEGISTI:
-            return Yanit(SAAT_DEGISTI, uyari="Sunucu saati değişti; işlem geçersiz.", uyari_goster=True)
+            return Yanit(SAAT_DEGISTI, uyari="The server clock changed; the action is invalid.", uyari_goster=True)
         if op is None:
-            return Yanit(ONAY_BITTI, uyari="Onayın süresi dolmuş veya kullanılmış.", uyari_goster=True)
+            return Yanit(ONAY_BITTI, uyari="The confirmation has expired or has been used.", uyari_goster=True)
         # Kapsam: aynı sohbet + aynı kullanıcı; gruba bağlı işlem kendi grubundan başka yerde kabul edilmez.
         if op.sohbet_id != o.sohbet_id:
             self._kaydet_yetkisiz(o, "buton:baska_sohbet_islemi")
-            return Yanit(uyari="Bu işlem başka bir sohbete/gruba ait.", uyari_goster=True, sessiz=True)
+            return Yanit(uyari="This action belongs to another chat/group.", uyari_goster=True, sessiz=True)
         if op.kullanici_id != o.kullanici_id:
-            return Yanit(uyari="Bu onayı yalnız işlemi başlatan kullanıcı verebilir.", uyari_goster=True, sessiz=True)
+            return Yanit(uyari="Only the user who started the action can give this confirmation.", uyari_goster=True, sessiz=True)
         if op.grup_id is not None:
             if o.grup_mu and op.grup_id != o.sohbet_id:
                 self._kaydet_yetkisiz(o, "buton:baska_grup_islemi")
-                return Yanit(uyari="Bu işlem başka bir gruba ait.", uyari_goster=True, sessiz=True)
+                return Yanit(uyari="This action belongs to another group.", uyari_goster=True, sessiz=True)
             if not self._onayli(op.grup_id):
                 self.islemler.sil(kid)
-                return Yanit("Grup artık onaylı değil; işlem iptal edildi.", uyari="Grup onaylı değil.", uyari_goster=True)
+                return Yanit("The group is no longer approved; the action was cancelled.", uyari="Group is not approved.", uyari_goster=True)
         if eylem == "h":
             self.islemler.sil(kid)
-            return Yanit("İşlem iptal edildi.", [[Dugme("🏠 Ana menü", "m")]])
+            return Yanit("Action cancelled.", [[Dugme("🏠 Main menu", "m")]])
         if not self.islemler.sil(kid):  # tek kullanımlık: çift tıklama ikinci kez çalıştırmaz
-            return Yanit(ONAY_BITTI, uyari="Bu onay zaten kullanılmış.", uyari_goster=True)
+            return Yanit(ONAY_BITTI, uyari="This confirmation has already been used.", uyari_goster=True)
         return await self._onay_uygula(o, op)
 
     async def _onay_uygula(self, o: Olay, op) -> Yanit:
-        geri = [[Dugme("🏠 Ana menü", "m")]]
+        geri = [[Dugme("🏠 Main menu", "m")]]
         v = op.veri
         if op.tur == "oyuncu_sil":
             ok = self.servis.oyuncu_sil(op.grup_id, v["id"])
             return Yanit(
-                f"Oyuncu takipten çıkarıldı: #{esc(v['id'])}" if ok else "Oyuncu zaten takipte değildi.",
-                [[Dugme("👤 Oyuncular", "ol:0"), Dugme("🏠 Ana menü", "m")]],
+                f"Player removed from tracking: #{esc(v['id'])}" if ok else "The player was already not tracked.",
+                [[Dugme("👤 Players", "ol:0"), Dugme("🏠 Main menu", "m")]],
             )
         if op.tur == "parti_sil":
             await self._ack(o)
             s = await self.servis.parti_kaldirma_onayla(op.grup_id, v["parti_id"], self.kaynak, v["ozet"],
                                                        islem_yapan=o.kullanici_id, kurucu_id=self.kurucu_id)
             if s.durum == "silindi":
-                satirlar = [f"Parti takibi kaldırıldı. Takipten çıkarılan oyuncu: {len(s.silinen)}."]
+                satirlar = [f"Party tracking removed. Players removed from tracking: {len(s.silinen)}."]
                 satirlar += [f"• {esc(x.ad or x.oyuncu_id)} (#{esc(x.oyuncu_id)})" for x in s.silinen_oyuncular[:15]]
                 if len(s.silinen_oyuncular) > 15:
-                    satirlar.append(f"… ve {len(s.silinen_oyuncular) - 15} oyuncu daha")
+                    satirlar.append(f"… and {len(s.silinen_oyuncular) - 15} more players")
                 if s.engellenen:
                     satirlar.append(
-                        "Başka takipli partide göründükleri için yeniden eklenmeyecek (engel konuldu; "
-                        "elle eklerseniz kalkar):"
+                        "They will not be re-added because they appear in another tracked party (a block was set; "
+                        "it is lifted if you add them manually):"
                     )
                     satirlar += [f"⛔ {esc(x.ad or x.oyuncu_id)} (#{esc(x.oyuncu_id)})" for x in s.engellenen[:15]]
                     if len(s.engellenen) > 15:
-                        satirlar.append(f"… ve {len(s.engellenen) - 15} oyuncu daha")
-                return Yanit("\n".join(satirlar), [[Dugme("👥 Partiler", "pl:0"), Dugme("🏠 Ana menü", "m")]])
+                        satirlar.append(f"… and {len(s.engellenen) - 15} more players")
+                return Yanit("\n".join(satirlar), [[Dugme("👥 Parties", "pl:0"), Dugme("🏠 Main menu", "m")]])
             if s.durum == "tekrar_onay" and s.onizleme is not None:
                 return self._parti_onay_ekrani(o, op.grup_id, s.onizleme, tekrar=True)
-            return Yanit(f"Parti kaldırılamadı: {esc(s.neden or s.durum)}. Hiçbir oyuncu silinmedi.", geri)
+            return Yanit(f"Could not remove party: {esc(s.neden or s.durum)}. No players were removed.", geri)
         if op.tur == "yetki_al":
             try:
                 ok = yonetim.yetki_al(self.conn, self.saat, self.kurucu_id, o.kullanici_id, v["hedef"])
             except yonetim.YetkiHatasi as e:
-                return Yanit(f"Yetki kaldırılamadı: {esc(str(e))}", geri)
+                return Yanit(f"Could not revoke access: {esc(str(e))}", geri)
             return Yanit(
-                f"Yetki kaldırıldı: <code>{v['hedef']}</code>." if ok else "Kullanıcı zaten yetkili değildi.", geri
+                f"Access revoked: <code>{v['hedef']}</code>." if ok else "The user was already not authorized.", geri
             )
         if op.tur == "grup_kaldir":
             try:
                 n = yonetim.grup_kaldir(self.conn, self.saat, self.kurucu_id, o.kullanici_id, v["grup"])
             except yonetim.YetkiHatasi:
                 return Yanit(YETKISIZ, geri)
-            return Yanit(f"Grup onayı kaldırıldı: <code>{v['grup']}</code>. İptal edilen bekleyen bildirim: {n}.", geri)
+            return Yanit(f"Group approval removed: <code>{v['grup']}</code>. Pending notifications cancelled: {n}.", geri)
         if op.tur == "grup_tasi":
             # Onay anında koşullar YENİDEN doğrulanır (servis katmanı transaction içinde); buton
             # yalnız kurucunun özel sohbetinde geçerlidir (sohbet+kullanıcı bağlı işlem + burada ek denetim).
             if o.grup_mu or o.kullanici_id != self.kurucu_id or o.sohbet_id != self.kurucu_id:
                 self._kaydet_yetkisiz(o, "buton:grup_tasi")
-                return Yanit("Grup verisi taşıma yalnızca kurucunun özel sohbetinde yapılabilir.", geri)
+                return Yanit("Moving group data can only be done in the owner's private chat.", geri)
             try:
                 sayilar = yonetim.grup_tasi(self.conn, self.saat, self.kurucu_id, o.kullanici_id, v["eski"], v["yeni"])
             except yonetim.YetkiHatasi:
                 return Yanit(YETKISIZ, geri)
             except yonetim.TasimaHatasi as e:
-                return Yanit(f"Taşıma yapılamadı: {esc(str(e))}. Hiçbir şey değiştirilmedi.", geri)
+                return Yanit(f"Could not move: {esc(str(e))}. Nothing was changed.", geri)
             except Exception:
                 log.exception("grup taşıma başarısız (tüm değişiklikler geri alındı)")
-                return Yanit("Taşıma sırasında hata oluştu; tüm değişiklikler geri alındı, hiçbir şey taşınmadı.", geri)
+                return Yanit("An error occurred during the move; all changes were rolled back and nothing was moved.", geri)
             return Yanit(
-                f"Taşıma tamamlandı: <code>{v['eski']}</code> → <code>{v['yeni']}</code>\n"
-                f"{_tasima_ozeti(sayilar)}\nEski kimlikte veri kalmadı.",
+                f"Move completed: <code>{v['eski']}</code> → <code>{v['yeni']}</code>\n"
+                f"{_tasima_ozeti(sayilar)}\nNo data remains under the old ID.",
                 geri,
             )
-        return Yanit("Bilinmeyen işlem türü.", geri)
+        return Yanit("Unknown action type.", geri)
 
     # ====================== token yenileme (yalnız kurucu, özel sohbet) =====
     def _token_izni(self, o: Olay, islem_adi: str) -> bool:
@@ -1249,41 +1287,41 @@ class Arayuz:
 
     async def _b_token(self, o: Olay, a: str) -> Yanit | None:
         if not self._token_izni(o, f"token:{a}"):
-            return Yanit(uyari="Token yönetimi yalnız kurucunun özel sohbetinde yapılabilir.", uyari_goster=True, sessiz=True)
+            return Yanit(uyari="Token management can only be done in the owner's private chat.", uyari_goster=True, sessiz=True)
         assert o.kullanici_id is not None
         if a == "tc":
             self._bekleme_kaldir(o.kullanici_id)
-            return Yanit("Token yenileme iptal edildi.", [[Dugme("⚙️ Yönetim", "yo"), Dugme("🏠 Ana menü", "m")]])
+            return Yanit("Token renewal cancelled.", [[Dugme("⚙️ Administration", "yo"), Dugme("🏠 Main menu", "m")]])
         if a == "tn":
             self._bekleme_ayarla(o.kullanici_id)
             return Yanit(
-                "Yeni Diplomacia token'ını <b>tek bir mesajla</b> gönderin (5 dakika içinde).\n"
-                "Mesajı silmeye çalışacağım; token loga veya veritabanına yazılmaz. "
-                "Aday token, mevcut dosyaya dokunmadan bir oyuncu isteğiyle sınanır; "
-                "sınama başarısızsa mevcut token değiştirilmez.",
-                [[Dugme("İptal", "tc")]],
+                "Send the new Diplomacia token in <b>a single message</b> (within 5 minutes).\n"
+                "I will try to delete the message; the token is not written to the log or the database. "
+                "The candidate token is tested with a player request without touching the existing file; "
+                "if the test fails, the current token is not replaced.",
+                [[Dugme("Cancel", "tc")]],
             )
         # tk: menü (token'ın kendisi asla gösterilmez)
         var = bool(self.token_deposu and self.token_deposu.var_mi())
         mt = self.token_deposu.son_degisiklik() if self.token_deposu else None
-        son = yerel_goster(datetime.fromtimestamp(mt, timezone.utc)) if mt else "bilinmiyor"
-        dogrulayici = "yapılandırıldı" if getattr(self.dogrulayici, "yapilandirildi", True) else "yapılandırılmadı"
+        son = yerel_goster(datetime.fromtimestamp(mt, timezone.utc)) if mt else "unknown"
+        dogrulayici = "configured" if getattr(self.dogrulayici, "yapilandirildi", True) else "not configured"
         return Yanit(
             "\n".join(
                 [
-                    "<b>Token yönetimi</b> (yalnız kurucu)",
-                    f"Token dosyası: {'mevcut' if var else 'yok'}; son değişiklik: {esc(son)}",
-                    f"Taramalar: {'token nedeniyle duraklatıldı' if self._token_duraklatildi() else 'duraklatılmadı'}",
-                    f"Token doğrulayıcı: {dogrulayici}",
+                    "<b>Token management</b> (owner only)",
+                    f"Token file: {'present' if var else 'none'}; last modified: {esc(son)}",
+                    f"Scans: {'paused due to token' if self._token_duraklatildi() else 'not paused'}",
+                    f"Token validator: {dogrulayici}",
                 ]
             ),
-            [[Dugme("🔑 Yeni token gönder", "tn")], [Dugme("⚙️ Yönetim", "yo"), Dugme("🏠 Ana menü", "m")]],
+            [[Dugme("🔑 Send new token", "tn")], [Dugme("⚙️ Administration", "yo"), Dugme("🏠 Main menu", "m")]],
         )
 
     async def _token_isle(self, o: Olay) -> Yanit:
         if self._token_islem_suruyor:
             await self._mesaji_silmeyi_dene(o)
-            return Yanit("Devam eden doğrulama var; bitmesini bekleyin. Bu mesaj işlenmedi.")
+            return Yanit("A verification is already in progress; please wait for it to finish. This message was not processed.")
         self._token_islem_suruyor = True
         try:
             return await self._token_isle_ic(o)
@@ -1300,29 +1338,29 @@ class Arayuz:
                 silindi = bool(await o.sil())
             except Exception:
                 silindi = False
-        sil_notu = "Mesajınız silindi." if silindi else "⚠️ Mesajınız silinemedi; lütfen elle silin."
+        sil_notu = "Your message was deleted." if silindi else "⚠️ Your message could not be deleted; please delete it manually."
         if not token or any(c.isspace() for c in token) or len(token) > 4096:
-            return Yanit(f"{sil_notu}\nGeçersiz biçim (boşluk içermeyen tek bir token gönderin). Token DEĞİŞTİRİLMEDİ.")
+            return Yanit(f"{sil_notu}\nInvalid format (send a single token without whitespace). Token was NOT CHANGED.")
         if self.token_deposu is None:
-            return Yanit(f"{sil_notu}\nToken deposu yapılandırılmadı. Token DEĞİŞTİRİLMEDİ.")
+            return Yanit(f"{sil_notu}\nToken store is not configured. Token was NOT CHANGED.")
         try:
             sonuc = await self.dogrulayici.dogrula(token)
         except Exception as e:  # hata metni token içerebilir: yalnız sınıf adı
-            return Yanit(f"{sil_notu}\nDoğrulama sırasında hata ({type(e).__name__}). Token DEĞİŞTİRİLMEDİ.")
+            return Yanit(f"{sil_notu}\nError during verification ({type(e).__name__}). Token was NOT CHANGED.")
         if not sonuc.gecerli:
             nedenler = {
-                "yapilandirilmadi": "Token doğrulayıcı yapılandırılmadı",
-                "gecersiz": "Token reddedildi (401)",
-                "hata": "Doğrulanamadı",
+                "yapilandirilmadi": "Token verifier is not configured",
+                "gecersiz": "Token rejected",
+                "hata": "Could not be verified",
             }
             return Yanit(
-                f"{sil_notu}\n{esc(nedenler.get(sonuc.durum, 'Doğrulanamadı'))}: {esc(sonuc.aciklama)}. "
-                "Mevcut token DEĞİŞTİRİLMEDİ."
+                f"{sil_notu}\n{esc(nedenler.get(sonuc.durum, 'Could not be verified'))}: {esc(sonuc.aciklama)}. "
+                "The current token was NOT CHANGED."
             )
         try:
             self.token_deposu.yaz(token)
         except Exception as e:
-            return Yanit(f"{sil_notu}\nToken dosyası yazılamadı ({type(e).__name__}). Mevcut token korunuyor.")
+            return Yanit(f"{sil_notu}\nCould not write the token file ({type(e).__name__}). The current token is kept.")
         try:
             with db_islem(self.conn):
                 self.conn.execute(
@@ -1334,13 +1372,13 @@ class Arayuz:
         devam = ""
         if self.zamanlayici is not None:
             self.zamanlayici.token_devam_ettir()
-            devam = " Taramalar kaldığı yerden devam ediyor."
+            devam = " Scans are resuming where they left off."
         return Yanit(
-            f"{sil_notu}\n✅ Aday token ile oyuncu isteği başarılı; kaydedildi "
-            f"(önceki token varsa .prev olarak yedeklendi; yedek yeni token ilk başarılı taramayla teyit edilince "
-            f"veya {config.TOKEN_PREV_OMRU_SANIYE // 3600} saat sonra otomatik silinir). "
-            f"Canlı davranış ayrıca doğrulanmadı.{devam}",
-            [[Dugme("🏠 Ana menü", "m")]],
+            f"{sil_notu}\n✅ The player request with the candidate token succeeded; saved "
+            f"(if there was a previous token, it was backed up as .prev; the backup is deleted automatically once the "
+            f"new token is confirmed by the first successful scan or after {config.TOKEN_PREV_OMRU_SANIYE // 3600} hours). "
+            f"Live behavior has not been verified separately.{devam}",
+            [[Dugme("🏠 Main menu", "m")]],
         )
 
     # ====================== sohbet üyelik olayları ==========================

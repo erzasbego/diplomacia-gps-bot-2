@@ -54,9 +54,9 @@ def test_yetki_matrisi_komut(ui, conn, kisi, sohbet):
     y = run(ui.komut(komut("yardim", **_sohbet_args(KISILER[kisi], sohbet))))
     izinli = BEKLENEN[(kisi, sohbet)]
     if izinli:
-        assert y is not None and "Komutlar" in y.metin
+        assert y is not None and "Commands" in y.metin
     else:
-        assert y is None or "Komutlar" not in y.metin
+        assert y is None or "Commands" not in y.metin
         n = conn.execute("SELECT COUNT(*) FROM yetkisiz_denemeler WHERE user_id=?", (KISILER[kisi],)).fetchone()[0]
         assert n == 1, "yetkisiz deneme kaydedilmeli"
 
@@ -125,19 +125,19 @@ def test_baska_sohbete_ait_islem_kimligi_reddedilir(ui, conn, saat, src):
     kid = onay_kimligi(run(ui.komut(grup_komut("oyuncu_sil", "72400"))))
     # Aynı kimlik G2 sohbetinden (yetkili kurucu tarafından bile) kullanılamaz
     r = run(ui.buton(grup_dugme(f"c:e:{kid}", grup=G2)))
-    assert r.sessiz and "başka" in r.uyari
+    assert r.sessiz and "another chat/group" in r.uyari
     assert "72400" in takipte(conn, G1)
     assert any(x["veri"]["islem"] == "buton:baska_sohbet_islemi" for x in bildirimler(conn, "yetkisiz_deneme"))
     # İşlem hâlâ kendi sohbetinde geçerli
     ok = run(ui.buton(grup_dugme(f"c:e:{kid}")))
-    assert "takipten çıkarıldı" in ok.metin and "72400" not in takipte(conn, G1)
+    assert "removed from tracking" in ok.metin and "72400" not in takipte(conn, G1)
 
 
 def test_baska_gruba_ait_hedefli_islem_reddedilir(ui, conn):
     # sohbet G2'de başlatılmış ama hedef grubu G1 olan sahte/bozuk işlem
     kid = ui.islemler.olustur("oyuncu_sil", G2, KURUCU, G1, {"id": "1"})
     r = run(ui.buton(grup_dugme(f"c:e:{kid}", grup=G2)))
-    assert r.sessiz and "başka bir gruba" in r.uyari
+    assert r.sessiz and "another group" in r.uyari
 
 
 def test_baska_gruptaki_oyuncu_gorunmez_ve_silinemez(ui, conn, src):
@@ -146,7 +146,7 @@ def test_baska_gruptaki_oyuncu_gorunmez_ve_silinemez(ui, conn, src):
     # G1 bağlamında G2'nin oyuncusu yok
     assert run(ui.buton(grup_dugme("od:1"))).uyari_goster
     y = run(ui.komut(grup_komut("oyuncu_sil", "1")))
-    assert "takipte değil" in y.metin and not y.klavye
+    assert "not tracked in this group" in y.metin and not y.klavye
     assert "1" in takipte(conn, G2)
 
 
@@ -155,7 +155,7 @@ def test_onay_baska_kullanici_tarafindan_verilemez(ui, conn, src):
     run(ui.komut(grup_komut("oyuncu_ekle", "5")))
     kid = onay_kimligi(run(ui.komut(grup_komut("oyuncu_sil", "5"))))
     r = run(ui.buton(grup_dugme(f"c:e:{kid}", kul=YETKILI)))
-    assert r.sessiz and "başlatan" in r.uyari
+    assert r.sessiz and "Only the user who started the action" in r.uyari
     assert "5" in takipte(conn, G1)
 
 
@@ -164,7 +164,7 @@ def test_onay_suresi_dolar_ve_tek_kullanimlik(ui, conn, src, saat):
     run(ui.komut(grup_komut("oyuncu_ekle", "5")))
     kid = onay_kimligi(run(ui.komut(grup_komut("oyuncu_sil", "5"))))
     ok = run(ui.buton(grup_dugme(f"c:e:{kid}")))
-    assert "çıkarıldı" in ok.metin
+    assert "removed from tracking" in ok.metin
     tekrar = run(ui.buton(grup_dugme(f"c:e:{kid}")))  # çift tıklama
     assert tekrar.metin == ar.ONAY_BITTI and tekrar.uyari
     # süre dolumu
@@ -188,7 +188,7 @@ def test_vazgec_islemi_iptal_eder(ui, conn, src):
     run(ui.komut(grup_komut("oyuncu_ekle", "5")))
     kid = onay_kimligi(run(ui.komut(grup_komut("oyuncu_sil", "5"))))
     y = run(ui.buton(grup_dugme(f"c:h:{kid}")))
-    assert "iptal" in y.metin and "5" in takipte(conn, G1)
+    assert "cancelled" in y.metin and "5" in takipte(conn, G1)
     assert ui.islemler.getir(kid) is None
 
 
@@ -252,14 +252,19 @@ def test_komut_adlari_telegram_kuralina_uyar():
         assert re.fullmatch(r"[a-z0-9_]{1,32}", ad), ad
         assert 1 <= len(aciklama) <= 256
     istenen = {
-        "oyuncuekle", "oyuncular", "oyuncusil", "partiekle", "partiler", "partisil", "savaslar",
-        "tarama", "durum", "yetki_ver", "yetki_al", "grup_onayla", "grup_kaldir", "yardim", "start",
-        "grup_tasi",  # D9: kurucunun özel sohbetinde veri taşıma
+        "addplayer", "players", "removeplayer", "addparty", "parties", "removeparty", "wars",
+        "scan", "status", "grant", "revoke", "approve_group", "remove_group", "help", "start",
+        "move_group",  # D9: moving data in the owner's private chat
     }
     assert istenen == set(KOMUTLAR)
-    # BİLİNÇLİ DEĞİŞİKLİK: eski alt çizgili adlar listeden çıktı; geriye dönük takma ad olarak çalışır
-    # (ayrıntı: tests/test_kisa_komutlar.py).
+    # The menu is English-only: legacy alt-name Turkish commands and the short Turkish names are NOT listed ...
     assert not {"oyuncu_ekle", "oyuncu_sil", "parti_ekle", "parti_sil"} & set(KOMUTLAR)
+    assert not set(ar.TR_KOMUTLAR) & set(KOMUTLAR)
+    # ... but keep working as aliases (same handler); details: tests/test_kisa_komutlar.py.
+    assert set(ar.EN_KOMUTLAR) == set(KOMUTLAR)
+    assert set(ar.ESKI_KOMUTLAR) == {"oyuncu_ekle", "oyuncu_sil", "parti_ekle", "parti_sil"}
+    for ad in (*ar.ESKI_KOMUTLAR, *ar.TR_KOMUTLAR, *KOMUTLAR):
+        assert ar.komut_ic_adi(ad) is not None, ad
 
 
 # ---------------------------------------------------------------- komutlar
@@ -277,23 +282,26 @@ def test_kimlik_coz():
 def test_oyuncu_ekle_ozet_ve_tekrar(ui, conn, src):
     src.oyuncu("72400", "Ali", bolge="Varna", ulke="Ulke1")
     y = run(ui.komut(grup_komut("oyuncu_ekle", "https://diplomacia.com.tr/player/72400")))
-    assert "takibe eklendi" in y.metin and "Varna" in y.metin and "Ulke1" in y.metin
-    assert "değişiklik bildirimi değildir" in y.metin
+    assert "Player added to tracking" in y.metin and "Varna" in y.metin and "Ulke1" in y.metin
+    assert "not a change notification" in y.metin
     assert not bildirimler(conn, "oyuncu_degisti")
-    assert "zaten takipte" in run(ui.komut(grup_komut("oyuncu_ekle", "72400"))).metin
+    assert "already tracked" in run(ui.komut(grup_komut("oyuncu_ekle", "72400"))).metin
     assert takipte(conn, G1) == {"72400"} and takipte(conn, G2) == set()
-    assert "Kullanım" in run(ui.komut(grup_komut("oyuncu_ekle", "bozuk link!"))).metin
+    bozuk = run(ui.komut(grup_komut("oyuncu_ekle", "bozuk link!"))).metin
+    assert "Usage" in bozuk and "/addplayer" in bozuk  # the hint shows the English command name
+    # the English menu name is the same handler
+    assert "already tracked" in run(ui.komut(grup_komut("addplayer", "72400"))).metin
 
 
 def test_kaynak_yapilandirilmadi_acik_hata_sahte_basari_yok(conn, saat):
     ui2 = Arayuz(conn, YapilandirilmamisKaynak(), KURUCU, saat=saat)
     assert isinstance(YapilandirilmamisKaynak(), DiplomaciaSource)
     y = run(ui2.komut(grup_komut("oyuncu_ekle", "1")))
-    assert "yapılandırılmadı" in y.metin and "Hiçbir kayıt değiştirilmedi" in y.metin
+    assert "not configured" in y.metin and "No record was changed" in y.metin
     assert takipte(conn, G1) == set()
     y = run(ui2.komut(grup_komut("savaslar")))
-    assert "yapılandırılmadı" in y.metin and "veriye erişilemedi" in y.metin.lower()
-    assert "Aktif savaşlar" not in y.metin
+    assert "not configured" in y.metin and "unreachable" in y.metin.lower()
+    assert "Active wars" not in y.metin
     with pytest.raises(KaynakYapilandirilmadi):
         run(YapilandirilmamisKaynak().fetch_player("1"))
 
@@ -301,7 +309,7 @@ def test_kaynak_yapilandirilmadi_acik_hata_sahte_basari_yok(conn, saat):
 def test_durum_yapilandirilmadi_gosterir(conn, saat):
     ui2 = Arayuz(conn, YapilandirilmamisKaynak(), KURUCU, saat=saat)
     y = run(ui2.komut(grup_komut("durum")))
-    assert "Diplomacia bağlantısı: yapılandırılmadı" in y.metin
+    assert "Diplomacia connection: not configured" in y.metin
 
 
 def test_oyuncu_listesi_sayfalama(ui, conn, src):
@@ -309,7 +317,7 @@ def test_oyuncu_listesi_sayfalama(ui, conn, src):
         src.oyuncu(str(i), f"Oyuncu {i:02d}")
         run(ui.komut(grup_komut("oyuncu_ekle", str(i))))
     p0 = run(ui.komut(grup_komut("oyuncular")))
-    assert "toplam 20" in p0.metin and p0.metin.count("player/") == 8
+    assert "total 20" in p0.metin and p0.metin.count("player/") == 8
     assert "ol:1" in veriler(p0) and "ol:-1" not in veriler(p0)
     p2 = run(ui.buton(grup_dugme("ol:2")))
     assert p2.metin.count("player/") == 4 and "ol:1" in veriler(p2) and "ol:3" not in veriler(p2)
@@ -327,10 +335,10 @@ def test_ayni_isimli_oyuncular_kimlikle_ayirt_edilir(ui, src):
 
 
 def test_tarama_komutu(ui, conn):
-    assert "Geçersiz" in run(ui.komut(grup_komut("tarama", "7"))).metin
-    assert "Geçersiz" in run(ui.komut(grup_komut("tarama", "abc"))).metin
+    assert "Invalid interval" in run(ui.komut(grup_komut("tarama", "7"))).metin
+    assert "Invalid interval" in run(ui.komut(grup_komut("scan", "abc"))).metin
     assert yonetim.tarama_araligi(conn, G1) == config.DEFAULT_SCAN_INTERVAL_MINUTES
-    assert "15 dakika" in run(ui.komut(grup_komut("tarama", "15"))).metin
+    assert "15 minutes" in run(ui.komut(grup_komut("tarama", "15"))).metin
     assert yonetim.tarama_araligi(conn, G1) == 15 and yonetim.tarama_araligi(conn, G2) == 10
     ekran = run(ui.komut(grup_komut("tarama")))
     assert set(veriler(ekran)) >= {"tv:5", "tv:10", "tv:15", "tv:20"}
@@ -343,9 +351,9 @@ def test_tarama_komutu(ui, conn):
 def test_ozel_sohbette_grup_secimi_gerekir(ui, conn, src):
     src.oyuncu("1", "A")
     y = run(ui.komut(komut("oyuncular")))  # iki onaylı grup, seçim yok
-    assert "grubu seçin" in y.metin and f"gs:{G1}" in veriler(y)
+    assert "Select the group" in y.metin and f"gs:{G1}" in veriler(y)
     y = run(ui.buton(dugme(f"gs:{G1}")))
-    assert f"Seçili grup: <code>{G1}</code>" in y.metin
+    assert f"Selected group: <code>{G1}</code>" in y.metin
     run(ui.komut(komut("oyuncu_ekle", "1")))
     assert takipte(conn, G1) == {"1"} and takipte(conn, G2) == set()
     # grup onayı kalkarsa seçim geçersiz olur
@@ -353,7 +361,7 @@ def test_ozel_sohbette_grup_secimi_gerekir(ui, conn, src):
     # seçili grup artık onaylı değil: eski seçim KULLANILMAZ (tek kalan onaylı grup G2 otomatik seçilir)
     assert ui._grup(komut("oyuncular")) == G2
     yonetim.grup_kaldir(conn, ui.saat, KURUCU, KURUCU, G2)
-    assert "onaylı grup yok" in run(ui.komut(komut("oyuncular"))).metin
+    assert "No approved groups yet" in run(ui.komut(komut("oyuncular"))).metin
     yonetim.grup_onayla(conn, ui.saat, KURUCU, KURUCU, G1)
     yonetim.grup_onayla(conn, ui.saat, KURUCU, KURUCU, G2)
     # onaysız gruba seçim yapılamaz
@@ -362,29 +370,30 @@ def test_ozel_sohbette_grup_secimi_gerekir(ui, conn, src):
 
 
 def test_yetki_komutlari(ui, conn):
-    assert "kullanım" in run(ui.komut(grup_komut("yetki_ver", "-5"))).metin.lower()
-    assert "Yetki verildi" in run(ui.komut(grup_komut("yetki_ver", "300"))).metin
-    assert "zaten yetkili" in run(ui.komut(grup_komut("yetki_ver", "300"))).metin
+    assert "usage" in run(ui.komut(grup_komut("yetki_ver", "-5"))).metin.lower()
+    assert "/grant" in run(ui.komut(grup_komut("grant", "-5"))).metin  # English menu name = same handler
+    assert "Access granted" in run(ui.komut(grup_komut("yetki_ver", "300"))).metin
+    assert "already authorized" in run(ui.komut(grup_komut("grant", "300"))).metin
     assert 300 in yonetim.durum_yukle(conn, KURUCU).yetkililer
     y = run(ui.komut(grup_komut("yetki_al", "300")))
     kid = onay_kimligi(y)
     assert 300 in yonetim.durum_yukle(conn, KURUCU).yetkililer, "onaydan önce kaldırılmamalı"
-    assert "Yetki kaldırıldı" in run(ui.buton(grup_dugme(f"c:e:{kid}"))).metin
+    assert "Access revoked" in run(ui.buton(grup_dugme(f"c:e:{kid}"))).metin
     assert 300 not in yonetim.durum_yukle(conn, KURUCU).yetkililer
     # kurucunun yetkisi alınamaz
-    assert "alınamaz" in run(ui.komut(grup_komut("yetki_al", str(KURUCU), kul=YETKILI))).metin
+    assert "cannot be revoked" in run(ui.komut(grup_komut("yetki_al", str(KURUCU), kul=YETKILI))).metin
     # listede olmayan
-    assert "listesinde değil" in run(ui.komut(grup_komut("yetki_al", "9999"))).metin
+    assert "not in the authorized list" in run(ui.komut(grup_komut("yetki_al", "9999"))).metin
 
 
 def test_grup_onayla_ve_kaldir(ui, conn):
-    assert "Kullanım" in run(ui.komut(komut("grup_onayla", "123"))).metin  # pozitif kimlik grup değildir
-    assert "Grup onaylandı" in run(ui.komut(komut("grup_onayla", str(G3)))).metin
+    assert "Usage" in run(ui.komut(komut("grup_onayla", "123"))).metin  # pozitif kimlik grup değildir
+    assert "Group approved" in run(ui.komut(komut("approve_group", str(G3)))).metin
     assert G3 in yonetim.durum_yukle(conn, KURUCU).onayli_gruplar
-    assert "zaten onaylı" in run(ui.komut(komut("grup_onayla", str(G3)))).metin
-    kid = onay_kimligi(run(ui.komut(komut("grup_kaldir", str(G3)))))
+    assert "already approved" in run(ui.komut(komut("grup_onayla", str(G3)))).metin
+    kid = onay_kimligi(run(ui.komut(komut("remove_group", str(G3)))))
     assert G3 in yonetim.durum_yukle(conn, KURUCU).onayli_gruplar
-    assert "kaldırıldı" in run(ui.buton(dugme(f"c:e:{kid}"))).metin
+    assert "approval removed" in run(ui.buton(dugme(f"c:e:{kid}"))).metin
     assert G3 not in yonetim.durum_yukle(conn, KURUCU).onayli_gruplar
     # kaldırılan grup artık işlem yapamaz
     assert run(ui.komut(grup_komut("yardim", grup=G3))) is None
@@ -412,18 +421,18 @@ def test_parti_kaldirma_onay_ve_tekrar_onay(ui, conn, src):
     run(ui.komut(grup_komut("parti_ekle", "https://diplomacia.com.tr/party/5830")))
     assert takipte(conn, G1) == {"1", "2"}
     y = run(ui.komut(grup_komut("parti_sil", "5830")))
-    assert "<b>2</b>" in y.metin and "Güncel üye sayısı: 2" in y.metin
+    assert "<b>2</b>" in y.metin and "Current member count: 2" in y.metin
     assert takipte(conn, G1) == {"1", "2"}, "önizleme hiçbir şey silmemeli"
     kid = onay_kimligi(y)
     # onay anında üyelik değişir
     _parti_kur(src, [("1", "A"), ("2", "B"), ("3", "C")])
     y2 = run(ui.buton(grup_dugme(f"c:e:{kid}")))
-    assert "yeniden onaylayın" in y2.metin and "Güncel üye sayısı: 3" in y2.metin
+    assert "confirm the updated summary again" in y2.metin and "Current member count: 3" in y2.metin
     assert takipte(conn, G1) == {"1", "2"}, "özet değişmişse silinmemeli"
     kid2 = onay_kimligi(y2)
     assert kid2 != kid
     y3 = run(ui.buton(grup_dugme(f"c:e:{kid2}")))
-    assert "kaldırıldı" in y3.metin and takipte(conn, G1) == set()
+    assert "Party tracking removed" in y3.metin and takipte(conn, G1) == set()
 
 
 def test_parti_kaldirma_dogrulanamazsa_silmez(ui, conn, src):
@@ -431,7 +440,7 @@ def test_parti_kaldirma_dogrulanamazsa_silmez(ui, conn, src):
     run(ui.komut(grup_komut("parti_ekle", "5830")))
     src.hatalar[("parti", "5830")] = SiteErisilemez("x")
     y = run(ui.komut(grup_komut("parti_sil", "5830")))
-    assert "kaldırılamadı" in y.metin and "doğrulanamadı" in y.metin
+    assert "Could not remove party" in y.metin and "could not be verified" in y.metin
     assert not any(v.startswith("c:e:") for v in veriler(y)), "onay düğmesi sunulmamalı"
     assert takipte(conn, G1) == {"1"}
 
@@ -440,7 +449,7 @@ def test_parti_sil_butonu_baska_grubun_partisini_gormez(ui, conn, src):
     _parti_kur(src, [("1", "A")])
     run(ui.komut(grup_komut("parti_ekle", "5830", grup=G2)))
     y = run(ui.buton(grup_dugme("ps:5830")))  # G1 bağlamı
-    assert "kaldırılamadı" in y.metin and "takipte değil" in y.metin
+    assert "Could not remove party" in y.metin and "not tracked in this group" in y.metin
     assert takipte(conn, G2) == {"1"}
 
 
@@ -448,16 +457,16 @@ def test_parti_listesi_ve_detay(ui, src):
     _parti_kur(src, [("1", "A"), ("2", "B")])
     run(ui.komut(grup_komut("parti_ekle", "5830")))
     m = run(ui.komut(grup_komut("partiler"))).metin
-    assert "2 üye" in m and 'party/5830' in m
+    assert "2 members" in m and 'party/5830' in m
     d = run(ui.buton(grup_dugme("pd:5830")))
-    assert "ps:5830" in veriler(d) and "Bilinen üye sayısı: 2" in d.metin
+    assert "ps:5830" in veriler(d) and "Known member count: 2" in d.metin
 
 
 # ---------------------------------------------------------------- savaşlar
 def test_savas_listesi_sayfali_ve_guncellik(ui, src):
     src.savaslar = [SavasOzet(f"s{i}", f"Savaş {i}") for i in range(1, 21)]
     y = run(ui.komut(grup_komut("savaslar")))
-    assert "toplam 20" in y.metin and "Güncellik: 19.10.2026 15:00" in y.metin  # 12:00 UTC = 15:00 İstanbul
+    assert "total 20" in y.metin and "Data as of: 19.10.2026 15:00" in y.metin  # 12:00 UTC = 15:00 İstanbul
     # BİLİNÇLİ DEĞİŞİKLİK (sade liste): numarasız savaşta kimlik eki yok; satır sayısı sayfa boyutu kadar
     assert y.metin.count(". ⚔️ Savaş ") == 8 and "sl:1" in veriler(y)
     son = run(ui.buton(grup_dugme("sl:2")))
@@ -470,9 +479,9 @@ def test_savas_listesi_alinamazsa_sifir_gostermez(ui, conn, src):
     run(ui.komut(grup_komut("savaslar")))
     src.hatalar[("savaslar", None)] = SiteErisilemez("x")
     y = run(ui.komut(grup_komut("savaslar")))
-    assert "Güncel veri alınamadı" in y.metin and "veriye erişilemedi" in y.metin
-    assert "Aktif savaşlar" not in y.metin and "toplam 0" not in y.metin
-    assert "Son başarılı savaş taraması: yok" in y.metin
+    assert "Current data could not be fetched" in y.metin and "the data was unreachable" in y.metin
+    assert "Active wars" not in y.metin and "total 0" not in y.metin
+    assert "Last successful war scan: none" in y.metin
 
 
 def test_savas_detay_alanlar_ve_bilinmeyen_sifir_degildir(ui, src):
@@ -482,12 +491,12 @@ def test_savas_detay_alanlar_ve_bilinmeyen_sifir_degildir(ui, src):
     )
     y = run(ui.buton(grup_dugme("sd:s1")))
     m = y.metin
-    assert "Büyük &lt;Savaş&gt;" in m and "Durum: ❔ Aktif" in m  # ham (tanınmayan) durum metni + ❔
-    assert "A Tarafı — Güç: 1.234.567" in m
-    assert "B Tarafı — Güç: veri yok" in m, "bilinmeyen güç sıfır gibi gösterilmemeli"
-    assert "C — Güç: 0" in m, "gerçek sıfır gösterilebilir"
+    assert "Büyük &lt;Savaş&gt;" in m and "Status: ❔ Aktif" in m  # ham (tanınmayan) durum metni + ❔
+    assert "A Tarafı — Power: 1,234,567" in m
+    assert "B Tarafı — Power: no data" in m, "bilinmeyen güç sıfır gibi gösterilmemeli"
+    assert "C — Power: 0" in m, "gerçek sıfır gösterilebilir"
     assert 'href="https://diplomacia.com.tr/wars"' in m
-    assert "Güncellik: 19.10.2026 15:00" in m
+    assert "Data as of: 19.10.2026 15:00" in m
     assert "sd:s1" in veriler(y)  # yenile
 
 
@@ -497,12 +506,12 @@ def test_savas_detay_erisilemezse_tarihli_son_veri(ui, src, saat):
     saat.ilerle(3600)
     src.hatalar[("savas", "s1")] = SiteErisilemez("x")
     y = run(ui.buton(grup_dugme("sd:s1")))
-    assert "Güncel veri alınamadı" in y.metin and "19.10.2026 15:00 tarihlidir" in y.metin
-    assert "Güç: 10" in y.metin
+    assert "Current data could not be fetched" in y.metin and "is from 19.10.2026 15:00" in y.metin
+    assert "Power: 10" in y.metin
     # hiç veri yoksa
     src.hatalar[("savas", "s2")] = SiteErisilemez("x")
     y2 = run(ui.buton(grup_dugme("sd:s2")))
-    assert "Veriye erişilemedi" in y2.metin and "Güç" not in y2.metin
+    assert "Data unreachable" in y2.metin and "Power" not in y2.metin
 
 
 # ---------------------------------------------------------------- durum
@@ -511,18 +520,24 @@ def test_durum_ekrani_alanlari_ve_sir_yok(ui, conn, src, saat):
     src.oyuncu("1", "A")
     run(ui.komut(grup_komut("oyuncu_ekle", "1")))
     y = run(ui.komut(grup_komut("durum"))).metin
-    for parca in ("Oyuncu sayısı: 1", "Parti sayısı: 0", "Tarama aralığı: 10 dakika", "Son başarılı kontrol",
-                  "Sonraki planlanan kontrol: ilk tarama bekleniyor", "Devam eden tarama: hayır",
-                  "Diplomacia bağlantısı: henüz tarama yapılmadı"):
+    for parca in ("Bot Status", f"Group: <code>{G1}</code>", "Tracked Players: 1", "Tracked Parties: 0",
+                  "Scan Interval: 10 minutes", "Last Successful Scan", "• Players: none yet",
+                  "• Parties: none yet", "• Wars: none yet",
+                  "Next Scheduled Scan: waiting for the first scan", "Scan in Progress: No",
+                  "Pending Notifications: 0"):
         assert parca in y, parca
+    # The fixed "connection configured / no scan yet" boilerplate and the pagination note were removed:
+    # the connection line only appears when there is a real problem.
+    assert "Diplomacia connection" not in y and "unpaginated" not in y
     for tip in ("oyuncular", "partiler", "savaslar"):
         conn.execute("INSERT INTO tarama_isleri(group_id, is_tipi, son_deneme, son_basari) VALUES(?,?,?,?)",
                      (G1, tip, iso(saat()), iso(saat())))
     conn.execute("UPDATE grup_ayarlari SET sonraki_tarama=? WHERE group_id=?", ("2026-10-19T12:10:00.000000Z", G1))
     y = run(ui.buton(grup_dugme("du"))).metin
-    assert "oyuncular: 19.10.2026 15:00" in y and "Sonraki planlanan kontrol: 19.10.2026 15:10" in y
-    assert "son taramalar başarılı" in y
-    assert "token" not in y.lower().replace("token geçersiz", "")
+    assert "• Players: 19.10.2026 15:00" in y and "Next Scheduled Scan: 19.10.2026 15:10" in y
+    assert "• Parties: 19.10.2026 15:00" in y and "• Wars: 19.10.2026 15:00" in y
+    assert "Diplomacia connection" not in y, "no problem -> no connection line"
+    assert "token" not in y.lower()
 
 
 def test_durum_token_duraklatildi_ve_devam_eden(conn, src, saat):
@@ -534,13 +549,14 @@ def test_durum_token_duraklatildi_ve_devam_eden(conn, src, saat):
 
     ui2 = Arayuz(conn, src, KURUCU, saat=saat, zamanlayici=Z())
     y = run(ui2.komut(grup_komut("durum"))).metin
-    assert "Devam eden tarama: evet" in y and "site token'ı reddetti (401)" in y
-    assert "duraklatıldı (token)" in y
+    assert "Scan in Progress: Yes" in y and "the site rejected the token (401)" in y
+    assert "Diplomacia connection: the site rejected the token (401); scans are paused" in y
+    assert "paused (token)" in y
 
 
 def test_durum_ozel_sohbette_genel(ui):
     y = run(ui.komut(komut("durum"))).metin
-    assert "genel durum" in y and "Onaylı grup: 2; yetkili kullanıcı: 1" in y
+    assert "general status" in y and "Approved groups: 2; authorized users: 1" in y
 
 
 # ---------------------------------------------------------------- my_chat_member / migrate
@@ -647,12 +663,12 @@ def _token_mesaji(ui, metin=YENI_TOKEN, silinen=None):
 def test_token_yenileme_dogrulayici_yoksa_reddedilir(conn, src, saat, tmp_path):
     ui, depo, z = _token_ui(conn, src, saat, tmp_path)  # varsayılan doğrulayıcı: yapılandırılmadı
     menu = run(ui.buton(dugme("tk")))
-    assert "doğrulayıcı: yapılandırılmadı" in menu.metin and "eski-token" not in menu.metin
+    assert "Token validator: not configured" in menu.metin and "eski-token" not in menu.metin
     run(ui.buton(dugme("tn")))
     silinen = []
     y = _token_mesaji(ui, silinen=silinen)
     assert silinen, "token mesajı silinmeye çalışılmalı"
-    assert "yapılandırılmadı" in y.metin and "DEĞİŞTİRİLMEDİ" in y.metin
+    assert "not configured" in y.metin and "NOT CHANGED" in y.metin
     assert YENI_TOKEN not in y.metin
     assert depo.oku() == "eski-token-XYZ"
     assert z.devam == 0 and z.token_duraklatildi, "sahte başarı yok: tarama devam ettirilmemeli"
@@ -664,7 +680,8 @@ def test_token_yenileme_gecerli_dogrulayici_akisi(conn, src, saat, tmp_path):
     run(ui.buton(dugme("tn")))
     y = _token_mesaji(ui)
     assert d.alinan == [YENI_TOKEN]
-    assert "oyuncu isteği başarılı; kaydedildi" in y.metin and "devam" in y.metin and "doğrulandı" not in y.metin
+    assert "player request with the candidate token succeeded; saved" in y.metin and "resuming" in y.metin
+    assert "has not been verified separately" in y.metin and "was verified" not in y.metin
     assert YENI_TOKEN not in y.metin
     assert depo.oku() == YENI_TOKEN and z.devam == 1
     # tek kullanımlık bekleme: sonraki düz mesaj token sayılmaz
@@ -679,7 +696,7 @@ def test_token_gecersizse_degismez(conn, src, saat, tmp_path):
     ui, depo, z = _token_ui(conn, src, saat, tmp_path, SahteDogrulayici("gecersiz"))
     run(ui.buton(dugme("tn")))
     y = _token_mesaji(ui)
-    assert "reddedildi" in y.metin.lower() and "DEĞİŞTİRİLMEDİ" in y.metin
+    assert "rejected" in y.metin.lower() and "NOT CHANGED" in y.metin
     assert depo.oku() == "eski-token-XYZ" and z.devam == 0
 
 
@@ -687,7 +704,7 @@ def test_dogrulayici_hatasi_token_sizdirmaz(conn, src, saat, tmp_path):
     ui, depo, z = _token_ui(conn, src, saat, tmp_path, SahteDogrulayici(hata=RuntimeError("boom " + YENI_TOKEN)))
     run(ui.buton(dugme("tn")))
     y = _token_mesaji(ui)
-    assert YENI_TOKEN not in y.metin and "RuntimeError" in y.metin and "DEĞİŞTİRİLMEDİ" in y.metin
+    assert YENI_TOKEN not in y.metin and "RuntimeError" in y.metin and "NOT CHANGED" in y.metin
     assert depo.oku() == "eski-token-XYZ"
 
 
@@ -711,7 +728,7 @@ def test_token_bekleme_suresi_dolar_ve_grup_mesaji_yoksayilir(conn, src, saat, t
     run(ui.buton(dugme("tn")))
     saat.ilerle(6 * 60)
     y = _token_mesaji(ui)
-    assert "süresi doldu" in y.metin and d.alinan == [] and depo.oku() == "eski-token-XYZ"
+    assert "has expired" in y.metin and d.alinan == [] and depo.oku() == "eski-token-XYZ"
     # grup sohbetindeki metin asla token olarak işlenmez
     run(ui.buton(dugme("tn")))
     g = run(ui.metin(Olay(sohbet_id=G1, sohbet_turu="supergroup", kullanici_id=KURUCU, metin=YENI_TOKEN)))
@@ -722,6 +739,6 @@ def test_token_iptal(conn, src, saat, tmp_path):
     d = SahteDogrulayici()
     ui, depo, z = _token_ui(conn, src, saat, tmp_path, d)
     run(ui.buton(dugme("tn")))
-    assert "iptal" in run(ui.buton(dugme("tc"))).metin
+    assert "cancelled" in run(ui.buton(dugme("tc"))).metin
     _token_mesaji(ui)  # bekleme yok: JWT biçimli mesaj işlenmez (E9: artık uyarı yanıtı dönebilir)
     assert d.alinan == [] and depo.oku() == "eski-token-XYZ"

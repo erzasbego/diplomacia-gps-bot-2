@@ -58,9 +58,9 @@ class OyuncuDogrulayici:
         try:
             basliklar = self._kimlik.basliklar_icin(token)
         except KimlikYapilandirilmadi:
-            return DogrulamaSonucu("yapilandirilmadi", "Diplomacia kimlik biçimi yapılandırılmadı")
+            return DogrulamaSonucu("yapilandirilmadi", "Diplomacia credential format is not configured")
         except TokenYok:
-            return DogrulamaSonucu("gecersiz", "token biçimi geçersiz")
+            return DogrulamaSonucu("gecersiz", "token format is invalid")
         durum: int | None = None
         govde = None
         try:
@@ -82,25 +82,25 @@ class OyuncuDogrulayici:
             durum = None  # istisna metni (token içerebilir) aktarılmaz
         if durum == 200:
             if not isinstance(govde, dict):
-                return DogrulamaSonucu("hata", "200 döndü ama gövde JSON nesnesi değil; doğrulanamadı")
+                return DogrulamaSonucu("hata", "returned 200 but the body is not a JSON object; could not be verified")
             try:
                 ayristir.oyuncu_ayristir(govde, self._oyuncu_no)
             except Exception:  # ayrıştırıcı hatası: kabul YOK (ayrıntı aktarılmaz)
-                return DogrulamaSonucu("hata", "200 döndü ama gövde oyuncu verisi olarak ayrıştırılamadı; doğrulanamadı")
-            return DogrulamaSonucu("gecerli", "aday token ile oyuncu isteği başarılı")
+                return DogrulamaSonucu("hata", "returned 200 but the body could not be parsed as player data; could not be verified")
+            return DogrulamaSonucu("gecerli", "player request succeeded with the candidate token")
         if durum == 401:
-            return DogrulamaSonucu("gecersiz", "site token'ı reddetti (401)")
+            return DogrulamaSonucu("gecersiz", "the site rejected the token (401)")
         if durum == 403:
-            return DogrulamaSonucu("hata", "erişim reddedildi (403); token doğrulanamadı (kimlik biçimi veya site engeli olabilir)")
+            return DogrulamaSonucu("hata", "access denied (403); token could not be verified (the ID format or a site block may be the cause)")
         if durum == 404:
             return DogrulamaSonucu(
                 "hata",
-                "doğrulama oyuncusu bulunamadı; bu token geçersiz demek değildir "
-                "(DIPLOMACIA_DOGRULAMA_OYUNCU ile başka bir oyuncu verin)",
+                "verification player not found; this does not mean the token is invalid "
+                "(provide a different player via DIPLOMACIA_DOGRULAMA_OYUNCU)",
             )
         if durum is None:
-            return DogrulamaSonucu("hata", "doğrulama için siteye ulaşılamadı")
-        return DogrulamaSonucu("hata", f"beklenmeyen yanıt kodu ({durum}); doğrulanamadı")
+            return DogrulamaSonucu("hata", "could not reach the site for verification")
+        return DogrulamaSonucu("hata", f"unexpected response code ({durum}); could not be verified")
 
 
 ProfilDogrulayici = OyuncuDogrulayici  # eski ad (uyumluluk); artık profil uç noktası KULLANILMAZ

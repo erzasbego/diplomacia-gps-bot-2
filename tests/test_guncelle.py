@@ -64,6 +64,7 @@ def ortam(tmp_path):
         os.environ, GUNCELLE_ROOT_ZORUNLU="0", APP_DIR=str(app), DB_PATH=str(db), BACKUP_DIR=str(tmp_path / "backups"),
         BACKUP_SCRIPT=BACKUP, ONKONTROL=str(stub / "onkontrol"), PIP_KOMUTU=str(stub / "pip"),
         SYSTEMCTL=str(stub / "systemctl"), BEKLE_SN="0", REMOTE="origin",
+        APP_USER=subprocess.run(["id", "-un"], capture_output=True, text=True).stdout.strip(),  # root olmayan CI kullanıcısı
     )
     return dict(env=env, app=app, origin=origin, v1=v1, v2=v2, db=db, gunluk=gunluk, tmp=tmp_path, stub=stub)
 
