@@ -107,7 +107,7 @@ def test_arayuz_token_akisi_basarisizsa_degistirmez(conn, saat, tmp_path):
     from dipbot.tg.modeller import Olay
     o = Olay(sohbet_id=KURUCU, sohbet_turu="private", kullanici_id=KURUCU, metin=ADAY)
     y = run(ui._token_isle(o))
-    assert "DEĞİŞTİRİLMEDİ" in y.metin and depo.oku() == ESKI
+    assert "NOT CHANGED" in y.metin and depo.oku() == ESKI
 
 
 def test_calistir_dogrulayici_olustur(tmp_path):

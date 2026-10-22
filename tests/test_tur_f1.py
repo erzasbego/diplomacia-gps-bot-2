@@ -46,21 +46,21 @@ def test_f1_yetkili_onay_islemi_elle_uretilse_de_servis_reddeder(ui, conn):
     kid = ui.islemler.olustur("grup_kaldir", G1, YETKILI, None, {"grup": G2})
     y = run(ui.buton(grup_dugme(f"c:e:{kid}", kul=YETKILI)))
     assert G2 in _onayli(conn)
-    assert "kaldırıldı" not in (y.metin or "")
+    assert "approval removed" not in (y.metin or "")
 
 
 def test_f1_kurucu_komutla_ozelde_ve_grupta_kaldirir(ui, conn):
     kid = onay_kimligi(run(ui.komut(komut("grup_kaldir", str(G2)))))
-    assert "kaldırıldı" in run(ui.buton(dugme(f"c:e:{kid}"))).metin
+    assert "approval removed" in run(ui.buton(dugme(f"c:e:{kid}"))).metin
     assert G2 not in _onayli(conn)
     kid = onay_kimligi(run(ui.komut(grup_komut("grup_kaldir", str(G1)))))
-    assert "kaldırıldı" in run(ui.buton(grup_dugme(f"c:e:{kid}"))).metin
+    assert "approval removed" in run(ui.buton(grup_dugme(f"c:e:{kid}"))).metin
     assert G1 not in _onayli(conn)
 
 
 def test_f1_kurucu_dugmeyle_ozelde_kaldirir(ui, conn):
     kid = onay_kimligi(run(ui.buton(dugme(f"gk:{G2}"))))
-    assert "kaldırıldı" in run(ui.buton(dugme(f"c:e:{kid}"))).metin
+    assert "approval removed" in run(ui.buton(dugme(f"c:e:{kid}"))).metin
     assert G2 not in _onayli(conn)
 
 
@@ -91,7 +91,7 @@ def test_f1_onay_islemi_sohbet_ve_kullaniciya_bagli(ui, conn):
     assert y.uyari and G2 in _onayli(conn)
     y = run(ui.buton(grup_dugme(f"c:e:{kid}", kul=YETKILI)))
     assert y.uyari and G2 in _onayli(conn)
-    assert "kaldırıldı" in run(ui.buton(dugme(f"c:e:{kid}"))).metin
+    assert "approval removed" in run(ui.buton(dugme(f"c:e:{kid}"))).metin
 
 
 # ------------------------------------------------------------ F1-2 denetim bildirimi

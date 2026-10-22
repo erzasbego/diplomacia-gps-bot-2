@@ -145,9 +145,9 @@ def test_token_yok_zamanlayici_duraklatmaz_istek_atmaz_geri_cekilme_ve_log_yagmu
 def test_token_yok_durum_ekrani(conn, saat, tmp_path):
     z, _, k, depo = zam_kur(conn, saat, tmp_path, OYUNCU_200, token=None)
     ui = Arayuz(conn, SinirliKaynak(k), KURUCU, saat=saat, token_deposu=depo)
-    assert "Diplomacia bağlantısı: token dosyası yok" in run(ui.komut(grup_komut("durum"))).metin
+    assert "Diplomacia connection: no token file" in run(ui.komut(grup_komut("durum"))).metin
     depo.yaz(GIZLI)
-    assert "token dosyası yok" not in run(ui.komut(grup_komut("durum"))).metin
+    assert "no token file" not in run(ui.komut(grup_komut("durum"))).metin
 
 
 def test_401_zamanlayici_tek_bildirim_ve_duraklatir(conn, saat, servis, tmp_path):
@@ -178,9 +178,9 @@ def test_403_zamanlayici_geri_cekilme_var_duraklatma_ve_token_bildirimi_yok(conn
     assert len([r for r in ist if "/players/" in r.url.path]) == 1  # G1: 403 sonrası kalan istekler atılmaz
     hata = conn.execute(
         "SELECT son_hata FROM tarama_isleri WHERE group_id=? AND son_hata IS NOT NULL", (G1,)).fetchone()[0]
-    assert "erişim reddedildi (403)" in hata and "kimlik biçimi" in hata
+    assert "access denied (403)" in hata and "ID format" in hata
     ui = Arayuz(conn, SinirliKaynak(k), KURUCU, saat=saat, token_deposu=depo, zamanlayici=z)
-    assert "erişim reddedildi (403)" in run(ui.komut(grup_komut("durum"))).metin
+    assert "access denied (403)" in run(ui.komut(grup_komut("durum"))).metin
 
 
 # ---------------- A3: aday doğrulama ----------------
@@ -221,7 +221,7 @@ def test_401_gecersiz_403_5xx_ag_hatasi_dogrulanamadi(tmp_path):
     assert run(d.dogrula(GIZLI)).durum == "gecersiz"
     d, _, _ = dog_kur(tmp_path, httpx.Response(403))
     s = run(d.dogrula(GIZLI))
-    assert s.durum == "hata" and "doğrulanamadı" in s.aciklama
+    assert s.durum == "hata" and "could not be verified" in s.aciklama
     for kod in (500, 503, 404, 429, 302):
         d, _, _ = dog_kur(tmp_path, httpx.Response(kod))
         assert run(d.dogrula(GIZLI)).durum == "hata"
@@ -254,7 +254,7 @@ def test_basarida_prev_olusur_0600_ve_mesaj_durust(conn, saat, tmp_path):
     assert depo.oku() == GIZLI and prev.read_text(encoding="utf-8") == ESKI
     if os.name == "posix":
         assert (prev.stat().st_mode & 0o777) == 0o600
-    assert "kaydedildi" in y.metin and "oyuncu isteği başarılı" in y.metin and "doğrulandı" not in y.metin
+    assert "saved" in y.metin and "player request with the candidate token succeeded" in y.metin and "was verified" not in y.metin
     assert GIZLI not in y.metin
 
 
@@ -272,7 +272,7 @@ def test_red_durumunda_dosya_ve_prev_degismez(conn, saat, tmp_path, yanit):
     prev = tmp_path / "t.prev"
     prev.write_text("ONCEKI-PREV", encoding="utf-8")
     y = run(ui_kur(conn, saat, d, depo)._token_isle(tok_olay(GIZLI)))
-    assert "DEĞİŞTİRİLMEDİ" in y.metin and depo.oku() == ESKI
+    assert "NOT CHANGED" in y.metin and depo.oku() == ESKI
     assert prev.read_text(encoding="utf-8") == "ONCEKI-PREV"
 
 

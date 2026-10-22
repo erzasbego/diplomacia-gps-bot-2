@@ -15,7 +15,7 @@ from tg_fakes import G1, G3, KURUCU, SahteBot, YABANCI, YETKILI, hizli_gonderici
 
 from dipbot import yonetim
 from dipbot.tg import arayuz as ar
-from dipbot.tg.arayuz import ESKI_KOMUTLAR, Arayuz, KOMUTLAR
+from dipbot.tg.arayuz import ESKI_KOMUTLAR, TR_KOMUTLAR, Arayuz, KOMUTLAR
 from dipbot.tg.calistir import gorevi_durdur, main
 from dipbot.tg.kaynak_yok import YapilandirilmamisKaynak
 from dipbot.tg.token import DogrulamaSonucu, TokenDeposu
@@ -89,9 +89,10 @@ def komut_calistir(b, metin, uid, cid, tur):
 
 # ---------------------------------------------------------------- Update -> yanıt
 def test_komut_update_html_ve_tuslarla_yanitlanir(b, bot):
-    komut_calistir(b, "/yardim", KURUCU, KURUCU, "private")
+    komut_calistir(b, "/help", KURUCU, KURUCU, "private")
     kw = bot.son("send_message")
-    assert kw["chat_id"] == KURUCU and kw["parse_mode"] == "HTML" and "/oyuncuekle" in kw["text"] and "/oyuncu_ekle" not in kw["text"]
+    assert kw["chat_id"] == KURUCU and kw["parse_mode"] == "HTML" and "/addplayer" in kw["text"] and "/oyuncu_ekle" not in kw["text"]
+    assert "/oyuncuekle" not in kw["text"]
     assert kw["reply_markup"] is not None
 
 
@@ -165,7 +166,7 @@ def test_token_mesaji_silinmeye_calisilir_ve_reddedilir(conn, saat, src, bot, tm
     run(b.metin_isle(update_metin("eyJGIZLI1.YENI02.TOKEN3", KURUCU), Ctx()))
     assert bot.say("delete_message") == 1 and bot.son("delete_message") == {"chat_id": KURUCU, "message_id": 12}
     yanit = bot.son("send_message")["text"]
-    assert "DEĞİŞTİRİLMEDİ" in yanit and "eyJGIZLI1.YENI02.TOKEN3" not in yanit
+    assert "NOT CHANGED" in yanit and "eyJGIZLI1.YENI02.TOKEN3" not in yanit
     assert depo.oku() == "eski"
 
 
@@ -220,8 +221,9 @@ def test_handlerlar_kayit_edilir_ve_allowed_updates():
     kayit_et(app, b)
     isleyiciler = [h for grup in app.handlers.values() for h in grup]
     komutlar = {c for h in isleyiciler if isinstance(h, CommandHandler) for c in h.commands}
-    # Eski alt çizgili adlar da kayıtlıdır (geriye dönük uyumluluk) ama komut listesinde yoktur.
-    assert komutlar == set(KOMUTLAR) | set(ESKI_KOMUTLAR)
+    # Legacy underscore names and the short Turkish names stay registered (backward compatibility) but are not in the menu.
+    assert komutlar == set(KOMUTLAR) | set(ESKI_KOMUTLAR) | set(TR_KOMUTLAR)
+    assert {"oyuncu_ekle", "oyuncuekle", "yardim", "grup_onayla", "addplayer", "help"} <= komutlar
     assert any(isinstance(h, CallbackQueryHandler) for h in isleyiciler)
     assert any(isinstance(h, ChatMemberHandler) and h.chat_member_types == ChatMemberHandler.MY_CHAT_MEMBER
                for h in isleyiciler)

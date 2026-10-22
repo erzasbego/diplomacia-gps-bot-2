@@ -986,7 +986,7 @@ class Arayuz:
         neden = ""
         if gv.hata:
             neden = ("Diplomacia connection is not configured"
-                     if ("yapılandırılmadı" in gv.hata or "not configured" in gv.hata.lower()) else gv.hata)
+                     if "not configured" in gv.hata.lower() else gv.hata)
         if gv.detay is None:
             return Yanit(
                 f"<b>War</b> #{esc(sid)}\n⚠️ Data unreachable ({esc(neden)}). No previously fetched data.",
@@ -1349,8 +1349,8 @@ class Arayuz:
             return Yanit(f"{sil_notu}\nError during verification ({type(e).__name__}). Token was NOT CHANGED.")
         if not sonuc.gecerli:
             nedenler = {
-                "yapilandirilmadi": "Token validator is not configured",
-                "gecersiz": "Token rejected (401)",
+                "yapilandirilmadi": "Token verifier is not configured",
+                "gecersiz": "Token rejected",
                 "hata": "Could not be verified",
             }
             return Yanit(

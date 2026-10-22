@@ -26,8 +26,8 @@ def test_liste_yalniz_temel_bilgi_saldiran_savunan_durum_numara(ui, src):
     src.savaslar = [_s(1, sad="Ali", sav="Veli")]
     m = run(ui.komut(grup_komut("savaslar"))).metin
     satir = [l for l in m.splitlines() if l.startswith("1.")][0]
-    assert satir == '1. ⚔️ <a href="https://diplomacia.com.tr/wars/war/1001">Ali – Veli</a> · Aktif · #1001'
-    for yasak in ("Güç", "Standart", "Tür:"):
+    assert satir == '1. ⚔️ <a href="https://diplomacia.com.tr/wars/war/1001">Ali – Veli</a> · Active · #1001'
+    for yasak in ("Power", "Standard", "Type:"):
         assert yasak not in satir
 
 
@@ -50,9 +50,9 @@ def test_detay_kapsamli_bilgi_ve_saldiran_savunan_rozetleri(ui, src):
     src.savas_detay["s1"] = SavasDetay("s1", None, "active", (SavasTaraf("A", 100), SavasTaraf("B", None)),
                                       war_number=77, tur="rebellion")
     m = run(ui.buton(grup_dugme("sd:s1"))).metin
-    assert m.startswith("🔥 <b>Savaş</b>")
-    assert "Durum: 🟢 Aktif" in m and "Tür: Ayaklanma" in m
-    assert "⚔️ Saldıran: A — Güç: 100" in m and "🛡️ Savunan: B — Güç: veri yok" in m
+    assert m.startswith("🔥 <b>War</b>")
+    assert "Status: 🟢 Active" in m and "Type: Rebellion" in m
+    assert "⚔️ Attacker: A — Power: 100" in m and "🛡️ Defender: B — Power: no data" in m
     assert 'href="https://diplomacia.com.tr/wars/war/77"' in m
 
 
@@ -69,7 +69,7 @@ def test_dugmeler_olculu_emojili_ve_sinirlar_icinde(ui, src):
             assert ilk_emoji_sayisi <= 3, d.etiket  # ölçülü: etiket başına bir emoji (+varyasyon işareti)
     ana = run(ui.komut(grup_komut("start")))
     etiketler = [d.etiket for satir in ana.klavye for d in satir]
-    assert "👤 Oyuncular" in etiketler and "⚔️ Savaşlar" in etiketler and "🏠" not in "".join(etiketler)
+    assert "👤 Players" in etiketler and "⚔️ Wars" in etiketler and "🏠" not in "".join(etiketler)
 
 
 def test_uzun_adlar_kisaltilir_html_kacisli(ui, src):
@@ -83,5 +83,5 @@ def test_adsiz_ve_taraf_bilgisiz_savas_yedekleri(ui, src):
     src.savaslar = [SavasOzet("uuid-0000-1111", None, war_number=5), SavasOzet("uuid-9999", None),
                     SavasOzet("uuid-adli", "Adlı Savaş", war_number=None)]
     m = run(ui.komut(grup_komut("savaslar"))).metin
-    assert "Savaş #5</a> · durum bilinmiyor · #5" in m
-    assert "uuid-9999" in m and "Adlı Savaş" in m
+    assert "War #5</a> · status unknown · #5" in m
+    assert "uuid-9999" in m and "Adlı Savaş" in m and m.count("status unknown") == 3

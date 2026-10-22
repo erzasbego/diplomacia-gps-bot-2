@@ -85,10 +85,10 @@ def test_oyuncu_reddet(arg):
 def test_tur_karismasi_acik_hata_verir():
     with pytest.raises(BaglantiHatasi) as e:
         kimlik_coz_ayrintili("https://diplomacia.com.tr/party/1244", "player")
-    assert "parti" in str(e.value).lower() and "oyuncu" in str(e.value).lower()
+    assert "party link" in str(e.value).lower() and "player link" in str(e.value).lower()
     with pytest.raises(BaglantiHatasi) as e:
         kimlik_coz_ayrintili("https://diplomacia.com.tr/press/player/72400", "party")
-    assert "oyuncu" in str(e.value).lower() and "parti" in str(e.value).lower()
+    assert "player link" in str(e.value).lower() and "party link" in str(e.value).lower()
     assert kimlik_coz("https://diplomacia.com.tr/profile/party/5", "player") is None
 
 

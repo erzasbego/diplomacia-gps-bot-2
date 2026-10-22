@@ -51,7 +51,7 @@ def test_farkli_uid_basarisiz_tarama_kayit_ezilmez_bildirim_yok(conn, src, servi
     src.oyuncular["p1"] = OyuncuAnlik("p1", "BASKA", "Paris", "V", U2)
     caplog.set_level(logging.WARNING)
     s = run(servis.oyuncular_tara(G1, src))
-    assert not s.ok and "uyuş" in s.hatalar[0]
+    assert not s.ok and "ID mismatch" in s.hatalar[0]
     r = conn.execute("SELECT * FROM takip_oyuncular WHERE oyuncu_id='p1' AND group_id=?", (G1,)).fetchone()
     assert (r["uid"], r["ad"], r["bolge"], r["vatandaslik_ulkesi"]) == (U1, "Ayse", "Roma", "U")
     assert bildirimler(conn, "oyuncu_degisti") == []

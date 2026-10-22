@@ -41,15 +41,19 @@ def test_kaynak_olustur_token_dosyasina_bagli_degil_yalniz_gecersiz_override_yap
     assert isinstance(c.kaynak_olustur(yol, {"DIPLOMACIA_AUTH_BASLIK": "Bad Header"}), YapilandirilmamisKaynak)
 
 
-def test_durum_metni_gercek_adaptor_dogrulanmadi_notu(conn, saat, tmp_path):
+def test_durum_metni_gercek_adaptor_sabit_dogrulanmadi_notu_yok(conn, saat, tmp_path):
+    """DELIBERATE CHANGE: the status screen no longer prints the fixed 'configured (identity format verified in DevTools,
+    live connection not tested)' boilerplate; a healthy configured adapter adds no connection line at all."""
     yol = tmp_path / "t"
     TokenDeposu(yol).yaz("T0KEN")
     k = c.kaynak_olustur(yol, ORTAM)
     ui = Arayuz(conn, SinirliKaynak(k), KURUCU, saat=saat)
     y = run(ui.komut(grup_komut("durum"))).metin
-    assert "Diplomacia bağlantısı: yapılandırıldı (kimlik biçimi kullanıcı DevTools'ta doğruladı, canlı bağlantı test edilmedi)" in y
+    assert "Diplomacia connection" not in y
+    assert "canlı bağlantı test edilmedi" not in y and "DevTools" not in y and "configured (" not in y
+    assert "<b>Bot Status</b>" in y
     ui2 = Arayuz(conn, YapilandirilmamisKaynak(), KURUCU, saat=saat)
-    assert "Diplomacia bağlantısı: yapılandırılmadı" in run(ui2.komut(grup_komut("durum"))).metin
+    assert "Diplomacia connection: not configured" in run(ui2.komut(grup_komut("durum"))).metin
 
 
 def test_calistir_kapanista_istemciyi_kapatir(monkeypatch, tmp_path):

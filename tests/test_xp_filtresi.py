@@ -342,14 +342,14 @@ def test_ozet_ornek_senaryo_gercek_sayilar_hesaplanir(conn, ui, src, monkeypatch
     src.parti("1319", "Örnek Parti", [(str(i), f"U{i}", xp) for i, xp in uyeler], toplam=329)
     y = run(ui.komut(grup_komut("partiekle", "1319")))
     m = y.metin
-    for satir in ("✅ <b>Parti takibe eklendi</b>", "Toplam üye: 329", "API'den incelenen: 100",
-                  "1.500.000+ XP ile takibe alınan: 63", "XP sınırı altında: 37",
-                  "İlk bilgisi alınan: 40", "İlk taramayı bekleyen: 23"):
+    for satir in ("✅ <b>Party added to tracking</b>", "Total members: 329", "Reviewed from the API: 100",
+                  "Tracked with 1,500,000+ XP: 63", "Below the XP threshold: 37",
+                  "First observation received: 40", "Awaiting first scan: 23"):
         assert satir in m, satir
     assert "Örnek Parti" in m
-    assert "229 üye okunamadı" in m and "EKSİK" in m, "okunamayan üyeler açıkça belirtilir; tam liste sayılmaz"
-    assert "bilgisi eksik" not in m
-    assert m.count("Parti takibe eklendi") == 1
+    assert "the other 229 members could not be read" in m and "INCOMPLETE" in m, "okunamayan üyeler açıkça belirtilir; tam liste sayılmaz"
+    assert "missing" not in m
+    assert m.count("Party added to tracking") == 1
     assert conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0] == 0, "oyuncular için ayrı mesaj yok"
 
 
@@ -359,10 +359,10 @@ def test_ozet_bilinmeyen_xp_engelli_ve_75_uyeli_parti(conn, ui, src, servis):
         src.oyuncu(str(i), f"U{i}", "Ankara", "TR")
     src.parti("1244", "P", [(str(i), f"U{i}", xp) for i, xp in uyeler])
     m = run(ui.komut(grup_komut("partiekle", "1244"))).metin
-    assert "Toplam üye: 75" in m and "API'den incelenen: 75" in m
-    assert "1.500.000+ XP ile takibe alınan: 30" in m and "XP sınırı altında: 41" in m
-    assert "XP bilgisi eksik/geçersiz (takibe alınmadı): 4" in m
-    assert "okunamadı" not in m and "EKSİK" not in m, "75 üyeli tam listede eksik uyarısı çıkmaz"
+    assert "Total members: 75" in m and "Reviewed from the API: 75" in m
+    assert "Tracked with 1,500,000+ XP: 30" in m and "Below the XP threshold: 41" in m
+    assert "XP missing/invalid (not tracked): 4" in m
+    assert "could not be read" not in m and "INCOMPLETE" not in m, "75 üyeli tam listede eksik uyarısı çıkmaz"
 
 
 # ============================================================ I) şema v6: mevcut kayıtlar korunur

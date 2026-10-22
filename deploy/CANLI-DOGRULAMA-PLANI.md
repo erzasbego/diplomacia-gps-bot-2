@@ -19,7 +19,7 @@
 | 1.3 | `systemd-analyze verify /etc/systemd/system/dipbot.service` | Çıktı boş / uyarısız | |
 | 1.4 | `timedatectl` | `System clock synchronized: yes`, `NTP service: active` | |
 | 1.5 | `sudo -u dipbot env -i PYTHONPATH=/opt/dipbot/src /opt/dipbot/.venv/bin/python -m dipbot; echo $?` | Yapılandırma hatası mesajı, çıkış kodu **2** (ağ yok) | |
-| 1.6 | `cd /opt/dipbot && PYTHONPATH=src .venv/bin/python -m pytest -q` | Bulutta: `978 passed`. Sunucuda aynı sayı beklenir | |
+| 1.6 | `cd /opt/dipbot && PYTHONPATH=src .venv/bin/python -m pytest -q` | Bulutta: `1200 passed`. Sunucuda aynı sayı beklenir | |
 
 ## 2. Diplomacia — salt okunur API doğrulaması
 

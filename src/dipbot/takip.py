@@ -963,7 +963,7 @@ class TakipServisi:
             )
             if taninmayan:
                 log.warning("tanınmayan durum/türde %d yeni savaş kaydedildi (bildirim yok)", taninmayan)
-                sonuc.uyarilar.append(f"{taninmayan} new wars have an unrecognized status/type (not notified)")
+                sonuc.uyarilar.append(f"{taninmayan} new war(s) with an unrecognized status/type (not notified)")
             if len(yeniler) > config.YENI_SAVAS_BILDIRIM_UST:
                 sonuc.degisiklik += self._grup_kuyruk(
                     group_id,

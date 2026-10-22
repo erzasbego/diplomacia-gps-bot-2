@@ -222,9 +222,9 @@ def test_100_oyunculu_ilk_parti_eklemesi_tek_ozet_yuzlerce_bildirim_yok(conn, ui
         src.oyuncu(str(i), f"A{i}", "Ankara" if i % 2 else None, "TR")
     src.parti("1244", "P", [(str(i), f"A{i}") for i in range(1, 101)])
     y = run(ui.komut(grup_komut("partiekle", "1244")))
-    assert y.metin.count("Parti takibe eklendi") == 1 and "Toplam üye: 100" in y.metin
-    assert "başlangıç özeti" in y.metin.lower() and "bildirim gönderilmez" in y.metin
-    assert "100" in y.metin and "bölge" in y.metin.lower()
+    assert y.metin.count("Party added to tracking") == 1 and "Total members: 100" in y.metin
+    assert "initial summary" in y.metin.lower() and "no notifications are sent" in y.metin
+    assert "100" in y.metin and "region" in y.metin.lower()
     assert conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0] == 0
     # ilk tarama da (kalan/eksik bilgiler dahil) bildirim üretmez
     sv = TakipServisi(conn, ui.saat)

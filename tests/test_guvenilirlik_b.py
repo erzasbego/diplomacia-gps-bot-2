@@ -245,10 +245,10 @@ def test_o6_tg_sonuc_mesaji_engellenenleri_kacisli_gosterir(conn, saat, src):
     run(ui.komut(grup_komut("parti_ekle", "52")))
     kid = onay_kimligi(run(ui.komut(grup_komut("parti_sil", "51"))))
     y = run(ui.buton(grup_dugme(f"c:e:{kid}")))
-    assert "kaldırıldı" in y.metin
+    assert "tracking removed" in y.metin
     assert "&lt;b&gt;X&lt;/b&gt; &amp; Y (#1)" in y.metin, y.metin
     assert "<b>X</b> &" not in y.metin
-    assert "Yeniden eklenmeyecek" in y.metin or "engel" in y.metin.lower()
+    assert "will not be re-added" in y.metin or "block" in y.metin.lower()
 
 
 # ---------------------------------------------------------------- k13

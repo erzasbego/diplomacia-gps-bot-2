@@ -129,10 +129,10 @@ def test_d2_onay_kalkarsa_savas_baseline_ve_kayit_yazilmaz(conn, servis, src, sa
 @pytest.mark.parametrize(
     "hata,beklenen",
     [
-        (TokenGecersiz("401"), "reddetti (401)"),
-        (TokenYok("yok"), "token dosyası yok"),
-        (ErisimReddedildi("403"), "erişim reddedildi"),
-        (IstekSiniri("429"), "istek sınırı"),
+        (TokenGecersiz("401"), "rejected the token (401)"),
+        (TokenYok("yok"), "token file is missing"),
+        (ErisimReddedildi("403"), "access denied"),
+        (IstekSiniri("429"), "rate limit"),
     ],
 )
 def test_d5_kaldirma_hazirla_hata_sinifina_gore_acik_mesaj_ve_silme_yok(conn, servis, src, hata, beklenen):
@@ -140,7 +140,7 @@ def test_d5_kaldirma_hazirla_hata_sinifina_gore_acik_mesaj_ve_silme_yok(conn, se
     run(servis.parti_ekle(G1, "5830", src))
     src.hatalar[("parti", "5830")] = hata
     o = run(servis.parti_kaldirma_hazirla(G1, "5830", src))
-    assert not o.basarili and beklenen in o.neden and "hiçbir oyuncu silinmedi" in o.neden
+    assert not o.basarili and beklenen in o.neden and "no players were removed" in o.neden
     s = run(servis.parti_kaldirma_onayla(G1, "5830", src, "x"))
     assert s.durum == "dogrulanamadi" and beklenen in s.neden
     assert takipte(conn, G1) == {"a", "b", "c"}
@@ -238,7 +238,7 @@ def test_oc_bulunamiyor_isareti_oyuncu_ayrintisinda_gorunur(conn, servis, src, s
     del src.oyuncular["b"]
     ui = Arayuz(conn, src, KURUCU, saat=saat)
     for _ in range(config.NOT_FOUND_STREAK_THRESHOLD):
-        assert "Bulunamıyor" not in ui._oyuncu_detay(G1, "b").metin
+        assert "Not found" not in ui._oyuncu_detay(G1, "b").metin
         run(servis.oyuncular_tara(G1, src))
-    assert "Bulunamıyor" in ui._oyuncu_detay(G1, "b").metin
-    assert "Bulunamıyor" not in ui._oyuncu_detay(G1, "a").metin
+    assert "Not found" in ui._oyuncu_detay(G1, "b").metin
+    assert "Not found" not in ui._oyuncu_detay(G1, "a").metin

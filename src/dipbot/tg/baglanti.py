@@ -19,8 +19,8 @@ _HAM = re.compile(_KIMLIK)
 _YOL = re.compile(rf"/(?:(?:profile|press)/)?(player|party)/({_KIMLIK})/?")
 _ADLAR = {"player": "player", "party": "party"}
 _ORNEK = {
-    "player": "72400 veya https://diplomacia.com.tr/player/72400",
-    "party": "1244 veya https://diplomacia.com.tr/party/1244",
+    "player": "72400 or https://diplomacia.com.tr/player/72400",
+    "party": "1244 or https://diplomacia.com.tr/party/1244",
 }
 
 

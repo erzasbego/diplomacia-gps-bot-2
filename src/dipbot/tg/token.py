@@ -46,7 +46,7 @@ class YapilandirilmamisDogrulayici:
     yapilandirildi = False
 
     async def dogrula(self, token: str) -> DogrulamaSonucu:
-        return DogrulamaSonucu("yapilandirilmadi", "Diplomacia token verifier is not configured")
+        return DogrulamaSonucu("yapilandirilmadi", "Token verifier is not configured")
 
 
 class TokenDeposu:

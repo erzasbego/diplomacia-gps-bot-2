@@ -3,6 +3,7 @@
 **Durum:** PLAN. Bu belge hazırlanırken canlı VPS'e dokunulmadı: hiçbir dosya değiştirilmedi, `dipbot` servisi durdurulmadı veya yeniden başlatılmadı. Aşağıdaki adımları siz sunucuda çalıştırırsınız. `guncelle.sh` bulutta yalnız sahte dizin, sahte `systemctl`/`pip` ve yerel git depolarıyla test edildi; **gerçek sunucuda çalıştırılmadı.**
 
 ## Bu sürümde ne değişiyor?
+- **İngilizce arayüz ve İstanbul saati (en son sürüm):** Telegram arayüzünün tamamı İngilizce; komut menüsü İngilizce (`/addplayer`, `/players`, `/removeplayer`, `/addparty`, `/parties`, `/removeparty`, `/wars`, `/scan`, `/status`, `/help`, `/grant`, `/revoke`, `/approve_group`, `/remove_group`, `/move_group`); eski Türkçe adlar çalışmaya devam eder. Gösterilen tüm saatler Europe/Istanbul, 24 saat (`DD.MM.YYYY HH:mm`); veritabanı/zamanlayıcı UTC kalır. `/status` sadeleşti. **Şema, yetki, grup ve tarama davranışı değişmedi; veritabanı geçişi yoktur.** Güncellemeden sonra komut menüsü Telegram'da yenilenir (bot açılışta `set_my_commands` çağırır; istemci önbelleği için sohbeti yeniden açmak gerekebilir).
 - Komutlar: `/oyuncuekle`, `/oyuncusil`, `/partiekle`, `/partisil` (eski alt çizgili adlar çalışmaya devam eder).
 - `diplomacia.com.tr` bağlantıları: `/player/ID`, `/party/ID` ve `profile/` / `press/` bağlamlı biçimleri.
 - Sade savaş listesi, tutarlı emojiler.
