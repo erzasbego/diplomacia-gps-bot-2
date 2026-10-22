@@ -21,7 +21,7 @@ from telegram.ext import (
 )
 
 from ..outbox import GonderimHatasi
-from .arayuz import ESKI_KOMUTLAR, KOMUTLAR, Arayuz
+from .arayuz import ESKI_KOMUTLAR, KOMUTLAR, TR_KOMUTLAR, Arayuz
 from .gonderici import TelegramGonderici
 from .modeller import Olay, Yanit
 
@@ -149,7 +149,7 @@ class Baglayici:
 
 def kayit_et(app: Application, b: Baglayici) -> None:
     """Tüm komut/düğme/üyelik işleyicilerini kaydeder."""
-    for ad in (*KOMUTLAR, *ESKI_KOMUTLAR):  # eski adlar da kayıtlı (geriye dönük uyumluluk)
+    for ad in (*KOMUTLAR, *ESKI_KOMUTLAR, *TR_KOMUTLAR):  # legacy Turkish names stay registered (backward compatibility)
         async def isleyici(update, context, _ad=ad):
             await b.komut_isle(update, context, _ad)
 

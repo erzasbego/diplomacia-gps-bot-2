@@ -38,35 +38,77 @@ log = logging.getLogger("dipbot.tg.arayuz")
 SAYFA_BOYUTU = 8
 TOKEN_BEKLEME_OMRU = timedelta(minutes=5)
 
-# Telegram komut adları yalnız [a-z0-9_] ve en çok 32 karakter. Açıklamalar Türkçe (<=256).
+# Telegram command names: [a-z0-9_] only, at most 32 characters. Descriptions are English (<=256).
+# The English names below are the ones shown in the Telegram command menu, in /help and in on-screen hints.
+# Internal handlers (`_k_<name>`), audit names and the permission policy keep the original (Turkish) command
+# identifiers; every English name is normalised to that identifier before dispatch (see EN_KOMUTLAR).
 KOMUTLAR: dict[str, str] = {
-    "start": "Botu başlat, ana menüyü aç",
-    "yardim": "Komutlar ve kullanım yardımı",
-    "oyuncuekle": "Oyuncuyu takibe ekle (ID veya bağlantı)",
-    "oyuncular": "Takip edilen oyuncuları listele",
-    "oyuncusil": "Oyuncuyu takipten çıkar (ID veya bağlantı)",
-    "partiekle": "Partiyi takibe ekle (ID veya bağlantı)",
-    "partiler": "Takip edilen partileri listele",
-    "partisil": "Parti takibini kaldır (ID veya bağlantı)",
-    "savaslar": "Aktif savaşları listele",
-    "tarama": "Tarama aralığını ayarla: 5, 10, 15 veya 20 dakika",
-    "durum": "Bot durumunu göster",
-    "yetki_ver": "Kullanıcıya yetki ver (Telegram kullanıcı kimliği)",
-    "yetki_al": "Kullanıcının yetkisini al (Telegram kullanıcı kimliği)",
-    "grup_onayla": "Grubu onayla (Telegram grup kimliği)",
-    "grup_kaldir": "Grup onayını kaldır (Telegram grup kimliği)",
-    "grup_tasi": "Göç eden grubun verisini yeni kimliğe taşı (yalnız kurucu, özel sohbet)",
+    "start": "Start the bot and open the main menu",
+    "help": "Show commands and usage help",
+    "addplayer": "Track a player (ID or link)",
+    "players": "List tracked players",
+    "removeplayer": "Stop tracking a player (ID or link)",
+    "addparty": "Track a party (ID or link)",
+    "parties": "List tracked parties",
+    "removeparty": "Stop tracking a party (ID or link)",
+    "wars": "List active wars",
+    "scan": "Set the scan interval: 5, 10, 15 or 20 minutes",
+    "status": "Show bot status",
+    "grant": "Grant access to a user (Telegram user ID)",
+    "revoke": "Revoke a user's access (Telegram user ID)",
+    "approve_group": "Approve a group (Telegram group ID)",
+    "remove_group": "Remove a group's approval (Telegram group ID)",
+    "move_group": "Move a migrated group's data to its new ID (owner only, private chat)",
 }
 
-# Geriye dönük uyumluluk: eski komut adları ÇALIŞIR ama Telegram komut listesinde, yardımda ve menülerde
-# gösterilmez (yalnız yeni kısa adlar gösterilir). Yetki/onay yolu aynıdır (normalize edilip aynı işleyici).
+# English command name -> internal command identifier.
+EN_KOMUTLAR: dict[str, str] = {
+    "start": "start",
+    "help": "yardim",
+    "addplayer": "oyuncuekle",
+    "players": "oyuncular",
+    "removeplayer": "oyuncusil",
+    "addparty": "partiekle",
+    "parties": "partiler",
+    "removeparty": "partisil",
+    "wars": "savaslar",
+    "scan": "tarama",
+    "status": "durum",
+    "grant": "yetki_ver",
+    "revoke": "yetki_al",
+    "approve_group": "grup_onayla",
+    "remove_group": "grup_kaldir",
+    "move_group": "grup_tasi",
+}
+# Internal identifier -> English command name (for messages shown to users).
+KOMUT_GOSTER: dict[str, str] = {v: k for k, v in EN_KOMUTLAR.items()}
+
+# Backward compatibility: legacy Turkish command names keep working (same handler, same authorization and
+# confirmation path) but are not listed in the Telegram menu or in /help.
 ESKI_KOMUTLAR: dict[str, str] = {
     "oyuncu_ekle": "oyuncuekle",
     "oyuncu_sil": "oyuncusil",
     "parti_ekle": "partiekle",
     "parti_sil": "partisil",
 }
-TUM_KOMUT_ADLARI = tuple(KOMUTLAR) + tuple(ESKI_KOMUTLAR)
+# The short Turkish names (/oyuncuekle, /durum, /grup_onayla, ...) also keep working.
+TR_KOMUTLAR: tuple[str, ...] = tuple(v for v in EN_KOMUTLAR.values() if v != "start")
+TUM_KOMUT_ADLARI = tuple(KOMUTLAR) + tuple(ESKI_KOMUTLAR) + TR_KOMUTLAR
+
+
+def komut_ic_adi(ad: str | None) -> str | None:
+    """English or legacy command name -> internal identifier; None if unknown."""
+    if ad in EN_KOMUTLAR:
+        return EN_KOMUTLAR[ad]
+    if ad in ESKI_KOMUTLAR:
+        return ESKI_KOMUTLAR[ad]
+    return ad if ad in TR_KOMUTLAR else None
+
+
+def komut_goster(ic: str) -> str:
+    """Internal identifier (or legacy name) -> English command name shown to users."""
+    ic = ESKI_KOMUTLAR.get(ic, ic)
+    return KOMUT_GOSTER.get(ic, ic)
 
 
 _GRUP_KAPSAMLI = frozenset({"ol", "od", "os", "oe", "pl", "pd", "ps", "pe", "sl", "sd", "ta", "tv"})
@@ -300,8 +342,8 @@ class Arayuz:
 
     # ====================== giriş noktaları =================================
     async def komut(self, o: Olay) -> Yanit | None:
-        ad = ESKI_KOMUTLAR.get(o.komut, o.komut)
-        if ad not in KOMUTLAR:
+        ad = komut_ic_adi(o.komut)
+        if ad is None:
             return None
         k = self._yetki(o, f"/{ad}")
         if not k:
@@ -678,18 +720,18 @@ class Arayuz:
 
     # ====================== ekranlar ========================================
     def _yardim(self) -> Yanit:
-        satirlar = ["<b>Komutlar</b>"]
+        satirlar = ["<b>Commands</b>"]
         ornek = {
-            "oyuncuekle": "&lt;ID veya bağlantı&gt;",
-            "oyuncusil": "&lt;ID veya bağlantı&gt;",
-            "partiekle": "&lt;ID veya bağlantı&gt;",
-            "partisil": "&lt;ID veya bağlantı&gt;",
-            "tarama": "&lt;5|10|15|20&gt;",
-            "yetki_ver": "&lt;kullanici_kimligi&gt;",
-            "yetki_al": "&lt;kullanici_kimligi&gt;",
-            "grup_onayla": "&lt;grup_kimligi&gt;",
-            "grup_kaldir": "&lt;grup_kimligi&gt;",
-            "grup_tasi": "&lt;eski_kimlik&gt; &lt;yeni_kimlik&gt;",
+            "addplayer": "&lt;ID or link&gt;",
+            "removeplayer": "&lt;ID or link&gt;",
+            "addparty": "&lt;ID or link&gt;",
+            "removeparty": "&lt;ID or link&gt;",
+            "scan": "&lt;5|10|15|20&gt;",
+            "grant": "&lt;user_id&gt;",
+            "revoke": "&lt;user_id&gt;",
+            "approve_group": "&lt;group_id&gt;",
+            "remove_group": "&lt;group_id&gt;",
+            "move_group": "&lt;old_id&gt; &lt;new_id&gt;",
         }
         for ad, aciklama in KOMUTLAR.items():
             if ad in ("start",):
@@ -697,10 +739,10 @@ class Arayuz:
             satirlar.append(f"/{ad} {ornek.get(ad, '')}".rstrip() + f" — {esc(aciklama)}")
         satirlar.append("")
         satirlar.append(
-            "<i>Kontroller aralıklıdır; bildirimdeki zaman tespit zamanıdır, kesin değişiklik zamanı değildir. "
-            "Özel sohbet yalnız kurucuya açıktır.</i>"
+            "<i>Checks run at intervals; the time in a notification is the detection time, not the exact time of "
+            "the change. Private chat is open to the owner only. All times are Europe/Istanbul (24-hour clock).</i>"
         )
-        return Yanit("\n".join(satirlar), [[Dugme("🏠 Ana menü", "m")]])
+        return Yanit("\n".join(satirlar), [[Dugme("🏠 Main menu", "m")]])
 
     def _ana_menu(self, o: Olay) -> Yanit:
         satirlar = ["<b>Diplomacia GPS Botu</b>", "Bir bölüm seçin."]
@@ -1012,34 +1054,29 @@ class Arayuz:
         r = self.conn.execute("SELECT deger FROM sistem_durumu WHERE anahtar='token_duraklatildi'").fetchone()
         return bool(r and r[0] == "1")
 
-    def _baglanti_metni(self, g: int | None, isler: dict) -> str:
+    def _baglanti_metni(self, g: int | None, isler: dict) -> str | None:
+        """Problem description for the status screen, or None when there is nothing to report.
+        No fixed "configured / not verified" boilerplate is shown: only real, current conditions."""
         if not yapilandirildi_mi(self.kaynak):
-            return "yapılandırılmadı"
+            return "not configured"
         ic = getattr(self.kaynak, "_ic", self.kaynak)
         if getattr(ic, "token_hazir", True) is False:
-            return "token dosyası yok (Diplomacia isteği atılmıyor; Yönetim > Token menüsünden token verin)"
-        if getattr(ic, "canli_dogrulanmadi", False):
-            return ("yapılandırıldı (kimlik biçimi kullanıcı DevTools'ta doğruladı, canlı bağlantı test edilmedi); "
-                    + self._tarama_metni(g, isler))
+            return "no token file (no Diplomacia requests are sent; provide a token via Administration > Token)"
         return self._tarama_metni(g, isler)
 
-    def _tarama_metni(self, g: int | None, isler: dict) -> str:
+    def _tarama_metni(self, g: int | None, isler: dict) -> str | None:
         if self._token_duraklatildi():
-            return "site token'ı reddetti (401); taramalar duraklatıldı"
-        if g is None:
-            return "yapılandırıldı (grup seçilmediği için tarama durumu gösterilemiyor)"
+            return "the site rejected the token (401); scans are paused"
         hatali = [t for t, r in isler.items() if r["son_hata"]]
         if hatali:
             ilk = isler[hatali[0]]["son_hata"]
-            return esc(f"son tarama hatalı ({', '.join(hatali)}): {ilk[:80]}")
-        if any(r["son_basari"] for r in isler.values()):
-            return "son taramalar başarılı"
-        return "henüz tarama yapılmadı"
+            return esc(f"last scan failed ({', '.join(hatali)}): {ilk[:80]}")
+        return None
 
     def _durum_ekrani(self, o: Olay) -> Yanit:
         g = self._grup(o)
         d = self._durum()
-        satirlar = ["<b>Bot durumu</b>"]
+        satirlar = ["<b>Bot Status</b>"]
         isler: dict = {}
         if g is not None:
             isler = {
@@ -1049,43 +1086,43 @@ class Arayuz:
             n_oyuncu = self.conn.execute("SELECT COUNT(*) FROM takip_oyuncular WHERE group_id=?", (g,)).fetchone()[0]
             n_parti = self.conn.execute("SELECT COUNT(*) FROM takip_partiler WHERE group_id=?", (g,)).fetchone()[0]
             ayar = self.conn.execute("SELECT * FROM grup_ayarlari WHERE group_id=?", (g,)).fetchone()
-            satirlar.append(f"Grup: <code>{g}</code>")
-            satirlar.append(f"Oyuncu sayısı: {n_oyuncu}")
-            satirlar.append(f"Parti sayısı: {n_parti}")
-            satirlar.append(f"Tarama aralığı: {yonetim.tarama_araligi(self.conn, g)} dakika")
-            son = []
-            for tip, etiket in (("oyuncular", "oyuncular"), ("partiler", "partiler"), ("savaslar", "savaşlar")):
+            satirlar.append(f"Group: <code>{g}</code>")
+            satirlar.append(f"Tracked Players: {n_oyuncu}")
+            satirlar.append(f"Tracked Parties: {n_parti}")
+            satirlar.append(f"Scan Interval: {yonetim.tarama_araligi(self.conn, g)} minutes")
+            satirlar.append("Last Successful Scan:")
+            for tip, etiket in (("oyuncular", "Players"), ("partiler", "Parties"), ("savaslar", "Wars")):
                 r = isler.get(tip)
-                son.append(f"{etiket}: {bicim.tarih(r['son_basari']) if r and r['son_basari'] else 'henüz yok'}")
-            satirlar.append("Son başarılı kontrol: " + "; ".join(son))
+                satirlar.append(f"• {etiket}: {bicim.tarih(r['son_basari']) if r and r['son_basari'] else 'none yet'}")
             if self._token_duraklatildi():
-                sonraki = "duraklatıldı (token)"
+                sonraki = "paused (token)"
             elif ayar is not None and ayar["sonraki_tarama"]:
                 sonraki = bicim.tarih(ayar["sonraki_tarama"])
             else:
-                sonraki = "ilk tarama bekleniyor"
-            satirlar.append(f"Sonraki planlanan kontrol: {esc(sonraki)}")
+                sonraki = "waiting for the first scan"
+            satirlar.append(f"Next Scheduled Scan: {esc(sonraki)}")
             calisiyor = bool(self.zamanlayici and self.zamanlayici.calisiyor_mu(g))
-            satirlar.append(f"Devam eden tarama: {'evet' if calisiyor else 'hayır'}")
+            satirlar.append(f"Scan in Progress: {'Yes' if calisiyor else 'No'}")
             bekleyen = self.conn.execute(
                 "SELECT COUNT(*) FROM outbox WHERE grup_id=? AND durum='bekliyor'", (g,)
             ).fetchone()[0]
-            satirlar.append(f"Bekleyen bildirim: {bekleyen}")
+            satirlar.append(f"Pending Notifications: {bekleyen}")
             n_bulunamayan = len(self.servis.bulunamayan_oyuncular(g))
             if n_bulunamayan:
-                satirlar.append(f"Bulunamıyor (art arda 404): {n_bulunamayan} oyuncu")
+                satirlar.append(f"Not found (consecutive 404s): {n_bulunamayan} players")
             tanimayan = self.conn.execute(
                 "SELECT deger FROM sistem_durumu WHERE anahtar=?", (f"savas_taninmayan:{g}",)
             ).fetchone()
             if tanimayan and int(tanimayan[0]) > 0:
-                satirlar.append(f"Durumu tanınmayan savaş: {int(tanimayan[0])} (kaydedildi, bildirilmedi)")
-            satirlar.append(_SAYFALAMA_NOTU)
+                satirlar.append(f"Wars with an unrecognized status: {int(tanimayan[0])} (recorded, not announced)")
         else:
-            satirlar.append("Grup seçilmedi (özel sohbet): genel durum.")
+            satirlar.append("No group selected (private chat): general status.")
         if not o.grup_mu:
-            satirlar.append(f"Onaylı grup: {len(d.onayli_gruplar)}; yetkili kullanıcı: {len(d.yetkililer)}")
-        satirlar.append(f"Diplomacia bağlantısı: {self._baglanti_metni(g, isler)}")
-        return Yanit("\n".join(satirlar), [[Dugme("🔄 Yenile", "du"), Dugme("🏠 Ana menü", "m")]])
+            satirlar.append(f"Approved groups: {len(d.onayli_gruplar)}; authorized users: {len(d.yetkililer)}")
+        baglanti = self._baglanti_metni(g, isler)
+        if baglanti:
+            satirlar.append(f"Diplomacia connection: {baglanti}")
+        return Yanit("\n".join(satirlar), [[Dugme("🔄 Refresh", "du"), Dugme("🏠 Main menu", "m")]])
 
     # ---- yönetim
     def _yonetim_ekrani(self, o: Olay) -> Yanit:

@@ -1,4 +1,4 @@
-"""Zaman yardımcıları: kayıt UTC (sabit biçimli ISO), gösterim Europe/Istanbul."""
+"""Time helpers: storage is UTC (fixed-width ISO); display is Europe/Istanbul (presentation only)."""
 from __future__ import annotations
 
 import time
@@ -29,9 +29,26 @@ def iso_coz(s: str) -> datetime:
     return datetime.strptime(s, _FMT).replace(tzinfo=timezone.utc)
 
 
+def _gosterim_dilimi() -> ZoneInfo:
+    return ZoneInfo(config.DISPLAY_TIMEZONE)
+
+
+def yerel(dt: datetime) -> datetime:
+    """Presentation only: a UTC (or any aware) instant converted to Europe/Istanbul. A naive datetime is treated
+    as UTC (storage convention); it is never interpreted in the server's local timezone."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_gosterim_dilimi())
+
+
 def yerel_goster(dt: datetime) -> str:
-    """Kullanıcıya gösterilecek biçim: 19.10.2026 15:20 (Europe/Istanbul)."""
-    return dt.astimezone(ZoneInfo(config.DISPLAY_TIMEZONE)).strftime("%d.%m.%Y %H:%M")
+    """User-facing date and time: DD.MM.YYYY HH:mm, 24-hour clock, Europe/Istanbul (e.g. 22.10.2026 21:56)."""
+    return yerel(dt).strftime("%d.%m.%Y %H:%M")
+
+
+def yerel_saat(dt: datetime) -> str:
+    """User-facing time only: HH:mm, 24-hour clock, Europe/Istanbul."""
+    return yerel(dt).strftime("%H:%M")
 
 
 # ----------------------------------------------------------------------------- D7: saat güvenliği
