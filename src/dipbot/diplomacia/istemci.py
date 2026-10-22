@@ -102,7 +102,7 @@ class OrtamKimlik:
         sema_ham = self._ortam.get(ENV_SEMA)
         sema = VARSAYILAN_SEMA if sema_ham is None else sema_ham.strip()  # ayarlı-boş: yalnız token
         if not _BASLIK_ADI.fullmatch(ad) or not _SEMA.fullmatch(sema):
-            raise KimlikYapilandirilmadi("kimlik doğrulama biçimi geçersiz (başlık adı/şema override)")
+            raise KimlikYapilandirilmadi("credential format is invalid (header name/scheme override)")
         return ad, sema
 
     @property
@@ -127,9 +127,9 @@ class OrtamKimlik:
         token yok/boş/biçim bozuk -> TokenYok (istek atılmaz)."""
         ad, sema = self._biçim()
         if not token:
-            raise TokenYok("Diplomacia token'ı kayıtlı değil")
+            raise TokenYok("No Diplomacia token is stored")
         if not _TOKEN_UYGUN.fullmatch(token):
-            raise TokenYok("Diplomacia token'ı geçersiz karakter içeriyor")
+            raise TokenYok("The Diplomacia token contains invalid characters")
         return {ad: f"{sema} {token}" if sema else token, **PLATFORM_BASLIGI}
 
 

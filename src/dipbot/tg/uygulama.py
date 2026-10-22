@@ -90,7 +90,7 @@ class Baglayici:
         o = self._olay(update, veri=q.data or "", mesaj_id=mesaj.message_id if mesaj else None)
         if o is None:
             # Sohbet bilinmiyor (satır içi/erişilemez mesaj): yine de callback'i yanıtla.
-            await self.gonderici.callback_yanitla(q.id, "Bu düğme artık geçerli değil.", True)
+            await self.gonderici.callback_yanitla(q.id, "This button is no longer valid.", True)
             return
         o.ack = lambda: self._ack(q.id)
         y = await self.arayuz.buton(o)

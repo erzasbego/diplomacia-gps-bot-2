@@ -8,7 +8,7 @@ class KaynakYapilandirilmadi(OzellikUygulanmadi):
     """Diplomacia bağlantısı (veri kaynağı) henüz yapılandırılmadı."""
 
 
-_MESAJ = "Diplomacia bağlantısı yapılandırılmadı"
+_MESAJ = "Diplomacia connection is not configured"
 
 
 class YapilandirilmamisKaynak:

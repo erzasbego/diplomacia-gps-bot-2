@@ -49,7 +49,7 @@ class GrupOnaysiz(Exception):
     """
 
     def __init__(self, group_id: int):
-        super().__init__(f"grup onaylı değil: {group_id}")
+        super().__init__(f"group is not approved: {group_id}")
         self.group_id = group_id
 
 
@@ -168,10 +168,10 @@ class TakipServisi:
         """Oyuncu yanıtını TEK yerde normalize eder. Kimlik uyuşmazlığı veya boş ad: EksikVeri.
         Boş/boşluk bölge ve vatandaşlık None olur (= yanıtta yok; eski değer korunur)."""
         if snap.oyuncu_id != beklenen_id:
-            raise EksikVeri("oyuncu yanıtı: kimlik uyuşmuyor")
+            raise EksikVeri("player response: ID mismatch")
         ad = metin_temizle(snap.ad)
         if ad is None:
-            raise EksikVeri("oyuncu yanıtı: ad boş")
+            raise EksikVeri("player response: name is empty")
         return OyuncuAnlik(
             beklenen_id, ad, metin_temizle(snap.bolge), metin_temizle(snap.vatandaslik_ulkesi),
             metin_temizle(snap.uid),
@@ -421,7 +421,7 @@ class TakipServisi:
                 raise  # tüm taramayı ilgilendirir; zamanlayıcı karar verir
             except VarlikBulunamadi:
                 bulunamayan.append(pid)
-                sonuc.uyarilar.append(f"{pid}: kaynakta bulunamadı (kayıt silinmedi)")
+                sonuc.uyarilar.append(f"{pid}: not found at the source (record was not deleted)")
             except OzellikUygulanmadi as e:  # token yok / kaynak yapılandırılmadı: tek hata, geri çekilme yok
                 sonuc.hatalar.append(hata_aciklamasi(e))
                 sonuc.yapilandirma = True
@@ -433,15 +433,15 @@ class TakipServisi:
                 gozlenen.append(pid)
                 if snap.bolge is None or snap.vatandaslik_ulkesi is None:
                     sonuc.eksik += 1
-                    sonuc.uyarilar.append(f"{pid}: bölge/vatandaşlık eksik geldi (eski değer korundu)")
+                    sonuc.uyarilar.append(f"{pid}: region/citizenship came back missing (old value kept)")
                 durum = self._gozlem_uygula(group_id, snap)
                 if durum == "degisti":
                     sonuc.degisiklik += 1
                 elif durum == "uid_uyusmazligi":
-                    sonuc.hatalar.append(f"{pid}: kimlik uyuşmazlığı (aynı numara, farklı UUID; kayıt değiştirilmedi)")
+                    sonuc.hatalar.append(f"{pid}: ID mismatch (same number, different UUID; record not changed)")
         if sonuc.istenen and not sonuc.gozlenen and not sonuc.hatalar:
             # İstenen hiçbir oyuncu gözlenemedi (hepsi 404): doğrulanmış tarama DEĞİL, başarılı kaydedilmez.
-            sonuc.hatalar.append(f"hiçbir oyuncu gözlenemedi ({len(bulunamayan)} kayıt bulunamadı)")
+            sonuc.hatalar.append(f"no player could be observed ({len(bulunamayan)} records not found)")
         elif sonuc.gozlenen:
             self._bulunamadi_say(group_id, "oyuncu", bulunamayan, gozlenen)
         return sonuc
@@ -480,15 +480,15 @@ class TakipServisi:
     @staticmethod
     def _tam_liste(snap: PartiAnlik, parti_id: str) -> None:
         if snap.parti_id != parti_id:
-            raise EksikVeri("parti kimliği uyuşmuyor")
+            raise EksikVeri("party ID mismatch")
         if not snap.uyeler_tamam:
             # SINIRLI (ilk N) liste yalnız tutarlıysa kabul edilir: toplam bilinmeli ve listeden büyük olmalı.
             # Bozuk/yinelenen/sayfalamalı/eksik yanıtlar adaptörde kismi=False kalır ve burada reddedilir.
             if not snap.kismi or snap.toplam_uye is None or len(snap.uyeler) >= snap.toplam_uye:
-                raise EksikVeri("üye listesi sayfalaması tamamlanmadı")
+                raise EksikVeri("member list pagination was not completed")
         ids = [u.oyuncu_id for u in snap.uyeler]
         if any(not i for i in ids) or len(set(ids)) != len(ids):
-            raise EksikVeri("üye listesi bozuk")
+            raise EksikVeri("member list is malformed")
 
     async def parti_ekle(self, group_id: int, parti_id: str, kaynak: DiplomaciaSource) -> PartiEklemeSonucu:
         self._onay_sart(group_id)
@@ -500,7 +500,7 @@ class TakipServisi:
         snap = await kaynak.fetch_party(parti_id)
         self._tam_liste(snap, parti_id)
         if not snap.ad:
-            raise EksikVeri("parti adı yok")
+            raise EksikVeri("party name is missing")
         # Yeni üyelerin ilk verisi (bölge, vatandaşlık, uid) SINIRLI eşzamanlılık, üst sınır ve süre bütçesiyle
         # alınır (büyük parti/hız sınırı komutu bloke etmez). Alınamayanlar baseline_tamam=0 ile eklenir ve
         # ilk taramada bildirimsiz tamamlanır. Transaction'dan ÖNCE yapılır (await boyunca DB açık kalmaz).
@@ -580,11 +580,11 @@ class TakipServisi:
                 try:
                     sonuc[oid] = self._oyuncu_temiz(await kaynak.fetch_player(oid), oid)
                 except TokenGecersiz:
-                    durum["dur"] = "token sorunu"
+                    durum["dur"] = "token problem"
                 except IstekSiniri:
-                    durum["dur"] = "istek sınırı"
+                    durum["dur"] = "rate limit"
                 except ErisimReddedildi:
-                    durum["dur"] = "erişim reddedildi"
+                    durum["dur"] = "access denied"
                 except (KaynakHatasi, EksikVeri):
                     pass  # bu üye ilk taramaya kalır
                 except Exception:  # beklenmeyen: komutu düşürme, üye ilk taramaya kalsın (ayrıntı günlükte, sır yok)
@@ -601,9 +601,9 @@ class TakipServisi:
             g.cancel()
         if bekleyen:
             await asyncio.gather(*bekleyen, return_exceptions=True)
-            durum["dur"] = durum["dur"] or "süre bütçesi doldu"
+            durum["dur"] = durum["dur"] or "time budget exhausted"
         if durum["dur"] is None and len(ids) > len(hedef):
-            durum["dur"] = f"komutta en çok {config.PARTI_EKLE_ILK_VERI_UST} üyenin verisi istenir"
+            durum["dur"] = f"at most {config.PARTI_EKLE_ILK_VERI_UST} members' data is requested per command"
         return sonuc, durum["dur"]
 
     def _engelli_mi(self, group_id, oyuncu_id) -> bool:
@@ -689,7 +689,7 @@ class TakipServisi:
             }
             yeni = {u.oyuncu_id: u.ad for u in snap.uyeler}
             if not yeni and eski:
-                raise EksikVeri("boş üye listesi şüpheli; üyelik değişikliği sayılmadı")
+                raise EksikVeri("empty member list is suspicious; membership change not counted")
             xp_de = {u.oyuncu_id: u.xp for u in snap.uyeler}
             esik = config.PARTI_XP_ESIGI
             fark_katilan = [i for i in yeni if i not in eski]
@@ -789,7 +789,7 @@ class TakipServisi:
                 raise
             except VarlikBulunamadi:
                 bulunamayan += 1
-                sonuc.uyarilar.append(f"{tid}: kaynakta bulunamadı (kayıt silinmedi)")
+                sonuc.uyarilar.append(f"{tid}: not found at the source (record was not deleted)")
             except OzellikUygulanmadi as e:
                 sonuc.hatalar.append(hata_aciklamasi(e))
                 sonuc.yapilandirma = True
@@ -797,7 +797,7 @@ class TakipServisi:
             except KaynakHatasi as e:
                 sonuc.hatalar.append(f"{tid}: {hata_aciklamasi(e)}")
         if sonuc.istenen and not sonuc.gozlenen and not sonuc.hatalar:
-            sonuc.hatalar.append(f"hiçbir parti gözlenemedi ({bulunamayan} kayıt bulunamadı)")
+            sonuc.hatalar.append(f"no party could be observed ({bulunamayan} records not found)")
         return sonuc
 
     # ---- parti kaldırma (iki adımlı) -------------------------------------
@@ -814,7 +814,7 @@ class TakipServisi:
         parti_id = str(parti_id)
         p = self._parti_takipte(group_id, parti_id)
         if p is None:
-            return KaldirmaOnizleme(False, parti_id, neden="parti bu grupta takipte değil")
+            return KaldirmaOnizleme(False, parti_id, neden="party is not tracked in this group")
         try:
             snap = await kaynak.fetch_party(parti_id)
             self._tam_liste(snap, parti_id)
@@ -822,14 +822,14 @@ class TakipServisi:
             return KaldirmaOnizleme(
                 False,
                 parti_id,
-                neden=f"güncel üye listesi doğrulanamadı ({hata_aciklamasi(e)}); hiçbir oyuncu silinmedi",
+                neden=f"current member list could not be verified ({hata_aciklamasi(e)}); no players were removed",
             )
         eski_sayi = self.conn.execute(
             "SELECT COUNT(*) FROM parti_uyeleri WHERE group_id=? AND parti_id=?", (group_id, parti_id)
         ).fetchone()[0]
         if not snap.uyeler and eski_sayi:
             return KaldirmaOnizleme(
-                False, parti_id, neden="güncel üye listesi boş geldi, şüpheli; hiçbir oyuncu silinmedi"
+                False, parti_id, neden="current member list came back empty, which is suspicious; no players were removed"
             )
         guncel = sorted(u.oyuncu_id for u in snap.uyeler)
         etkilenen = tuple(i for i in guncel if self._takipte_mi(group_id, i))
@@ -854,25 +854,25 @@ class TakipServisi:
 
         islem_yapan verilirse yetki (kurucu/yetkili) await öncesi VE transaction İÇİNDE güncel DB
         durumuyla yeniden denetlenir; yetkisi alınmışsa durum 'yetkisiz' döner, hiçbir şey silinmez."""
-        yetkisiz = KaldirmaSonucu("yetkisiz", neden="işlemi yapan kullanıcı artık yetkili değil; hiçbir oyuncu silinmedi")
+        yetkisiz = KaldirmaSonucu("yetkisiz", neden="the acting user is no longer authorized; no players were removed")
         self._onay_sart(group_id)
         if not self._yetki_var_mi(islem_yapan, kurucu_id):
             return yetkisiz
         parti_id = str(parti_id)
         if self._parti_takipte(group_id, parti_id) is None:
-            return KaldirmaSonucu("bulunamadi", neden="parti bu grupta takipte değil")
+            return KaldirmaSonucu("bulunamadi", neden="party is not tracked in this group")
         onizleme = await self.parti_kaldirma_hazirla(group_id, parti_id, kaynak)
         if not onizleme.basarili:
             return KaldirmaSonucu("dogrulanamadi", onizleme, neden=onizleme.neden)
         if onizleme.ozet_anahtari != onaylanan_anahtar:
-            return KaldirmaSonucu("tekrar_onay", onizleme, neden="üyelik değişti; güncel özeti onaylayın")
+            return KaldirmaSonucu("tekrar_onay", onizleme, neden="membership changed; please confirm the updated summary")
         simdi = self.saat()
         with islem(self.conn):
             self._onay_sart(group_id)  # hazirla'daki await sırasında onay kaldırılmış olabilir
             if not self._yetki_var_mi(islem_yapan, kurucu_id):
                 return yetkisiz  # await sırasında yetkisi alınmış olabilir
             if self._parti_takipte(group_id, parti_id) is None:
-                return KaldirmaSonucu("bulunamadi", neden="parti bu grupta takipte değil")
+                return KaldirmaSonucu("bulunamadi", neden="party is not tracked in this group")
             silinen = []
             adlar: dict[str, str | None] = {}
             for oid in onizleme.etkilenen:  # yalnız o anki üyeler; elle eklenmiş olsa da
@@ -916,17 +916,17 @@ class TakipServisi:
         except (TokenGecersiz, IstekSiniri, ErisimReddedildi):
             raise
         except OzellikUygulanmadi as e:
-            sonuc.hatalar.append(str(e)[:120] or "savaş desteği uygulanmadı")
+            sonuc.hatalar.append(str(e)[:120] or "war support is not implemented")
             sonuc.yapilandirma = True
             return sonuc
         except KaynakHatasi as e:
             sonuc.hatalar.append(hata_aciklamasi(e))
             return sonuc
         if not liste.tamam:
-            sonuc.hatalar.append("savaş listesi tamamlanmadı (" + hata_aciklamasi(EksikVeri()) + ")")
+            sonuc.hatalar.append("war list is incomplete (" + hata_aciklamasi(EksikVeri()) + ")")
             return sonuc  # eksik liste: ne baseline ne bildirim
         if any(not metin_temizle(s.savas_id) for s in savaslar) or len({s.savas_id for s in savaslar}) != len(savaslar):
-            sonuc.hatalar.append("savaş listesi bozuk (boş veya yinelenen kimlik)")
+            sonuc.hatalar.append("war list is malformed (empty or duplicate ID)")
             return sonuc
         simdi = self.saat()
         with islem(self.conn):
@@ -938,7 +938,7 @@ class TakipServisi:
             baseline_tamam = bool(r and r[0])
             if not savaslar and not baseline_tamam:
                 # İlk baseline'da boş liste şüpheli: tamamlanmaz; sonraki dolu liste de bildirimsiz oturur.
-                sonuc.uyarilar.append("boş savaş listesi şüpheli; baseline tamamlanmadı")
+                sonuc.uyarilar.append("empty war list is suspicious; baseline not completed")
                 return sonuc
             yeniler = []
             taninmayan = 0
@@ -963,7 +963,7 @@ class TakipServisi:
             )
             if taninmayan:
                 log.warning("tanınmayan durum/türde %d yeni savaş kaydedildi (bildirim yok)", taninmayan)
-                sonuc.uyarilar.append(f"{taninmayan} yeni savaşın durumu/türü tanınmıyor (bildirilmedi)")
+                sonuc.uyarilar.append(f"{taninmayan} new wars have an unrecognized status/type (not notified)")
             if len(yeniler) > config.YENI_SAVAS_BILDIRIM_UST:
                 sonuc.degisiklik += self._grup_kuyruk(
                     group_id,

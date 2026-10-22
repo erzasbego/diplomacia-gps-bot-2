@@ -35,7 +35,7 @@ def durum_yukle(conn: sqlite3.Connection, kurucu_id: int) -> YetkiDurumu:
 def _aktor_denetle(conn, kurucu_id: int, aktor_id: int) -> YetkiDurumu:
     d = durum_yukle(conn, kurucu_id)
     if not yetki.yetkili_mi(d, aktor_id):
-        raise YetkiHatasi("işlemi yapan kullanıcı yetkili değil")
+        raise YetkiHatasi("the acting user is not authorized")
     return d
 
 
@@ -137,9 +137,9 @@ def _denetim_yaz(conn, simdi, kurucu_id, eylem, aktor_id, hedef_id) -> bool:
 def yetki_ver(conn, saat: Saat, kurucu_id: int, aktor_id: int, hedef_id: int) -> bool:
     _aktor_denetle(conn, kurucu_id, aktor_id)
     if not isinstance(hedef_id, int) or hedef_id <= 0:
-        raise YonetimHatasi("yetki yalnız kullanıcı kimliğine (pozitif) verilir")
+        raise YonetimHatasi("permission can only be granted to a (positive) user ID")
     if hedef_id in OZEL_TELEGRAM_KIMLIKLERI:
-        raise YonetimHatasi("bu kimlik Telegram'ın özel hesabı (anonim yönetici/kanal); gerçek kullanıcı kimliği girin")
+        raise YonetimHatasi("this ID is a special Telegram account (anonymous admin/channel); enter a real user ID")
     if hedef_id == kurucu_id:
         return False  # kurucu zaten her zaman yetkili; ayrı kayıt gerekmez
     with islem(conn):
@@ -167,7 +167,7 @@ def yetki_al(conn, saat: Saat, kurucu_id: int, aktor_id: int, hedef_id: int) -> 
 def grup_onayla(conn, saat: Saat, kurucu_id: int, aktor_id: int, grup_id: int) -> bool:
     _aktor_denetle(conn, kurucu_id, aktor_id)
     if not isinstance(grup_id, int) or grup_id >= 0:
-        raise YonetimHatasi("grup kimliği negatif olmalı (özel sohbet kimliği onaylanamaz)")
+        raise YonetimHatasi("group ID must be negative (a private chat ID cannot be approved)")
     with islem(conn):
         yeni = conn.execute("SELECT 1 FROM onayli_gruplar WHERE group_id=?", (grup_id,)).fetchone() is None
         if yeni:
@@ -196,7 +196,7 @@ def grup_kaldir(conn, saat: Saat, kurucu_id: int, aktor_id: int, grup_id: int) -
     Takip verisi silinmez (yeniden onayda korunur) ama taramalar ve gönderimler durur.
     """
     if aktor_id is None or not yetki.kurucu_mu(durum_yukle(conn, kurucu_id), aktor_id):
-        raise YetkiHatasi("grup onayını yalnız kurucu kaldırabilir")
+        raise YetkiHatasi("only the owner can remove group approval")
     return _grup_kaldir(conn, saat, kurucu_id, grup_id, "grup_kaldir", aktor_id)
 
 
@@ -270,29 +270,33 @@ def goc_kaydet(conn, saat: Saat, eski_id: int, yeni_id: int) -> bool:
         ).rowcount == 1
 
 
+# Göç kaydı durum değerleri (DB değerleri) yalnız hata metninde İngilizce gösterilir.
+_GOC_DURUM_GOSTER = {"bekliyor": "pending", "tamamlandi": "completed", "iptal": "cancelled"}
+
+
 def _tasima_kontrol(conn, eski: int, yeni: int) -> dict[str, int]:
     """Tüm ön koşulları denetler; sağlanmazsa TasimaHatasi. Taşınacak veri sayılarını döner.
     Gerçek taşımada transaction İÇİNDE çağrılır (denetim ile uygulama arası yarış yok)."""
     if not (_grup_kimligi_gecerli(eski) and _grup_kimligi_gecerli(yeni)):
-        raise TasimaHatasi("grup kimlikleri negatif tam sayı olmalı")
+        raise TasimaHatasi("group IDs must be negative integers")
     if eski == yeni:
-        raise TasimaHatasi("eski ve yeni kimlik aynı olamaz")
+        raise TasimaHatasi("old and new ID cannot be the same")
     r = conn.execute("SELECT durum FROM grup_gocleri WHERE eski_id=? AND yeni_id=?", (eski, yeni)).fetchone()
     if r is None:
-        raise TasimaHatasi("bu çift için kayıtlı bir grup göçü yok (yalnız Telegram göç olayı kayıtlı çiftler taşınır)")
+        raise TasimaHatasi("there is no recorded group migration for this pair (only pairs with a recorded Telegram migration event can be moved)")
     if r[0] != "bekliyor":
-        raise TasimaHatasi(f"bu göç kaydı artık beklemiyor (durum: {r[0]}); tekrar taşınamaz")
+        raise TasimaHatasi(f"this migration record is no longer pending (status: {_GOC_DURUM_GOSTER.get(r[0], r[0])}); it cannot be moved again")
     onayli = {x[0] for x in conn.execute("SELECT group_id FROM onayli_gruplar")}
     if yeni not in onayli:
-        raise TasimaHatasi(f"yeni grup onaylı değil; önce /grup_onayla {yeni}")
+        raise TasimaHatasi(f"the new group is not approved; run /approve_group {yeni} first")
     if eski in onayli:
-        raise TasimaHatasi("eski grup hâlâ onaylı; taşıma için onayının düşmüş olması gerekir")
+        raise TasimaHatasi("the old group is still approved; its approval must be revoked before moving")
     yeni_say = grup_verisi_say(conn, yeni)
     if any(yeni_say[t] for t in _YENI_BOS_TABLOLAR):
-        raise TasimaHatasi("yeni grupta zaten takip verisi var; karışmaması için taşıma yapılmaz")
+        raise TasimaHatasi("the new group already has tracking data; the move is not performed to avoid mixing")
     sayilar = grup_verisi_say(conn, eski)
     if not any(sayilar.values()):
-        raise TasimaHatasi("eski grupta taşınacak takip verisi yok")
+        raise TasimaHatasi("the old group has no tracking data to move")
     return sayilar
 
 
@@ -308,7 +312,7 @@ def grup_tasi(conn, saat: Saat, kurucu_id: int, aktor_id: int | None, eski: int,
     hiçbir şey değişmez. Dönüş: taşınan satır sayıları (takip_oyuncular, takip_partiler, ...).
     """
     if aktor_id is None or not yetki.kurucu_mu(durum_yukle(conn, kurucu_id), aktor_id):
-        raise YetkiHatasi("grup verisini yalnız kurucu taşıyabilir")
+        raise YetkiHatasi("only the owner can move group data")
     with islem(conn):
         sayilar = _tasima_kontrol(conn, eski, yeni)
         for t in _VERI_TABLOLARI:
@@ -365,10 +369,10 @@ def grup_tasi(conn, saat: Saat, kurucu_id: int, aktor_id: int | None, eski: int,
 
 def tarama_araligi_ayarla(conn, grup_id: int, dakika: int) -> None:
     if dakika not in config.ALLOWED_SCAN_INTERVALS_MINUTES:
-        raise ValueError(f"geçersiz aralık: izinli değerler {config.ALLOWED_SCAN_INTERVALS_MINUTES}")
+        raise ValueError(f"invalid interval: allowed values {config.ALLOWED_SCAN_INTERVALS_MINUTES}")
     with islem(conn):
         if conn.execute("SELECT 1 FROM onayli_gruplar WHERE group_id=?", (grup_id,)).fetchone() is None:
-            raise YonetimHatasi("grup onaylı değil")
+            raise YonetimHatasi("group is not approved")
         conn.execute("UPDATE grup_ayarlari SET tarama_araligi_dk=? WHERE group_id=?", (dakika, grup_id))
 
 
