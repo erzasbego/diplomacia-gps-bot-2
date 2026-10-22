@@ -98,6 +98,16 @@ if [[ -f "$DB_FILE" ]]; then
     else S="$(sqlite3 -readonly "$DB_FILE" 'PRAGMA integrity_check;' 2>&1 | head -n1)"; fi
     [[ "$S" == "ok" ]] && tamam "DB butunluk kontrolu: ok" || hata "DB butunluk kontrolu: $S"
   fi
+  # root sahipli -wal/-shm (ör. DB'ye root olarak sqlite3 ile dokunulduysa) servisin DB'yi acmasini engeller.
+  for ek in -wal -shm; do
+    if [[ -e "$DB_FILE$ek" ]]; then
+      B="$(bilgi "$DB_FILE$ek")"
+      case "$B" in
+        *" $APP_USER:$APP_USER") tamam "$DB_FILE$ek sahibi uygun: $B" ;;
+        *) hata "$DB_FILE$ek sahibi/izni $B (beklenen sahip $APP_USER:$APP_USER). Servisi durdurup duzeltin: chown $APP_USER:$APP_USER '$DB_FILE$ek'. Canli DB'ye root olarak sqlite3 ile dokunmayin." ;;
+      esac
+    fi
+  done
 else
   uyari "DB henuz yok ($DB_FILE): ilk calistirmada olusur"
 fi
