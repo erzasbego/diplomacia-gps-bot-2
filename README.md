@@ -59,26 +59,21 @@ Kod sabitleri (`src/dipbot/config.py`): tarama aralıkları `[5,10,15,20]`, dene
 
 Çıkış kodları: `0` normal, `2` yapılandırma hatası, `3` Telegram `BOT_TOKEN` reddedildi veya `Conflict` (aynı token'la ikinci örnek), `130` Ctrl-C (yalnız geliştirmede).
 
-## Bildirim kanalı, takip listeleri ve yetki modeli
+## Merkezi takip, bildirim kanalı ve yetki modeli
 
-> **Kanal geçişi (güncel davranış):** tüm otomatik takip bildirimleri (oyuncu, parti, savaş) **yalnız** Telegram log kanalına gider (`config.LOG_KANAL_ID` = `-1003998002227`; `LOG_CHANNEL_ID` ile değiştirilebilir). **Eski gruplara hiçbir bildirim gönderilmez ve gruplarda hiçbir komut/düğme işlenmez** (onaylı grup ve yetkili kullanıcı olsa da; sessizce yok sayılır, kayıt ve yanıt üretmez). **Yönetim yalnız kurucunun özel sohbetindedir.** Ayrıntı ve geçiş adımları: [`deploy/KANAL-GECISI-PLANI.md`](deploy/KANAL-GECISI-PLANI.md).
+> **Mimari:** takip artık Telegram gruplarından **bağımsızdır**. Tek merkezi takip alanı (oyuncu listesi, parti listesi, savaş kaydı, tarama yapılandırması; `group_id` sütununda `config.MERKEZ_ID = 0`) vardır. Tüm otomatik takip bildirimleri **yalnız** log kanalına gider (`config.LOG_KANAL_ID` = `-1003998002227`; `LOG_CHANNEL_ID` ile değiştirilebilir; kanal değişse de takip geçmişi korunur). Yönetim **yalnız kurucunun özel sohbetindedir.** Eski gruplar (`-1004485206993`, `-1004375821471`, `-5571949121`) tamamen devre dışıdır ve yalnız arşiv/migration kaynağıdır. Ayrıntı ve geçiş adımları: [`deploy/KANAL-GECISI-PLANI.md`](deploy/KANAL-GECISI-PLANI.md).
 
-- **Kanal doğrulaması:** açılışta (ve `/channel` ile) Telegram API'siyle kanalın var olduğu, türünün `channel` olduğu ve botun orada yönetici + "Post messages" yetkisine sahip olduğu **mesaj göndermeden** doğrulanır. Hazır değilse **tarama duraklar** (değişiklik bildirimsiz yutulmasın), kanal satırları bekletilir (hata/deneme sayılmaz) ve kurucuya özel sohbette tek bildirim gider; düzelince tek "hazır" bildirimi gider.
-- **Takip listeleri:** takip verisi hâlâ eski grup kimliği başına tutulur ("liste"). Üç eski grubun listesi **otomatik birleştirilmez** ve **silinmez**. Hangi listenin kullanılacağını kurucu `TRACKING_GROUP_IDS` ile seçer; **varsayılan boştur: hiçbir liste taranmaz.** Seçmeden önce veriyi raporlayın: `python -m dipbot.rapor <db>` (salt okunur; listeler, sayılar, ortak kimlikler, bekleyen kuyruk). Telegram'da `/lists` kısa özet verir.
-- **Bekleyen eski grup mesajları:** açılışta hedefi kurucu/log kanalı dışında olan bekleyen outbox satırları **iptal edilir** (silinmez; `durum='iptal'`), ne gruba ne kanala gider. Gönderici ayrıca kurucu/kanal dışındaki hedefi reddeder.
-- Kurucuya (özel sohbet) giden **operasyonel** bildirimler (denetim, yetkisiz özel sohbet denemesi, token uyarıları, kanal durumu) değişmedi; bunlar takip bildirimi değildir.
-
-Yetki kavramları (kontroller **adla değil sayısal Telegram kimlikleriyle** yapılır):
+- **Gruplar:** hiçbir komut/düğme işlenmez, hiçbir bildirim/hata/otomatik cevap gönderilmez, taranmaz; botun gruba eklenmesi veya orada yönetici olması yetki ya da takip alanı oluşturmaz (kurucuya yalnız özel sohbette bilgi gider). Grup onayı, yetkili kullanıcı listesi, grup seçimi (`Select Group`), `TRACKING_GROUP_IDS` ve grup göçü işleme **kaldırıldı** (eski kayıtlar veritabanında arşiv olarak durur).
+- **Kanal doğrulaması:** açılışta (ve `/channel` ile) Telegram API'siyle kanalın var olduğu, türünün `channel` olduğu ve botun orada yönetici + "Post messages" yetkisine sahip olduğu **mesaj göndermeden** doğrulanır. Hazır değilse **tarama duraklar** (değişiklik bildirimsiz yutulmasın), kanal satırları bekletilir (hata/deneme sayılmaz), eski gruplara dönülmez ve kurucuya özel sohbette tek bildirim gider; düzelince bekleyen bildirimler tam teslim edilir.
+- **Bekleyen bildirim kuyruğu:** açılışta eski grup kapsamlı satırlar **iptal** edilir (silinmez; ne gruba ne kanala gider); merkezi kapsamlı satırlar güncel kanala yönlendirilir; gönderici yalnız kurucu/kanal hedeflerini kabul eder.
+- **Migration:** eski grup kayıtlarını merkezi alana taşımak için `python -m dipbot.migrasyon` (`analiz` = salt okunur dry-run, `uygula`/`geri-al` = açık onay + doğrulanmış güncel yedek gerekir). Aynı oyuncu/parti tekilleştirilir, çakışmalar raporlanır, eski kayıtlar silinmez, ikinci çalıştırma veriyi çoğaltmaz. **Gerçek migration kurucunun onayıyla ayrıca yapılır.**
+- `/lists` merkezi takip listesinin özetini gösterir. Kurucuya özel sohbette giden **operasyonel** bildirimler (denetim, yetkisiz özel sohbet denemesi, token uyarıları, kanal durumu) değişmedi.
 
 | Kavram | Ne demek |
 |---|---|
-| **Kurucu** | `OWNER_TELEGRAM_ID` ile tanımlanan asıl sahip. **Yalnız kurucu** botu özel sohbetinde kullanır: takip yönetimi, ayarlar, token yenileme, `/grup_kaldir`, `/grup_tasi`, `/channel`, `/lists`. |
-| **Yetkili kullanıcı** | `/yetki_ver` ile verilen kayıt hâlâ saklanır, ancak gruplar komut işlemediği ve özel sohbet yalnız kurucuya açık olduğu için bu kullanıcılar bot üzerinde işlem **yapamaz**. |
-| **Onaylı grup** | Artık "komut izni" değil, **taranabilir takip listesi** anlamındadır (`/grup_onayla`); bir listenin taranması ayrıca `TRACKING_GROUP_IDS` ile seçilmelidir. |
+| **Kurucu** | `OWNER_TELEGRAM_ID` ile tanımlanan tek yönetici. Botu yalnız **özel sohbetinde** kullanır: oyuncu/parti ekle-sil, tarama ayarı, token yenileme, durum, `/channel`, `/lists`. Kurucu dışındaki herkes reddedilir ve kurucuya (hız sınırlı) bildirilir. |
 
-- Özel sohbette kurucu dışındaki her komut/buton reddedilir ve kurucuya (hız sınırlı) bildirilir.
-- Kurucuya **denetim bildirimi** gider: yetki verme/alma, grup onaylama/kaldırma, grup göçü/taşıma (yalnız kimlikler ve zaman; token yok). Kurucunun kendi eylemleri bildirilmez; aynı eylem 10 dk içinde tek bildirim, saatte en çok 5, fazlası tek özet.
-- Bir listenin onayı kaldırılınca o listenin taramaları ve **bekleyen bildirimleri durur** (veri silinmez; yeniden onayda korunur).
+- Kurucuya **denetim bildirimi** altyapısı (kimlik+zaman, token yok) korunur; grup/yetki komutları kaldırıldığı için artık yeni denetim olayı üretmez.
 
 ## Arayüz dili ve saat (İngilizce arayüz, Europe/Istanbul)
 Telegram arayüzünün **tamamı İngilizcedir** (tek dil; dil seçeneği yoktur): komut yanıtları, menüler, düğmeler, açılır uyarılar, hata/yetki mesajları, bildirimler. Oyuncu/parti adları ve oyun adları çevrilmez. Telegram komut menüsü İngilizcedir:
@@ -90,15 +85,13 @@ Telegram arayüzünün **tamamı İngilizcedir** (tek dil; dil seçeneği yoktur
 | `/addparty`, `/parties`, `/removeparty` | `/partiekle`, `/partiler`, `/partisil`, `/parti_ekle`, `/parti_sil` |
 | `/wars`, `/scan`, `/status` | `/savaslar`, `/tarama`, `/durum` |
 | `/channel`, `/lists` | `/kanal`, `/listeler` |
-| `/grant`, `/revoke` | `/yetki_ver`, `/yetki_al` |
-| `/approve_group`, `/remove_group`, `/move_group` | `/grup_onayla`, `/grup_kaldir`, `/grup_tasi` |
 
 Eski ve yeni adlar **aynı işleyiciye, aynı yetki ve onay kurallarına** gider; callback verileri (düğme kimlikleri) değişmedi, bu yüzden eski mesajlardaki düğmeler çalışır.
 
 **Saat:** kullanıcıya gösterilen tüm tarih/saatler **Europe/Istanbul** (`zoneinfo`), 24 saat, `DD.MM.YYYY HH:mm` (ör. `22.10.2026 21:56`; AM/PM yoktur). Bu **yalnız gösterim** dönüşümüdür: veritabanı, zamanlayıcı ve API zaman damgaları UTC ve sabit biçimli ISO olarak kalır; dönüşüm yalnız metin üretilirken yapılır. Sunucunun saat dilimi değiştirilmez (gösterim ondan bağımsızdır).
 
 ## Komutlar ve butonlar
-Aşağıdaki tabloda komutlar eski (Türkçe) adlarıyla yazılıdır; İngilizce menü adları yukarıdaki eşleme tablosundadır (ikisi de çalışır). **Gruplarda hiçbir komut işlenmez**; komutlar yalnız kurucunun özel sohbetindedir. Kurucu önce **Grup Seç** ile bir takip listesini (eski grup) seçer, sonra aynı komutları/butonları kullanır. `/start` ana menüyü açar.
+Aşağıdaki tabloda komutlar eski (Türkçe) adlarıyla yazılıdır; İngilizce menü adları yukarıdaki eşleme tablosundadır (ikisi de çalışır). **Gruplarda hiçbir komut işlenmez**; komutlar yalnız kurucunun özel sohbetindedir. Grup seçimi yoktur: komutlar doğrudan merkezi takip alanında çalışır. `/start` ana menüyü açar.
 
 | Komut | Ne yapar |
 |---|---|
@@ -109,10 +102,6 @@ Aşağıdaki tabloda komutlar eski (Türkçe) adlarıyla yazılıdır; İngilizc
 | `/savaslar` | Aktif savaşları listeler; ayrıntı ekranında `…/wars/war/{numara}` bağlantısı bulunur. |
 | `/tarama <5\|10\|15\|20>` | Grubun tarama aralığı. |
 | `/durum` (`/status`) | Bot durumu (İngilizce): grup, takip edilen oyuncu/parti sayısı, tarama aralığı, son başarılı tarama (oyuncular/partiler/savaşlar), sonraki planlı tarama, devam eden tarama, bekleyen bildirim. "Diplomacia connection" satırı yalnız gerçek bir sorun varsa görünür (sabit "doğrulanmadı" notları kaldırıldı). |
-| `/yetki_ver <kullanıcı_id>`, `/yetki_al <kullanıcı_id>` | Yetki verir/alır. |
-| `/grup_onayla <grup_id>` | Grubu onaylar (grup kimlikleri negatiftir). |
-| `/grup_kaldir <grup_id>` | Grup onayını kaldırır — **yalnız kurucu** (komut ve düğme aynı kural). |
-| `/grup_tasi <eski_id> <yeni_id>` | Supergroup'a yükselen grubun verisini yeni kimliğe taşır — **yalnız kurucu, yalnız özel sohbet**, düğmeyle onay. |
 | `/yardim` | Komut özeti. |
 | `/channel` (`/kanal`) | Log kanalını Telegram API'siyle yeniden doğrular (mesaj göndermez). |
 | `/lists` (`/listeler`) | Takip listeleri ve hangisinin taranmakta olduğu. |
@@ -121,7 +110,7 @@ Aşağıdaki tabloda komutlar eski (Türkçe) adlarıyla yazılıdır; İngilizc
 
 **Savaş listesi** yalnız temel bilgiyi gösterir (`Saldıran – Savunan · Durum · #numara`, numara varsa tıklanabilir); ayrıntı ekranı kapsamlıdır. Emoji anlamları: ⚔️ standart savaş (tür yoksa/tanınmıyorsa da), 🔥 ayaklanma, 🏳️ bağımsızlık; ayrıntıda ⚔️ saldıran, 🛡️ savunan, ⏳ hazırlık, 🟢 aktif.
 
-**Ana menü düğmeleri:** Oyuncular · Partiler · Savaşlar · Tarama Ayarları · Bot Durumu · Yönetim · Yardım · Grup Seç (özelde). *Token Yenile* ana menüde değil, **Yönetim** ekranındadır (yalnız kurucu, özel sohbette). Silme/kaldırma ve yetki işlemleri **onay düğmesi** ister; onay tek kullanımlık, 10 dakika geçerli ve yalnız işlemi başlatan kullanıcıya/sohbete bağlıdır.
+**Ana menü düğmeleri:** Oyuncular · Partiler · Savaşlar · Tarama Ayarları · Bot Durumu · Yönetim · Yardım. *Token Yenile* ana menüde değil, **Yönetim** ekranındadır (yalnız kurucu, özel sohbette). Silme/kaldırma işlemleri **onay düğmesi** ister; onay tek kullanımlık, 10 dakika geçerli ve yalnız işlemi başlatan kullanıcıya/sohbete bağlıdır.
 
 ## Takip kuralları
 - **Kimlik:** takip, sabit oyuncu kimliği üzerindendir; ad, bölge ve vatandaşlık ülkesi ayrı alanlar olarak bağımsız izlenir. Aynı oyuncu farklı yollarla (bağlantı, numara, parti, baştaki sıfırlı numara) eklense bile **tek** kayıttır.
@@ -130,7 +119,7 @@ Aşağıdaki tabloda komutlar eski (Türkçe) adlarıyla yazılıdır; İngilizc
 - **XP süzgeci (parti üyeleri) — tek kriter:** Bir partiden yalnız **`xp ≥ 1.500.000`** olan üyeler otomatik takibe alınır (`config.PARTI_XP_ESIGI`; tam 1.500.000 dahil). **Takip edilen oyuncu sayısı sınırlanmaz** (329 üyeli partide eşiği geçen hepsi, okunabildikleri sürece). **Her üyenin XP'si ayrı denetlenir** (API sıralamasına güvenilmez, erken kesme yok). XP eksik/geçersizse (alan yok, metin, negatif, kesirli, NaN, aşırı büyük) oyuncu **eklenmez** ve "bilinmiyor" sayılır (0 sayılmaz). Eşik altı oyuncular otomatik takibe alınmaz; üyelik listesinde yine kayıtlıdır. Sonradan eşiğe ulaşan oyuncu bir sonraki taramada **sessizce** (ilk bölge/vatandaşlık bildirim değildir) otomatik takibe alınır.
 - **Takipten çıkarma (kademeli):** otomatik eklenmiş bir oyuncunun **geçerli** XP'si eşiğin altında **art arda 3 taramada** (`PARTI_XP_ALTI_ARDISIK_TARAMA`) gözlenirse otomatik takipten çıkar; tek geçici/hatalı yanıt silmez, eşiğin üstündeki bir gözlem sayacı sıfırlar, XP eksik/geçersiz yanıt sayacı değiştirmez. **Korunanlar:** elle eklenenler (`/oyuncuekle`) ve bu sürümden **önce** otomatik eklenmiş mevcut kayıtlar (XP süzgecinden bir kez geçene kadar XP kuralına tabi değildir). Engel konmaz. Bir oyuncu aynı anda yalnız bir partide olabileceğinden "başka partide görünüyor" korumasına dayanılmaz. Parti ayrılması, listede görünmeme veya eksik/hatalı yanıt **hiçbir silme veya bildirim üretmez** (XP kanıtı değildir).
 - **Büyük partiler ve EKSİK okuma:** Diplomacia `/members` uç noktası büyük partilerde **tek istekte 100 üye** döndürür (gerçek günlükler: 100/329, 100/129). Bu bir **okuma sınırıdır, takip politikası değil**; **gerçek sayfalama yöntemi doğrulanmadı** ve kanıtlanmamış `page`/`offset`/`limit` parametresi **gönderilmez** (testli: ek istek yok). Bu durumda liste **EKSİK okunmuş** sayılır, tam liste olarak değerlendirilmez: okunan üyelerden uygun olanlar takibe alınır, okunamayan üyeler için XP bilinmez ve **başlangıç özeti bunu açıkça yazar** ("EKSİK okundu: 100/329 … 229 üye okunamadı"; okunan hepsi eşik üstüyse okunamayanlar arasında da uygun oyuncu olabileceği belirtilir). Liste kabulü sıkıdır: tam 100 kayıt + `member_count` > 100, mükerrer/sayfalama anahtarı/bozuk kayıt yok; **açıklanamayan eksiklik reddedilir** (99/329, 50/329, 101/329 …). API tüm üyeleri döndürürse (ör. 250/250) liste **tam** sayılır ve **kesilmez**. Üyelerin XP'ye göre sıralı geldiği kullanıcı beyanıdır; sıralama **varsayılmaz**, yalnız bilgi olarak denetlenip belirtilir. Kısmi okumada ayrılma/katılma çıkarılamaz → "ayrıldı/katıldı" bildirimi yok; görünmeyen kimse silinmez. Tam listede (tüm üyeler okunduğunda) gerçek katılım/ayrılma bildirilir, ancak yalnız takip ile ilgili olanlar için: katılan → XP'si uygun olan; ayrılan → o an takipte olan. Kısmi→tam geçişte listede olmayanlar doğrulanmış ayrılmadır; yeni görünenlerin katılımı doğrulanamadığından bildirilmez. Kısmi okunan partiyi kaldırırken yalnız okunan üyeler çıkarılır; okunamayanlar (elle eklenmişse) çıkarılmaz ve ekran bunu belirtir. Sonraki taramada tanılama günlüğü (gövde anahtarları, yanıt başlık adları, sayfalama ipucu başlıklar) yazılır; gerçek yöntem bu veriyle veya DevTools Network kaydıyla belirlenecektir.
-- **Parti kaldırma:** önce partinin güncel üyeleri doğrulanır; doğrulanamazsa **hiçbir şey silinmez**. Doğrulanırsa, o anda partide olan herkes (elle eklenmiş olsa da) ilgili grubun takibinden çıkar; daha önce ayrılmış üyeler takipte kalır; diğer gruplar etkilenmez; kaldırılanlar otomatik yeniden eklenmez.
+- **Parti kaldırma:** önce partinin güncel üyeleri doğrulanır; doğrulanamazsa **hiçbir şey silinmez**. Doğrulanırsa, o anda partide olan herkes (elle eklenmiş olsa da) merkezi takipten çıkar; daha önce ayrılmış üyeler takipte kalır; kaldırılanlar otomatik yeniden eklenmez.
 - **Savaşlar:** ilk taramada mevcut savaşlar bildirimsiz kaydedilir (bildirim yağmuru yok); tek taramada 5'ten fazla yeni savaş çıkarsa tek özet mesajı gider; tanınmayan durum/türdeki kayıt "yeni savaş" bildirimi üretmez.
 - **Bildirim teslimi "en az bir kez"dir:** gönderimden hemen sonra süreç ölürse aynı mesaj bir kez daha gidebilir; çok parçalı uzun mesajda bir parça tekrarlanabilir. Telegram'da "tam bir kez" garantisi verilemez.
 
@@ -165,11 +154,9 @@ Hedef: **Ubuntu 24.04 LTS** (Python 3.12), tek VPS, tek bot süreci, systemd. Ad
 - İngilizce arayüz: yalnız Telegram'a giden metinler çevrildi. Günlük (log) satırları, kod yorumları, belgeler ve konsol/başlangıç hataları (`BOT_TOKEN` eksik vb.) Türkçe kalabilir. Veritabanında önceki sürümden kalmış **eski Türkçe** `tarama_isleri.son_hata` değerleri, ilgili iş bir sonraki başarılı taramada temizlenene kadar durum ekranında olduğu gibi görünebilir. Kuyrukta bekleyen bildirimler gönderim anında biçimlendirildiği için İngilizce gider.
 - Kontroller aralıklıdır (yukarıya bakın); gerçek hareket zamanı bilinmez.
 - Outbox teslimi "en az bir kez"dir; çok parçalı mesajda parça tekrarı olabilir.
-- `/grup_tasi`: `bildirim_sinirlari` ve `yetkisiz_denemeler` taşınmaz; eski id'de gönderilmiş outbox geçmişi kalır.
 - Zaten gönderilmiş bir "katıldı" bildirimi, sonradan mükerrer olduğu anlaşılırsa geri alınamaz.
 - İstek sınırı bekleme penceresi bellektedir (yeniden başlatmada sıfırlanır).
 - Tarama zamanlaması, outbox yeniden deneme beklemesi (ve 24 saatlik yaş sınırı), haftalık hatırlatma, `.prev` yaşı ve yetkisiz-deneme/denetim bildirimlerinin tekrar-engel pencereleri duvar saatine bağlıdır; saat atlarsa gecikebilir, öne gelebilir veya bildirim kısa süre bastırılabilir (bekleyen **onayların** güvenliğini etkilemez). Linux monotonic saati askıya almayı saymaz (VM duraklaması yanlış "saat değişti" üretebilir; güvenli yöndedir).
-- `/grup_tasi`: eski grubun onayı düştükten sonra yeni grup onaylanana kadar başlayan savaşlar, yeni grubun ilk (bildirimsiz) taramasında baseline'a girer ve taşımadan sonra da bildirilmez (kısa pencere; kabul edilen sınır). İki grupta ortak savaşın kaydı yeni grubunkiyle birleşir (en erken ilk görülme korunur).
 - Token `.prev` yedeği tektir: üst üste iki yenilemede (A→B→C) ilk token kaybolur (`.prev` = B). Yedek, taramalar token nedeniyle duraklatılmışken yaş nedeniyle silinmez.
 - Kod sürümünü geri almak normalde veritabanını geri yüklemeyi gerektirmez (PR #4 şemayı değiştirmez; şema geçmişi yalnız sütun ekler). Yedekten geri yükleme yalnız veri bozulmuşsa kullanılır; ayrıntı: `deploy/GUNCELLEME-PLANI.md` §6.
 - Savaş listesi sayfalaması **canlıda doğrulanmadı**; bot "tam liste" bayrağı gelmeyen listeyi eksik sayar. `/members` büyük partide tek istekte **100 üye** döndürür (VPS günlüklerinden); **sayfalama yöntemi, sıralama ölçütü (XP) ve bunun dışındaki üyelere nasıl ulaşılacağı doğrulanmadı** → büyük partilerde okunamayan üyeler izlenemez (özet bunu belirtir). Çözüm, gerçek Network kaydına dayanmalıdır (bkz. `API-ARASTIRMA.md` §9c).
@@ -186,7 +173,7 @@ Hedef: **Ubuntu 24.04 LTS** (Python 3.12), tek VPS, tek bot süreci, systemd. Ad
 **Doğrulanmadı (canlıda denenmeli — plan: `deploy/CANLI-DOGRULAMA-PLANI.md`):**
 - Botun gerçek Diplomacia bağlantısı; `GET /api/players/72400`'ün **kimlik gerektirdiği** (başlıksız ve sahte Bearer ile 401) — bu yüzden token doğrulaması canlıda **kesinleşmiş sayılmaz**.
 - Token ömrü; yeni girişin eski token'ı düşürüp düşürmediği; 401 dışı hata gövdeleri, 403/404/429 anlamları, `Retry-After`; `X-Client-Platform` zorunluluğu; `/members` ve `/api/wars` sayfalaması; `/api/wars/ended`; başka `status`/`war_type` değerleri; `attacker_power`/`defender_power`'ın "hasar" olup olmadığı (arayüzde "Güç" denir); `null` bölge/vatandaşlık anlamı; oyuncu UUID'sinin değişmezliği.
-- Gerçek Telegram: polling, HTML görünümü, gizlilik modu, `delete_message`, `set_my_commands`, göç (`migrate`) olayları, `/grup_tasi` düğmesi, hız sınırları.
+- Gerçek Telegram: polling, HTML görünümü, gizlilik modu, `delete_message`, `set_my_commands`, kanal doğrulaması (`getChat`/`getChatMember`) ve kanala gönderim, hız sınırları.
 - Gerçek Ubuntu VPS: servis başlatma/yeniden başlatma, gerçek süreçte SIGTERM, otomatik yeniden başlama, zamanlayıcı/cron yedeği, uzun süreli çalışma, gerçek NTP saat atlaması.
 
 ## Proje yapısı ve testler

@@ -1,71 +1,35 @@
 # Canlı doğrulama planları
 
 Bu belge iki bölümden oluşur:
-- **Bölüm A — PR #4 sonrası kontrol listesi (mevcut gruplar):** çalışan sunucuda, mevcut iki grupta kısa duman testi. Önce bunu kullanın.
+- **Bölüm A — Merkezi mimariye geçiş sonrası kontrol listesi:** çalışan sunucuda kısa duman testi. Önce bunu kullanın.
 - **Bölüm B — Yeni sunucu için ilk kurulum doğrulama planı (tarihsel/ayrıntılı):** sıfırdan kurulum yapılacaksa. PR #4 dağıtımı için gerekli değildir.
 
 ---
 
-# Bölüm A — PR #4 sonrası kontrol listesi (mevcut gruplar)
+# Bölüm A — Merkezi mimariye geçiş sonrası kontrol listesi
 
-**Durum:** PLAN; çalıştırılmadı. Kapsam: İngilizce arayüz, İstanbul saati, sade `/status`, eski komut takma adları, mevcut veri ve yetki. **Gerçek takip kaydı eklemeyin/silmeyin** (`/addplayer`, `/addparty`, `/removeplayer`, `/removeparty`, `/approve_group`, `/remove_group`, `/grant`, `/revoke`, `/move_group`, `/scan <n>` deneme amacıyla kullanılmaz; bunlar gerçek veriyi değiştirir). Yalnız okuma komutları kullanılır.
+**Durum:** PLAN; çalıştırılmadı. Adım adım geçiş ve migration: [`KANAL-GECISI-PLANI.md`](KANAL-GECISI-PLANI.md). Bu liste geçişten sonraki duman testidir. **Gerçek takip kaydı eklemeyin/silmeyin** (`/addplayer`, `/addparty`, `/removeplayer`, `/removeparty`, `/scan <n>` gerçek veriyi değiştirir); yalnız okuma komutları ve gözlem.
 
-Mevcut gruplar: `-1004375821471` ve `-1004485206993`. Komutları, o grupta zaten yetkili olan kullanıcı/kurucu hesabıyla yazın.
-
-## A.0 Güncellemeden ÖNCE temel çizgi (salt okunur; sonuçları kaydedin)
-```bash
-sudo -u dipbot sqlite3 -readonly /var/lib/dipbot/dipbot.db <<'SQL'
-.headers on
-SELECT 'onayli' k, group_id, donem FROM onayli_gruplar ORDER BY 2;
-SELECT 'yetkili' k, COUNT(*) FROM yetkili_kullanicilar;
-SELECT 'oyuncu' k, group_id, COUNT(*) FROM takip_oyuncular GROUP BY 2 ORDER BY 2;
-SELECT 'parti' k, group_id, COUNT(*) FROM takip_partiler GROUP BY 2 ORDER BY 2;
-SELECT 'savas' k, group_id, COUNT(*) FROM savaslar GROUP BY 2 ORDER BY 2;
-SELECT 'aralik' k, group_id, tarama_araligi_dk FROM grup_ayarlari ORDER BY 2;
-SELECT 'outbox_bekleyen' k, COUNT(*) FROM outbox WHERE durum='bekliyor';
-PRAGMA user_version;
-SQL
-```
-Güncellemeden sonra aynı sorguyu tekrarlayın: onaylı gruplar, yetkili sayısı, oyuncu/parti/savaş sayıları ve tarama aralıkları **aynı** olmalı (oyuncu/parti/savaş sayıları tarama sonucu doğal olarak değişebilir; **azalma** şüphelidir). `user_version` yalnızca §2'de (GUNCELLEME-PLANI) açıklanan 4 → 6 durumunda değişir.
-
-## A.1 Servis
 | # | Kontrol | Beklenen |
 |---|---|---|
-| A.1.1 | `sudo systemctl is-active dipbot` ve `sudo journalctl -u dipbot -n 50 --no-pager --utc` | `active`; "Bot çalışıyor"; hata/uyarı yağmuru yok |
-| A.1.2 | `ls -l /var/lib/dipbot` | `dipbot.db` (varsa `-wal`, `-shm`) sahibi `dipbot`; **root sahipli dosya yok** |
-| A.1.3 | `sudo /opt/dipbot/deploy/onkontrol.sh` | `SONUC: HATA yok` |
-
-## A.2 Telegram — her iki grupta (yalnız okuma komutları)
-| # | Komut / eylem | Beklenen |
-|---|---|---|
-| A.2.1 | `/status` | Tümü İngilizce: `Bot Status`, `Group`, `Tracked Players`, `Tracked Parties`, `Scan Interval`, `Last Successful Scan` (Players / Parties / Wars), `Next Scheduled Scan`, `Scan in Progress`, `Pending Notifications`. Sayılar A.0 ile uyumlu. |
-| A.2.2 | `/status` içinde şu iki metin **hiçbir zaman** olmamalı: "Liste sayfalamasız varsayılmıştır" ve "yapılandırıldı (… canlı bağlantı test edilmedi …)". Ayrıca "Diplomacia connection:" satırı **yalnız** gerçek bir sorun varsa çıkar (sağlıklı durumda yok). Yenile (🔄 Refresh) düğmesini de deneyin. |
-| A.2.3 | `/help` | `/addplayer /players /removeplayer /addparty /parties /removeparty /wars /scan /status /grant /revoke /approve_group /remove_group /move_group` İngilizce açıklamalarla listelenir; Türkçe komut adı listelenmez. |
-| A.2.4 | `/players`, `/parties`, `/wars` | Mevcut yetkilere göre çalışır; mevcut kayıtlar listelenir (A.0 sayılarıyla uyumlu), metinler İngilizce, sayfalama/düğmeler çalışır. `/wars` listesinde "Note: the list is assumed to be unpaginated (unverified)." notu beklenir (yalnız `/status`ten kaldırıldı). |
-| A.2.5 | Eski takma adlar: `/durum`, `/oyuncular`, `/partiler`, `/savaslar`, `/yardim` | Aynı ekranlar, **İngilizce** yanıt. |
-| A.2.6 | Tüm gösterilen zamanlar (`Last Successful Scan`, `Next Scheduled Scan`, savaş/ayrıntı ekranları, bildirimlerdeki `Detected:`/`Time:`) | Biçim `DD.MM.YYYY HH:mm`, **24 saat, AM/PM yok**, **İstanbul saati**. Kontrol: sunucuda `date -u` çıktısı + 3 saat = ekrandaki saat. |
-| A.2.7 | Yetkisiz bir hesap (gruptaki sıradan üye) `/players` veya `/status` yazar | Reddedilir ("You are not authorized to perform this action."); kurucuya (hız sınırlı) yetkisiz deneme bildirimi gider (komut adları İngilizce görünür, ör. `/players`). Sıradan üyeye hiçbir yeni yetki verilmemiştir. |
-| A.2.8 | Onaysız bir grupta bot komutu (varsa test grubu; **yeni grup onaylamayın**) | Bot sessiz kalır; kurucuya tek bildirim. Yoksa bu satırı atlayın. |
-| A.2.9 | Kurucu özel sohbette `/start` → ana menü; ilgili düğmeler (Players/Parties/Wars/Scan Settings/Bot Status/Administration/Help) | İngilizce; menü açılır. (Scan Settings ekranını **açabilirsiniz, aralığı değiştirmeyin**.) |
-
-## A.3 Otomatik tarama ve bildirim
-| # | Kontrol | Beklenen |
-|---|---|---|
-| A.3.1 | `/status` → `Next Scheduled Scan` ve `Scan Interval`; en az bir aralık (10 dk varsayılan) bekleyip tekrar bakın | `Last Successful Scan` zamanları ilerler; `Next Scheduled Scan` mevcut aralıkla (A.0'daki `aralik`) ileri kayar; sunucu saatinden **ileride/anormal** bir tarih yok (eski saat atlaması sorunu yaşanmadı). |
-| A.3.2 | `journalctl -u dipbot --since "-30 min" -p warning` | Uyarı/hata yağmuru yok |
-| A.3.3 | Bildirimler: bir sonraki gerçek değişiklikte (oyuncu bölge/vatandaşlık/ad, parti üyeliği, yeni savaş) gelen mesaj | İngilizce; `Detected: DD.MM.YYYY HH:mm` İstanbul saati; Telegram'a teslim edilir. Beklerken `Pending Notifications` kuyruğu birikmiyor (0'a iniyor). Yapay değişiklik **üretmeyin**. |
-| A.3.4 | Kurucunun özel sohbetinde (denetim/yetkisiz deneme/token hatırlatma) bildirimi geldiyse | İngilizce, saatler İstanbul. |
-
-## A.4 Veri değişmedi mi?
-A.0 sorgularını tekrarlayın: onaylı gruplar, yetkili sayısı, tarama aralıkları **aynı**; oyuncu/parti sayıları azalmamış; `outbox_bekleyen` makul. İki grubun listeleri birbirine karışmamış (A.2.4'te her grupta yalnız kendi kayıtları görünür).
-
-## A.5 Sorun halinde
-Önce GUNCELLEME-PLANI.md §6 (yalnız kodu önceki commit'e alma). Veritabanını yedekten geri yüklemek yalnız veri bozulmuşsa gerekir.
+| A.1 | `sudo systemctl is-active dipbot`; `sudo journalctl -u dipbot -n 80 --no-pager --utc` | `active`; "bildirim kanalı doğrulandı (id=-1003998002227)"; varsa "bekleyen bildirimler hizalandı…" tek satır; hata/uyarı yağmuru yok |
+| A.2 | `ls -l /var/lib/dipbot`; `sudo /opt/dipbot/deploy/onkontrol.sh` | root sahipli `-wal/-shm` yok; `SONUC: HATA yok` |
+| A.3 | Kurucu, bot **özel sohbet**: `/channel` | "✅ The channel exists and the bot can post messages there." (kanala test mesajı atılmaz) |
+| A.4 | `/lists` | "Central tracking list": Players/Parties/Wars known = migrasyon analizindeki "to add" + önceki merkezi kayıtlar; "Migration: applied" (uygulandıysa) |
+| A.5 | `/status` | İngilizce; `Group:` satırı **yok**; `Notification channel: … — ready`; Tracked Players/Parties, Scan Interval (merkezi), Last Successful Scan, Next Scheduled Scan, Scan in Progress, Pending Notifications; iki eski tanı satırı yok; saatler `DD.MM.YYYY HH:mm` İstanbul 24 saat |
+| A.6 | `/players`, `/parties`, `/wars`, eski ad `/durum` | Merkezi liste görünür, İngilizce; grup/liste seçimi istenmez |
+| A.7 | **Eski üç grupta** herhangi bir komut (`/start`, `/status`…) ve düğme | **Hiç yanıt yok**; eski gruplara hiçbir mesaj/uyarı düşmez; botu gruba yeniden ekleme/yönetici yapma hiçbir şey değiştirmez (kurucuya yalnız özel sohbette bilgi gelir) |
+| A.8 | Başka bir kullanıcı bota özelden yazar | "In private chat, this bot is available to the owner only."; kurucuya yetkisiz deneme bildirimi |
+| A.9 | Bir tarama aralığı bekleyin; gerçek bir değişiklik olduğunda | Bildirim **yalnız kanalda** (İngilizce, `Detected: …` İstanbul saati); eski gruplarda hiçbir şey yok; aynı olay tek kez |
+| A.10 | `sqlite3` (dipbot olarak, `-readonly`): eski grup tablolarındaki satır sayıları | Migrasyon öncesi analizdeki sayılarla **aynı** (arşiv silinmedi/değişmedi) |
+| A.11 | Kanaldan botu geçici çıkarma/yetki kaldırma (yalnız bilerek, test için) | Tarama duraklar, kurucuya "Notification channel is not ready"; bildirim kaybolmaz; yetki geri verilince bekleyenler tek kez teslim edilir ve "ready again" gelir |
 
 ---
 
 # Bölüm B — Yeni sunucu için ilk kurulum doğrulama planı (tarihsel/ayrıntılı)
 
+> **TARİHSEL — merkezi mimaride GEÇERSİZ olan adımlar:** 3.8, 3.9, 3.13 ve 3.14 (grup onayı, grup yetkisi, grup göçü/`/move_group`, grup içi komutlar) artık yoktur; gruplar komut işlemez. 3.10'daki komutlar kurucunun özel sohbetinde çalışır. Diğer satırlar geçerlidir.
+>
 > Aşağıdaki bölüm sıfırdan kurulum içindir; eski Türkçe-arayüz dönemine ait ekran metinleri artık **İngilizce**dir (ör. `/grup_onayla` = `/approve_group`, `Bot Status`). Eski komut adları hâlâ çalışır.
 
 **Durum:** PLAN. Bu planın hiçbir adımı henüz çalıştırılmadı: gerçek Diplomacia isteği, gerçek Telegram bağlantısı ve VPS erişimi yoktur. Bulutta yalnız mock testler, `bash -n`, sahte dizin düzeninde `onkontrol.sh`, sahte `systemctl` ile yedek/geri yükleme ve `systemd-analyze verify` (Ubuntu 24.04 / systemd 255, statik) denendi. Aşağıdaki tabloların "Sonuç" sütunları bilerek boştur; **dolduruncaya kadar ilgili davranış doğrulanmış sayılmaz.**

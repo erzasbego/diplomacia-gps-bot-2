@@ -1,78 +1,66 @@
-# Kanal geçişi planı: bildirimler yalnız log kanalına (`-1003998002227`)
+# Merkezi takip mimarisine ve log kanalına geçiş planı
 
-**Durum:** PLAN. Bu belge hazırlanırken canlı VPS'e, Telegram'a veya Diplomacia'ya dokunulmadı; hiçbir şey otomatik dağıtılmadı. Adımları siz sunucuda uygularsınız. Ayrı PM2 servisi `takip-bot`a dokunulmaz.
+**Durum:** PLAN. Bu belge hazırlanırken canlı VPS'e, Telegram'a veya Diplomacia'ya dokunulmadı; gerçek veritabanı üzerinde HİÇBİR migration çalıştırılmadı ve servis yeniden başlatılmadı. Gerçek migration ve canlıya geçiş **kurucunun açık onayıyla** yapılır. Ayrı PM2 servisi `takip-bot`a hiçbir adımda dokunulmaz.
 
-## 1. Ne değişiyor?
-- Tüm otomatik takip bildirimleri (oyuncu / parti / savaş) **yalnız** log kanalına gider. Eski gruplara bildirim gitmez.
-- Gruplarda **hiçbir komut/düğme işlenmez** (sessizce yok sayılır; yanıt, denetim kaydı, bildirim yok). Yönetim yalnız **kurucunun özel sohbetindedir**.
-- Oyuncu/parti/savaş **takip özellikleri ve algoritmaları aynıdır**; veritabanı şeması **değişmez**; hiçbir kayıt silinmez.
-- Üç eski grubun takip listeleri **otomatik birleştirilmez**. Hangi listenin kullanılacağını kurucu `TRACKING_GROUP_IDS` ile seçer; **varsayılan boş: hiçbir liste taranmaz**. Seçilmeyen listeler olduğu gibi saklanır, taranmaz ve bildirim üretmez.
-- Kanal Telegram API'siyle doğrulanır (var mı, tür `channel` mı, bot yönetici ve "Post messages" yetkili mi); hazır değilse tarama duraklar, kanal satırları bekletilir ve kurucuya özel sohbette bildirim gider.
-- Kuyrukta bekleyen **eski grup hedefli** bildirimler açılışta **iptal** edilir (silinmez) — ne gruba ne kanala gider.
-- Kurucuya özel sohbette giden operasyonel bildirimler (denetim, yetkisiz özel sohbet denemesi, token uyarıları, kanal durumu) değişmedi.
+## 1. Yeni mimari (özet)
+- **Telegram log kanalı** (`LOG_CHANNEL_ID`, varsayılan `-1003998002227`): tüm otomatik takip bildirimlerinin (oyuncu, parti, savaş) **tek** hedefi. Kanalda bot komutu çalışmaz.
+- **Kurucunun özel sohbeti:** tek yönetim paneli (oyuncu/parti ekle-sil, tarama ayarı, token, durum, `/channel`, `/lists`). Grup seçimi yoktur.
+- **Merkezi takip alanı:** tek oyuncu listesi, tek parti listesi, tek savaş kaydı, tek tarama yapılandırması. Veri `group_id` sütununda **`0`** (`config.MERKEZ_ID`; Telegram kimliği değil) ile tutulur; **kanal değişse de takip geçmişi korunur**.
+- **Eski üç grup** (`-1004485206993`, `-1004375821471`, `-5571949121`): tamamen devre dışı; yalnız **arşiv ve migration kaynağı**. Komut/buton işlenmez, bildirim/hata mesajı/otomatik cevap gönderilmez, taranmazlar, botun gruba eklenmesi veya yönetici olması hiçbir yetki ya da takip alanı oluşturmaz. Eski kayıtlar veritabanından **silinmez**.
+- Kaldırılanlar: grup onayı/yetkili kullanıcı mantığı (çalışma zamanında okunmaz), `/grant /revoke /approve_group /remove_group /move_group`, grup göçü işleme, **Select Group**, **TRACKING_GROUP_IDS**.
+- Kanal erişilemezse eski gruplara **dönülmez**: tarama duraklar, kanal satırları bekler (hata/deneme sayılmaz), kurucuya özel sohbette tek uyarı gider; kanal düzelince bekleyen bildirimler tam teslim edilir.
+- Açılışta bekleyen outbox satırları hizalanır (silinmez): eski grup kapsamlı satırlar **iptal** (ne gruba ne kanala gider); merkezi kapsamlı satırlar güncel kanala yönlendirilir; kurucu/kanal dışı artıklar iptal. Gönderim anında da aynı koruma vardır.
 
-## 2. Önkoşullar
-1. Botu log kanalına **yönetici** olarak ekleyin ve "Post messages" yetkisini verin (Telegram kanal yönetici ayarları). Kanal kimliği `-1003998002227` olmalı.
-2. PR birleşmiş/inceleme tamam; CI yeşil.
-3. Güvenli yedek yolu için `deploy/GUNCELLEME-PLANI.md` (§3–§4) geçerlidir: yedek her zaman `dipbot` kullanıcısıyla alınır.
+## 2. Migration aracı (`python -m dipbot.migrasyon`)
+- `analiz <db>`: **salt okunur dry-run** (veritabanı `mode=ro` açılır). Gösterir: her eski grubun sayıları, benzersiz/tekilleştirilen oyuncu-parti-savaş, **kaynaklar arası çakışmalar** (alan değerleriyle), atlananlar (zaten merkezde, uid mükerrer, taşınmayan engel), **önerilen merkezi tarama aralığı**, savaş baseline durumu, eski bekleyen bildirim sayısı. Uygulamayla **aynı plan** kullanılır (dry-run = uygulama).
+- `uygula <db> --yedek <yedek.db> --onayliyorum [--aralik N] [--kaynak ID ...]`: tek transaction; yalnız merkezi alana **ekler**; eski kayıtlara dokunmaz; merkezde var olanı ezmez; idempotent (ikinci çalıştırma `zaten_uygulanmis`, `--zorla` ile bile mükerrer oluşmaz); satır sayıları plana eşit değilse **geri alınır**. `--yedek`: dosya var, `integrity_check=ok` ve kaynak tabloların satır sayıları canlı veritabanıyla **aynı** olmalı (bayat/yabancı yedek reddedilir).
+- `geri-al <db> --yedek <yedek.db> --onayliyorum`: yalnız **merkezi alan** kayıtlarını ve migration işaretini kaldırır (eski kayıtlar zaten değişmemiştir). Geçişten sonra merkezde yapılan değişiklikler de silinir; tercih sırası: kod geri alma → yedekten geri yükleme → `geri-al`.
 
-## 3. Adımlar (sırayla; hiçbirinde servisi önce yeniden başlatmayın)
-Değişkenler: `APP=/opt/dipbot`, `DEPLOY_USER="$(stat -c %U $APP/.git)"`.
+**Birleştirme kuralları:** aynı oyuncu/parti birden çok grupta varsa tek kayıt: ilk gözlemi tamam olan + **en güncel gözlemli/doğrulanmış** kayıt seçilir (eşitlikte kaynak sırası); `elle_eklendi` ve `xp_onayli` en yüksek değer; `eklendi` en erken; eksik (NULL) alanlar başka kayıttan **doldurulmaz** (bayat değer sahte değişiklik bildirimi üretmesin); parti üyeleri seçilen parti kaydından; savaşlar **birleşim** (tarihsel kayıt kaybolmaz, en erken ilk görülme); engeller birleşim (merkezde takipli kimliğin engeli taşınmaz); 404 sayaçları en büyüğü; savaş baseline'ı herhangi bir kaynakta tamamsa tamam (bilinen savaşlar için bildirim seli olmaz). Aynı `uid` farklı numarayla tekrar ederse tek kayıt aktarılır (raporlanır).
+
+## 3. Adımlar
+Değişkenler: `APP=/opt/dipbot`, `DB=/var/lib/dipbot/dipbot.db`, `DEPLOY_USER="$(stat -c %U $APP/.git)"`. Tüm SQLite işlemleri `dipbot` kullanıcısıyla yapılır (root sahipli `-wal/-shm` oluşmasın; bkz. `GUNCELLEME-PLANI.md`).
 
 ```bash
-# 0) Durum + geri dönüş noktası
+# 0) Önkoşul: botu log kanalına yönetici yapın ("Post messages" yetkisi). Durum + geri dönüş noktası:
 sudo systemctl status dipbot --no-pager
 ONCEKI_REV="$(sudo -u "$DEPLOY_USER" git -C $APP rev-parse HEAD)"; echo "ONCEKI_REV=$ONCEKI_REV"
 
-# 1) Yedek (zorunlu; başarısızsa DURUN)
+# 1) İlk yedek (zorunlu)
 sudo /usr/local/sbin/dipbot-backup
 
-# 2) Kodu getir ve yalnız ileri sar — servisi YENİDEN BAŞLATMAYIN (çalışan süreç eski kodla sürer)
+# 2) Kodu getir, yalnız ileri sar — servisi YENİDEN BAŞLATMAYIN (çalışan süreç eski kodla sürer)
 sudo -u "$DEPLOY_USER" git -C $APP fetch origin <dal-veya-main>
 sudo -u "$DEPLOY_USER" git -C $APP merge --ff-only FETCH_HEAD
 
-# 3) Mevcut veriyi RAPORLA (salt okunur; hiçbir şeyi değiştirmez/birleştirmez/silmez)
-sudo -u dipbot env PYTHONPATH=$APP/src $APP/.venv/bin/python -m dipbot.rapor /var/lib/dipbot/dipbot.db
-#    ortak kimlik listeleri için: ... -m dipbot.rapor /var/lib/dipbot/dipbot.db --ayrinti
+# 3) DRY-RUN analiz (salt okunur; hiçbir şeyi değiştirmez). Çıktıyı inceleyin ve çakışmalara/aralık önerisine karar verin.
+sudo -u dipbot env PYTHONPATH=$APP/src $APP/.venv/bin/python -m dipbot.migrasyon analiz $DB | tee /tmp/migrasyon-analiz.txt
 ```
-Rapor şunları gösterir: her takip listesi için oyuncu/parti/parti üyesi/savaş sayıları (elle eklenen oyuncu sayısı dahil), tarama aralığı, son başarılı tarama, bekleyen bildirim; listeler arası **ortak** ve **özgün** kimlik sayıları (ad yok); bekleyen kuyruğun hedeflere dağılımı (hangileri iptal edilecek). Çıktıda token/sır yoktur; oyuncu adı yoktur, paylaşabilirsiniz.
+**KARAR NOKTASI (sizin onayınız):** analiz çıktısını (özellikle *CONFLICTS*, *SKIPPED*, *RECOMMENDED CENTRAL SETTINGS*, *OLD PENDING NOTIFICATIONS*) inceleyin. Onaylamadan 4. adıma geçmeyin.
 
 ```bash
-# 4) KARAR (sizin): hangi liste kullanılacak? Listeler OTOMATİK birleştirilmez.
-#    Seçilen liste kimliğini env dosyasına yazın (tek liste önerilir; birden çok liste aynı oyuncu için çift bildirim üretebilir):
-sudo nano /etc/dipbot/dipbot.env      # TRACKING_GROUP_IDS=-100xxxxxxxxxx   (isteğe bağlı: LOG_CHANNEL_ID=-1003998002227)
-sudo ls -l /etc/dipbot/dipbot.env     # beklenen: -rw------- root root
+# 4) Servisi DURDURUN, TAZE yedek alın (yedek, canlı veriyle aynı satır sayısında olmalı), migrasyonu uygulayın
+sudo systemctl stop dipbot
+sudo /usr/local/sbin/dipbot-backup           # çıktıdaki dosyayı not alın: YEDEK=/var/backups/dipbot/dipbot-<damga>.db
+sudo -u dipbot env PYTHONPATH=$APP/src $APP/.venv/bin/python -m dipbot.migrasyon uygula $DB --yedek "$YEDEK" --onayliyorum [--aralik 5]
 
-# 5) Ön kontrol (TRACKING_GROUP_IDS / LOG_CHANNEL_ID biçimini de denetler)
+# 5) Ön kontrol + başlat
 sudo $APP/deploy/onkontrol.sh
-
-# 6) Servis
-sudo systemctl restart dipbot
-sleep 5; sudo systemctl is-active dipbot
-sudo journalctl -u dipbot -n 80 --no-pager --utc
+sudo systemctl start dipbot
+sleep 5; sudo systemctl is-active dipbot; sudo journalctl -u dipbot -n 80 --no-pager --utc
 ```
-Günlükte beklenenler: `bildirim kanalı doğrulandı (id=-1003998002227)`; varsa `kanal geçişi: eski grup hedefli N bekleyen bildirim iptal edildi`; `TRACKING_GROUP_IDS tanımlı değil` uyarısı **olmamalı** (seçtiyseniz). `bildirim kanalı HAZIR DEĞİL` görürseniz botun kanalda yönetici/"Post messages" yetkisini kontrol edin; hazır olana dek tarama yapılmaz.
+Günlükte beklenenler: `bildirim kanalı doğrulandı (id=-1003998002227)`; varsa `bekleyen bildirimler hizalandı: eski grup kapsamlı N iptal …`. `bildirim kanalı HAZIR DEĞİL` görürseniz botun kanaldaki yönetici/"Post messages" yetkisini kontrol edin (tarama bu sürece kadar duraklar).
 
 ## 4. Doğrulama (gerçek kayıt eklemeden/silmeden)
-Kurucu hesabıyla **botun özel sohbetinde**:
-- `/channel` → "✅ The channel exists and the bot can post messages there." (mesaj göndermez; kanala test mesajı atılmaz)
-- `/lists` → seçtiğiniz liste "✅ ACTIVE (scanned)", diğerleri "not active"; sayılar rapordakiyle uyumlu.
-- `/status` → `Notification channel: … — ready`, `Tracking list status: ACTIVE (scanned)` (listeyi Select Group ile seçince).
-- Eski gruplarda `/status`, `/players` vb. yazın → **hiç yanıt gelmez**; eski gruplara hiçbir bildirim düşmez.
-- Bir tarama aralığı (varsayılan 10 dk) sonra: gerçek bir değişiklik olduğunda bildirim **yalnız kanalda** görünür (İngilizce, İstanbul saati). Yapay değişiklik üretmeyin.
-- Veri: önceki rapor sayıları, **tüm listelerde** aynı olmalı (seçilmeyenler dahil; azalma yok). `PRAGMA user_version` değişmez.
+Kurucu hesabıyla botun **özel sohbetinde**: `/channel` (✅ kanal var, bot gönderebiliyor), `/lists` (merkezi liste sayıları = analizdeki "to add" + önceki merkezi kayıtlar; "Migration: applied"), `/status` (kanal "ready", Group satırı yok), `/players`, `/parties`, `/wars`. Eski gruplarda herhangi bir komut yazın → **yanıt yok**. Bir tarama aralığı sonra gerçek bir değişiklik olduğunda bildirim **yalnız kanalda** görünür; eski gruplara hiçbir şey düşmez. Analizdeki eski grup sayıları `sqlite3` ile aynen durur (kaynak kayıtlar silinmemiş/değişmemiş).
 
-## 5. Dikkat edilecekler
-- **Seçilmeyen listeler taranmaz:** o listelerdeki oyuncu/parti/savaşlar için bildirim gelmez. Hepsini kapsamak istiyorsanız bu **ayrı bir karardır** (listeleri birleştirme veya birden çok liste seçme); bu sürüm bunu otomatik yapmaz.
-- Daha önce taranmayan bir liste sonradan seçilirse, aradaki değişiklikler ilk taramada toplu bildirilebilir.
-- `TRACKING_GROUP_IDS` içindeki liste `onayli_gruplar`'da (onaylı) değilse taranmaz; onayı kaldırılmış liste için bekleyen bildirimler durur (mevcut davranış).
-- Bu belgedeki komutlar `dipbot` kullanıcısıyla çalışır; canlı SQLite'a root ile dokunmayın (bkz. `GUNCELLEME-PLANI.md`).
+## 5. Bilinen sınırlar / dikkat
+- **Geçişte iptal edilen eski bekleyen bildirimler** (analizde sayısı yazar) hiçbir yere gönderilmez: bunlar eski gruplara üretilmiş ama henüz gönderilmemiş değişikliklerdir (kayıttaki gözlem zaten güncel olduğundan kanalda yeniden duyurulmazlar). İstenirse tutarsızlıklar analizdeki çakışma/bekleyen sayılarından elle incelenebilir.
+- Tarama aralığı kaynaklarda farklıysa merkezi aralık için **en kısa** önerilir; `--aralik` ile değiştirilebilir (5/10/15/20).
+- Aynı oyuncunun gözlemleri gruplarda farklıysa en güncel gözlem esas alınır; ilk merkezi taramada kayıtla gerçek durum farklıysa o oyuncu için **tek** bildirim kanala gider.
+- Gerçek veritabanı bu geliştirmede görülmedi: dry-run çıktısı sunucuda üretilmelidir.
 
 ## 6. Geri dönüş
-Yalnız kod ve env: 
-```bash
-sudo -u "$DEPLOY_USER" git -C $APP checkout --detach <ONCEKI_REV>
-sudo nano /etc/dipbot/dipbot.env       # TRACKING_GROUP_IDS / LOG_CHANNEL_ID satırlarını kaldırın veya yorum yapın
-sudo systemctl restart dipbot
-```
-Eski kod bildirimleri yeniden **eski gruplara** gönderir. İptal edilen eski grup bildirimleri geri gelmez (satırlar `iptal` olarak kalır). Veritabanı şeması değişmediği için DB geri yüklemesi gerekmez.
+1. **Yalnız kod (önerilen, veri kaybı yok):** servis durdurulur, `sudo -u "$DEPLOY_USER" git -C $APP checkout --detach $ONCEKI_REV`, servis başlatılır. Eski kod yalnız onaylı eski grupları tarar ve `group_id=0` kayıtlarını yok sayar; eski grup kayıtları migrasyonla değişmediği için eski davranış geri gelir (bildirimler yeniden eski gruplara gider).
+2. **Merkezi kayıtları kaldırma:** `... -m dipbot.migrasyon geri-al $DB --yedek <taze yedek> --onayliyorum` (yalnız merkezi alan kayıtları + migrasyon işareti; geçişten sonra merkezde yapılan ekleme/silmeler de gider).
+3. **Tam geri yükleme (yalnız veri bozulduysa):** `sudo systemctl stop dipbot; sudo /usr/local/sbin/dipbot-restore <migrasyon öncesi yedek>`; servisi başlatın.
