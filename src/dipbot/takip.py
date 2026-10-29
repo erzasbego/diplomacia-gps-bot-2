@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from . import config, outbox
-from .db import islem
+from .db import alan_aktif, islem
 from .kaynak import (
     DiplomaciaSource,
     EksikVeri,
@@ -150,17 +150,20 @@ class SavasGorunumu:
 
 
 class TakipServisi:
-    def __init__(self, conn: sqlite3.Connection, saat: Saat = simdi_utc):
+    def __init__(self, conn: sqlite3.Connection, saat: Saat = simdi_utc, kanal_id: int | None = None):
         self.conn = conn
         self.saat = saat
+        self._kanal_id = kanal_id
+
+    @property
+    def kanal_id(self) -> int:
+        """Takip bildirimlerinin TEK hedefi: log kanalı (varsayılan config.LOG_KANAL_ID)."""
+        return self._kanal_id if self._kanal_id is not None else config.LOG_KANAL_ID
 
     # ---- yardımcılar -----------------------------------------------------
     def _onay_sart(self, group_id: int) -> None:
         """Servis katmanı yetki sınırı: onaysız grup için hiçbir değişiklik yapılmaz."""
-        if (
-            self.conn.execute("SELECT 1 FROM onayli_gruplar WHERE group_id=?", (group_id,)).fetchone()
-            is None
-        ):
+        if not alan_aktif(self.conn, group_id):
             raise GrupOnaysiz(group_id)
 
     @staticmethod
@@ -196,10 +199,7 @@ class TakipServisi:
         return r[0] if r else None
 
     def _onayli_mi(self, group_id: int) -> bool:
-        return (
-            self.conn.execute("SELECT 1 FROM onayli_gruplar WHERE group_id=?", (group_id,)).fetchone()
-            is not None
-        )
+        return alan_aktif(self.conn, group_id)
 
     def _yetki_var_mi(self, islem_yapan: int | None, kurucu_id: int | None) -> bool:
         """GÜNCEL DB durumuyla yetki denetimi. islem_yapan None: eski çağrı biçimi (denetim yok)."""
@@ -215,12 +215,13 @@ class TakipServisi:
         )
 
     def _grup_kuyruk(self, group_id, tur, idem, veri, simdi) -> bool:
-        if not self.conn.execute("SELECT 1 FROM onayli_gruplar WHERE group_id=?", (group_id,)).fetchone():
+        if not alan_aktif(self.conn, group_id):
             return False  # uçuştaki tarama sırasında onay kalktıysa bildirim üretilmez
-        # Normal bildirimler yalnız ilgili grubun sohbetine gider (grup sohbet kimliği = group_id).
+        # Takip bildirimleri YALNIZ log kanalına gider; group_id yalnız takip LİSTESİNİN kimliğidir (onay dönemi,
+        # idempotency anahtarı). Eski grup sohbetine hiçbir bildirim hedeflenmez.
         return outbox.kuyruga_ekle(
             self.conn,
-            hedef_sohbet=group_id,
+            hedef_sohbet=self.kanal_id,
             grup_id=group_id,
             tur=tur,
             idem_anahtari=f"{tur}:{group_id}:{idem}",

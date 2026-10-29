@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .. import config
 from ..config import Ayarlar
 from ..diplomacia.istemci import GecersizNumara, numara_dogrula
 
@@ -22,6 +23,7 @@ class TelegramAyarlari:
     ayarlar: Ayarlar
     token_dosyasi: Path  # Diplomacia oyun hesabı token'ı (BOT_TOKEN değil); DB dışında, 0600
     dogrulama_oyuncusu: str = "72400"  # token doğrulamada sorgulanan herkese açık oyuncu (sır değil)
+    kanal_id: int = config.LOG_KANAL_ID  # TÜM takip bildirimlerinin tek hedefi (Telegram kanalı)
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "TelegramAyarlari":
@@ -44,4 +46,13 @@ class TelegramAyarlari:
             raise YapilandirmaHatasi(
                 "DIPLOMACIA_DOGRULAMA_OYUNCU geçersiz (1-12 haneli pozitif oyuncu numarası bekleniyor)"
             ) from None
-        return cls(bot_token, ayarlar, token_dosyasi, oyuncu)
+        kanal_ham = env.get("LOG_CHANNEL_ID", "").strip()
+        kanal_id = config.LOG_KANAL_ID
+        if kanal_ham:
+            try:
+                kanal_id = int(kanal_ham)
+            except ValueError:
+                kanal_id = 0
+            if kanal_id >= 0:
+                raise YapilandirmaHatasi("LOG_CHANNEL_ID negatif bir Telegram sohbet kimliği olmalı (ör. -100...)")
+        return cls(bot_token, ayarlar, token_dosyasi, oyuncu, kanal_id)

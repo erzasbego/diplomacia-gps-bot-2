@@ -15,7 +15,8 @@ from fakes import SahteKaynak, SahteSaat
 
 
 def _degisimler(conn, grup=G1):
-    return [d for b in bildirimler(conn, "oyuncu_degisti", hedef=grup) for d in b["veri"]["degisimler"]]
+    """Takip bildirimleri artık log kanalına gider; hangi takip listesine ait olduğu grup_id ile ayrılır."""
+    return [d for b in bildirimler(conn, "oyuncu_degisti") if b["grup_id"] == grup for d in b["veri"]["degisimler"]]
 
 
 def _satir(conn, grup, oid):
@@ -118,8 +119,10 @@ def test_birden_fazla_grupta_ayni_oyuncu_gruplar_bagimsiz(conn, servis, src):
     run(servis.oyuncu_ekle(G2, "5", src))  # G2 sonradan ekledi, bölgeyi bilmiyor
     src.oyuncu("5", "Ali", "İstanbul", "TR")
     run(servis.oyuncular_tara(G1, src)); run(servis.oyuncular_tara(G2, src))
-    assert len(bildirimler(conn, "oyuncu_degisti", hedef=G1)) == 1, "G1'in gerçek değişikliği bildirilir"
-    assert bildirimler(conn, "oyuncu_degisti", hedef=G2) == [], "G2 için bu İLK gerçek bilgi: sessiz"
+    b = bildirimler(conn, "oyuncu_degisti")
+    assert [x["grup_id"] for x in b] == [G1], "G1'in gerçek değişikliği bildirilir"
+    assert {x["hedef_sohbet"] for x in b} == {config.LOG_KANAL_ID}
+    assert [x for x in b if x["grup_id"] == G2] == [], "G2 için bu İLK gerçek bilgi: sessiz"
     assert _satir(conn, G2, "5")["bolge"] == "İstanbul"
 
 

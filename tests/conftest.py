@@ -64,3 +64,28 @@ def servis(conn, saat):
 @pytest.fixture
 def gonderici():
     return SahteGonderici()
+
+
+@pytest.fixture(autouse=True)
+def _liste_secimi(monkeypatch):
+    """Gruplar komut işlemez; testler 'grup_komut/grup_dugme' ile kurucunun ÖZEL sohbetinde çalışır. Üretimde TEK merkezi
+    takip alanı vardır; alan-yalıtımı/algoritma testleri için olayın taşıdığı `liste` değeri Arayuz.kapsam'a atanır."""
+    from dipbot.tg.arayuz import Arayuz
+
+    orig_komut, orig_buton = Arayuz.komut, Arayuz.buton
+
+    def sec(self, o):
+        liste = getattr(o, "liste", None)
+        if liste is not None and o.kullanici_id is not None:
+            self.kapsam = liste  # test: alan-yalıtımı için başka takip alanı (üretimde hep merkezi alan)
+
+    async def komut(self, o):
+        sec(self, o)
+        return await orig_komut(self, o)
+
+    async def buton(self, o):
+        sec(self, o)
+        return await orig_buton(self, o)
+
+    monkeypatch.setattr(Arayuz, "komut", komut)
+    monkeypatch.setattr(Arayuz, "buton", buton)

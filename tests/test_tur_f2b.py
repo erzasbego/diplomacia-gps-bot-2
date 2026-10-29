@@ -443,7 +443,7 @@ def test_deploy_betikleri_ve_belgeler_mevcut_ve_tutarli():
         assert os.path.isfile(os.path.join(KOK, "deploy", ad))
     kok_readme = open(os.path.join(KOK, "README.md"), encoding="utf-8").read()
     for anahtar in ("BOT_TOKEN", "OWNER_TELEGRAM_ID", ".prev", "aralıklı", "CANLI-DOGRULAMA-PLANI", "Doğrulanmadı",
-                    "/grup_tasi", "systemd"):
+                    "/channel", "systemd"):
         assert anahtar in kok_readme, anahtar
     gizli = ("eyJ",)  # gerçek JWT başlangıcı belgelerde bulunmamalı
     for ad in ("README.md", os.path.join("deploy", "README-DEPLOY.md"), os.path.join("deploy", "CANLI-DOGRULAMA-PLANI.md"),

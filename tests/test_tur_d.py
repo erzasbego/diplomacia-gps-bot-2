@@ -206,13 +206,24 @@ def test_c6b_onay_aninda_yetkisi_alinan_kullanici_butonla_parti_kaldiramaz(ui, c
     for o in ("1", "2"):
         src.oyuncu(o, "A" + o)
     src.parti("5830", "TEKNO", [("1", "A1"), ("2", "A2")])
-    run(ui.komut(grup_komut("parti_ekle", "5830", kul=YETKILI)))
-    y = run(ui.komut(grup_komut("parti_sil", "5830", kul=YETKILI)))
-    kid = onay_kimligi(y)
+    """BİLİNÇLİ DEĞİŞİKLİK: yetkili kullanıcı artık grupta komut da vermez; parti kurucunun özel sohbetinde eklenir.
+    Yetkilinin grupta verdiği komut yok sayılır (None); elle üretilmiş onay işlemi bile grup düğmesinden (yetkisi
+    alındıktan sonra) hiçbir şeyi silmez ve hiçbir uyarı/mesaj üretmez."""
+    assert run(ui.komut(grup_komut("parti_ekle", "5830", kul=YETKILI))) is None  # grup: yok sayılır
+    assert takipte(conn, G1) == set()
+    run(ui.komut(grup_komut("parti_ekle", "5830")))  # kurucu, özel sohbet (liste G1)
+    assert takipte(conn, G1) == {"1", "2"}
+    assert run(ui.komut(grup_komut("parti_sil", "5830", kul=YETKILI))) is None
+    on = run(ui.komut(grup_komut("parti_sil", "5830")))
+    assert onay_kimligi(on)  # kurucu için onay üretilir
+    ozet = ui.islemler.getir(onay_kimligi(on)).veri["ozet"]
+    kid = ui.islemler.olustur("parti_sil", G1, YETKILI, G1, {"parti_id": "5830", "ozet": ozet})  # elle üretilmiş
     yonetim.yetki_al(conn, saat, KURUCU, KURUCU, YETKILI)
-    run(ui.buton(grup_dugme(f"c:e:{kid}", kul=YETKILI)))
+    y = run(ui.buton(grup_dugme(f"c:e:{kid}", kul=YETKILI)))
+    assert y.sessiz and not y.metin and y.uyari is None
     assert takipte(conn, G1) == {"1", "2"}
     assert conn.execute("SELECT COUNT(*) FROM takip_partiler WHERE group_id=?", (G1,)).fetchone()[0] == 1
+    assert not conn.execute("SELECT 1 FROM yetkisiz_denemeler").fetchall()
 
 
 # ---------------------------------------------------------------- C7 (belgeleyici sınır testleri)

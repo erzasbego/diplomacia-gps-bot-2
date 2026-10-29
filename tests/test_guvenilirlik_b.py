@@ -16,7 +16,7 @@ from dipbot.kaynak import IstekSiniri, OyuncuAnlik
 from dipbot.outbox import GonderimHatasi
 from dipbot.takip import OyuncuOzeti
 from dipbot.zamanlayici import TaramaZamanlayici
-from tg_fakes import YETKILI, YABANCI, dugme, grup_dugme, grup_komut, onay_kimligi
+from tg_fakes import YETKILI, YABANCI, dugme, gercek_grup_dugme, grup_dugme, grup_komut, onay_kimligi
 from fakes import SahteGonderici
 
 
@@ -269,8 +269,9 @@ def test_k13_ozel_sohbette_sohbet_kullanici_ayni_olmali_ve_token_yalniz_kurucu(c
     # kurucu, sohbet kimliği kendisininkinden farklı özel sohbette de açamaz
     y = run(ui.buton(dugme("tk", sohbet=555, tur="private", kul=KURUCU)))
     assert y.sessiz and not y.metin
-    # kurucu grupta açamaz; kendi özel sohbetinde açabilir
-    assert not run(ui.buton(grup_dugme("tk"))).metin
+    # kurucu grupta açamaz (grup düğmeleri sessizce yok sayılır: metin/uyarı yok); kendi özel sohbetinde açabilir
+    y = run(ui.buton(gercek_grup_dugme("tk")))
+    assert y.sessiz and not y.metin and y.uyari is None
     assert run(ui.buton(dugme("tk", sohbet=KURUCU, tur="private", kul=KURUCU))).metin
 
 

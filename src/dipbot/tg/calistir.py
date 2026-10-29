@@ -22,7 +22,7 @@ from typing import Mapping
 from telegram.error import InvalidToken, TelegramError
 from telegram.ext import Application
 
-from .. import db
+from .. import config, db, outbox
 from ..diplomacia.dogrulayici import OyuncuDogrulayici
 from ..diplomacia.istemci import IstemciKaynagi, OrtamKimlik
 from ..zamanlayici import TaramaZamanlayici
@@ -30,6 +30,7 @@ from ..zaman import simdi_utc
 from .arayuz import Arayuz
 from .gonderici import TelegramGonderici
 from .gunluk import gunluk_kur
+from .kanal import KanalDogrulayici
 from .kaynak_yok import YapilandirilmamisKaynak
 from .token import TokenDeposu, TokenDogrulayici, YapilandirilmamisDogrulayici
 from .uygulama import (
@@ -106,7 +107,17 @@ async def calistir(
     kaynak = kaynak if kaynak is not None else kaynak_olustur(ta.token_dosyasi)
     token_deposu = TokenDeposu(ta.token_dosyasi)
     token_deposu.eski_gecicileri_temizle()
-    zamanlayici = TaramaZamanlayici(conn, kaynak, kurucu, token_deposu=token_deposu)
+    # Eski gruplara bildirim YOK: bekleyen eski grup hedefli satırlar iptal edilir (silinmez); kanala GİTMEZ.
+    h = outbox.bekleyenleri_hizala(conn, kurucu, ta.kanal_id)
+    if h.eski_kapsam_iptal or h.hedef_iptal or h.kanala_yonlendirilen:
+        log.warning("bekleyen bildirimler hizalandı: eski grup kapsamlı %d iptal (gönderilmeyecek), %d kanala "
+                    "yönlendirildi, %d hedefsiz artık iptal", h.eski_kapsam_iptal, h.kanala_yonlendirilen, h.hedef_iptal)
+    app = Application.builder().token(ta.bot_token).build()
+    kanal = KanalDogrulayici(app.bot, ta.kanal_id)
+    zamanlayici = TaramaZamanlayici(
+        conn, kaynak, kurucu, token_deposu=token_deposu,
+        kapsamlar=frozenset({config.MERKEZ_ID}), kanal_id=ta.kanal_id, kanal=kanal,
+    )
     arayuz = Arayuz(
         conn,
         zamanlayici.kaynak,  # zamanlayıcıyla AYNI SinirliKaynak (tek eşzamanlılık sınırı)
@@ -114,9 +125,9 @@ async def calistir(
         zamanlayici=zamanlayici,
         dogrulayici=dogrulayici or dogrulayici_olustur(ta.token_dosyasi, oyuncu_no=ta.dogrulama_oyuncusu),
         token_deposu=token_deposu,
+        kanal=kanal,
     )
-    app = Application.builder().token(ta.bot_token).build()
-    gonderici = TelegramGonderici(app.bot, goc_geri_cagrisi=arayuz.grup_goc)
+    gonderici = TelegramGonderici(app.bot, izinli_hedefler={kurucu, ta.kanal_id}, kanal=kanal)
     durdur = asyncio.Event()
     sonuc = {"kod": 0}
 
@@ -140,6 +151,7 @@ async def calistir(
             log.warning("komut listesi kaydedilemedi: %s", type(e).__name__)
         log.info("Bot kullanıcı adı: @%s; grup mesajlarının tümünü okur: %s",
                  app.bot.username, app.bot.can_read_all_group_messages)
+        await kanal.dogrula()  # kanal var mı + botun gönderme yetkisi var mı (mesaj göndermeden); sonuç günlükte/durum ekranında
         await app.updater.start_polling(allowed_updates=IZINLI_GUNCELLEMELER, drop_pending_updates=False)
         polling = True
         tarama = asyncio.create_task(zamanlayici.calis(gonderici, tarama_durdur), name="tarama")

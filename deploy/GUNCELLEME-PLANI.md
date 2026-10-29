@@ -1,3 +1,5 @@
+> **Sonraki sürüm (kanal geçişi):** bildirimlerin yalnız log kanalına gitmesi, grup komutlarının kapatılması ve takip listesi seçimi için bkz. [`KANAL-GECISI-PLANI.md`](KANAL-GECISI-PLANI.md). Aşağıdaki plan PR #4 içindir.
+
 # Canlı VPS güvenli güncelleme planı — PR #4 (İngilizce arayüz, İstanbul saati, sade `/status`)
 
 **Durum:** PLAN. Bu belge hazırlanırken canlı VPS'e dokunulmadı: hiçbir dosya değiştirilmedi, `dipbot` servisi durdurulmadı veya yeniden başlatılmadı; ayrı PM2 servisi `takip-bot`a hiçbir koşulda dokunulmaz. Aşağıdaki adımları siz sunucuda çalıştırırsınız. Betikler bulutta yalnız sahte dizin, sahte `id`/`runuser`/`systemctl`/`pip` ve yerel git depolarıyla test edildi; **gerçek sunucuda çalıştırılmadı** (özellikle gerçek `chown`/sahiplik davranışı, gerçek `runuser`, gerçek SSH deploy anahtarı).

@@ -6,7 +6,7 @@ import pytest
 
 from conftest import G1, G2, KURUCU, bildirimler, run, takipte
 
-from dipbot import db, outbox, yonetim
+from dipbot import config, db, outbox, yonetim
 from dipbot.db import islem
 from dipbot.kaynak import SavasDetay, SavasOzet, SavasTaraf, SiteErisilemez
 from dipbot.takip import TakipServisi
@@ -26,7 +26,8 @@ def test_k16_ilk_savas_taramasi_bildirim_yagmuru_olusturmaz(conn, servis, src):
     run(servis.savaslari_tara(G1, src))
     run(servis.savaslari_tara(G1, src))
     b = bildirimler(conn, "yeni_savas")
-    assert len(b) == 1 and b[0]["veri"]["savas_id"] == "w99" and b[0]["hedef_sohbet"] == G1
+    assert len(b) == 1 and b[0]["veri"]["savas_id"] == "w99"
+    assert b[0]["grup_id"] == G1 and b[0]["hedef_sohbet"] == config.LOG_KANAL_ID  # takip bildirimleri log kanalına
 
 
 def test_savas_baseline_hata_halinde_tamamlanmaz(conn, servis, src):
@@ -85,14 +86,16 @@ def test_k11_gruplarin_listeleri_ve_ayarlari_ayridir(conn, servis, src, saat):
     run(servis.oyuncular_tara(G1, src))
     run(servis.oyuncular_tara(G2, src))
     b = bildirimler(conn, "oyuncu_degisti")
-    assert [x["hedef_sohbet"] for x in b] == [G2]
+    assert [x["grup_id"] for x in b] == [G2]
+    assert {x["hedef_sohbet"] for x in b} == {config.LOG_KANAL_ID}
     # Aynı oyuncu iki grupta: her grup kendi bildirimini bir kez alır
     run(servis.oyuncu_ekle(G1, "a", src))
     src.oyuncu("a", "A3")
     run(servis.oyuncular_tara(G1, src))
     run(servis.oyuncular_tara(G2, src))
     b = bildirimler(conn, "oyuncu_degisti")
-    assert sorted(x["hedef_sohbet"] for x in b) == sorted([G2, G1, G2])
+    assert sorted(x["grup_id"] for x in b) == sorted([G2, G1, G2])
+    assert {x["hedef_sohbet"] for x in b} == {config.LOG_KANAL_ID}
     # Parti kaldırma başka grubu etkilemez
     run(servis.parti_ekle(G2, "P", src))
     o = run(servis.parti_kaldirma_hazirla(G1, "P", src))

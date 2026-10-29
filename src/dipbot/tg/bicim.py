@@ -294,7 +294,7 @@ _ISLEM_GOSTER = {
     "/grup_onayla": "/approve_group",
     "/grup_kaldir": "/remove_group",
     "/grup_tasi": "/move_group",
-    "onaysiz_gruba_eklendi": "added to an unapproved group",
+    "onaysiz_gruba_eklendi": "added to a group",
 }
 
 
@@ -309,15 +309,16 @@ def _yetkisiz(v: dict) -> str:
     islem = str(v.get("islem") or "")
     gid = v.get("grup_id")
     if islem == "onaysiz_gruba_eklendi":
-        satirlar = [_b("⚠️ Bot was added to an unapproved group")]
+        satirlar = [_b("⚠️ Bot was added to a group")]
     else:
         satirlar = [_b("⚠️ Unauthorized usage attempt")]
     satirlar.append(f"User ID: <code>{esc(v.get('kullanici_id') if v.get('kullanici_id') is not None else 'unknown')}</code>")
     satirlar.append(f"Group ID: <code>{esc(gid if gid is not None else 'private chat/none')}</code>")
     satirlar.append(f"Action: {esc(_islem_goster(islem))}")
     satirlar.append(f"Time: {tarih(v.get('zaman'))}")
-    if islem == "onaysiz_gruba_eklendi" and gid is not None:
-        satirlar.append(f"To approve: <code>/approve_group {esc(gid)}</code>")
+    if islem == "onaysiz_gruba_eklendi":
+        satirlar.append("Groups are not supported: all commands are ignored, nothing is sent there and being an "
+                        "administrator grants no permissions. No tracking area is created.")
     return "\n".join(satirlar)
 
 
@@ -348,22 +349,6 @@ def _token_gecersiz(v: dict) -> str:
             _b("🔑 Diplomacia site rejected the token (401)"),
             "The cause has not been verified (it may have expired, been changed, or there may be another problem). Scans are paused. In a private chat with the bot, send "
             "a new token via Administration > Renew Token.",
-            f"Time: {tarih(v.get('zaman'))}",
-        ]
-    )
-
-
-def _grup_goc(v: dict) -> str:
-    return "\n".join(
-        [
-            _b("♻️ Group ID changed (upgraded to supergroup)"),
-            f"Old ID: <code>{esc(v.get('eski'))}</code>",
-            f"New ID: <code>{esc(v.get('yeni'))}</code> — NOT APPROVED, no actions can be performed.",
-            "The old ID's approval was automatically revoked (scanning and sending stopped); the old tracking data was NOT deleted.",
-            "To move the data to the new ID, do the following in order (owner, private chat):",
-            f"1) <code>/approve_group {esc(v.get('yeni'))}</code>",
-            f"2) <code>/move_group {esc(v.get('eski'))} {esc(v.get('yeni'))}</code> (confirmed with a button)",
-            "No data is moved without owner approval.",
             f"Time: {tarih(v.get('zaman'))}",
         ]
     )
@@ -406,7 +391,31 @@ def _denetim_ozet(v: dict) -> str:
     )
 
 
+def _kanal_durumu(v: dict) -> str:
+    kanal = f"Channel ID: <code>{esc(v.get('kanal_id'))}</code>"
+    if v.get("hazir"):
+        return "\n".join(
+            [
+                _b("✅ Notification channel is ready again"),
+                kanal,
+                "Tracking scans have resumed; queued notifications will be delivered to the channel.",
+                f"Time: {tarih(v.get('zaman'))}",
+            ]
+        )
+    return "\n".join(
+        [
+            _b("⚠️ Notification channel is not ready"),
+            kanal,
+            f"Reason: {esc(v.get('neden'))}",
+            "Tracking scans are paused and no tracking notifications are sent until the bot can post in the channel "
+            "(add the bot as an administrator with the 'Post messages' permission).",
+            f"Time: {tarih(v.get('zaman'))}",
+        ]
+    )
+
+
 _BICIMLER = {
+    "kanal_durumu": _kanal_durumu,
     "denetim": _denetim,
     "denetim_ozet": _denetim_ozet,
     "oyuncu_degisti": _oyuncu_degisti,
@@ -418,7 +427,6 @@ _BICIMLER = {
     "yetkisiz_ozet": _yetkisiz_ozet,
     "token_gecersiz": _token_gecersiz,
     "token_hatirlatma": _token_hatirlatma,
-    "grup_goc": _grup_goc,
 }
 
 

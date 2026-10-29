@@ -138,8 +138,11 @@ def test_yetki_ver_ozel_telegram_kimliklerini_reddeder(conn, saat, kimlik):
 def test_yetki_ver_komutu_ozel_kimlikte_anlasilir_mesaj_verir(conn, saat, src):
     from tg_fakes import komut
     ui, _ = _ui_ve_zamanlayici(conn, saat, src)
-    y = run(ui.komut(komut("yetki_ver", "1087968824")))
-    assert "Could not grant access" in y.metin and "Access granted" not in y.metin
+    # DELIBERATE CHANGE: /grant (yetki_ver) was removed from Telegram, so the command is not dispatched at all (None);
+    # the service layer still rejects special Telegram IDs (see the test above) and nothing is granted.
+    assert run(ui.komut(komut("yetki_ver", "1087968824"))) is None
+    assert run(ui.komut(komut("grant", "1087968824"))) is None
+    assert conn.execute("SELECT COUNT(*) FROM yetkili_kullanicilar WHERE user_id=?", (1087968824,)).fetchone()[0] == 0
 
 
 def test_tam_sayi_asiri_buyuk_degeri_reddeder():

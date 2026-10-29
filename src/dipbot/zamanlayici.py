@@ -16,7 +16,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from . import config, outbox
-from .db import islem
+from .db import alan_aktif, islem
 from .maske import maskele
 from .kaynak import (
     DiplomaciaSource,
@@ -46,12 +46,21 @@ class TaramaZamanlayici:
         istek_esler: int = config.SOURCE_MAX_CONCURRENT_REQUESTS,
         istek_zaman_asimi: float = config.SOURCE_REQUEST_TIMEOUT_SECONDS,
         token_deposu=None,
+        kapsamlar=None,
+        kanal_id: int | None = None,
+        kanal=None,
     ):
+        # kapsamlar: taranacak takip ALANLARI. ÜRETİMDE yalnız merkezi alan ({config.MERKEZ_ID}); eski grup kimlikleri
+        # (arşiv) ASLA taranmaz. None = onaylı tüm alanlar (yalnız alan-yalıtımı/algoritma testleri için).
+        self._aktif = None if kapsamlar is None else frozenset(int(x) for x in kapsamlar)
+        self._kanal_id = kanal_id
+        self._kanal = kanal  # KanalDogrulayici (veya None): hazır değilken tarama duraklar, kanal satırları bekler
+        self._kanal_bildirilen_hazir_degil = False
         self._token_deposu = token_deposu  # yalnız var_mi()/son_degisiklik() için; token okunmaz
         self.conn = conn
         self.kurucu_id = kurucu_id
         self.saat = saat
-        self.takip = TakipServisi(conn, saat)
+        self.takip = TakipServisi(conn, saat, kanal_id=kanal_id)  # bildirim hedefi gönderici/izinli hedeflerle AYNI kanal
         self._kaynak = SinirliKaynak(kaynak, istek_esler, istek_zaman_asimi, kusak_fn=lambda: self._token_kusagi)
         self._sem = asyncio.Semaphore(grup_esler)
         self._calisan: set[int] = set()  # çalışan grup taramaları (kilit)
@@ -64,6 +73,15 @@ class TaramaZamanlayici:
         self._token_kusagi = 0  # token_devam_ettir her çağrıda artar (bayat 401'leri ayırt etmek için)
 
     # ---- durum -----------------------------------------------------------
+    @property
+    def kapsamlar(self):
+        """Taranan takip alanları (None: kısıtsız, yalnız testler)."""
+        return self._aktif
+
+    @property
+    def kanal_id(self) -> int:
+        return self._kanal_id if self._kanal_id is not None else config.LOG_KANAL_ID
+
     @property
     def token_duraklatildi(self) -> bool:
         return self._token_dur
@@ -259,10 +277,14 @@ class TaramaZamanlayici:
             return []
         kaynak = TaramaOnbellegi(self._kaynak)  # yalnız bu turda istek paylaşımı
         gorevler = []
-        satirlar = self.conn.execute(
-            "SELECT o.group_id AS gid, a.sonraki_tarama AS sonraki FROM onayli_gruplar o"
-            " LEFT JOIN grup_ayarlari a ON a.group_id=o.group_id ORDER BY o.group_id"
-        ).fetchall()
+        if self._aktif is None:  # yalnız testler: onaylı tüm alanlar
+            alanlar = [r[0] for r in self.conn.execute("SELECT group_id FROM onayli_gruplar ORDER BY group_id")]
+        else:
+            alanlar = sorted(g for g in self._aktif if alan_aktif(self.conn, g))
+        satirlar = []
+        for gid in alanlar:
+            a_ = self.conn.execute("SELECT sonraki_tarama FROM grup_ayarlari WHERE group_id=?", (gid,)).fetchone()
+            satirlar.append({"gid": gid, "sonraki": a_[0] if a_ else None})
         for r in satirlar:
             gid = r["gid"]
             if gid in self._calisan:
@@ -290,11 +312,8 @@ class TaramaZamanlayici:
                 ):
                     if self._token_dur:
                         break
-                    onayli = self.conn.execute(
-                        "SELECT 1 FROM onayli_gruplar WHERE group_id=?", (gid,)
-                    ).fetchone()
-                    if onayli is None:
-                        break  # onay kaldırıldı: tarama durur
+                    if not alan_aktif(self.conn, gid):
+                        break  # alan artık aktif değil (yalnız testler: onay kaldırıldı): tarama durur
                     try:
                         sonuc = await fn(gid, kaynak)
                     except TokenGecersiz as e:
@@ -345,6 +364,41 @@ class TaramaZamanlayici:
                 self._prev_sil("yeni token ilk başarılı yetkili taramayla teyit edildi")
         return sonuclar
 
+    async def _kanal_kontrol(self) -> bool:
+        """Log kanalı hazır mı (Telegram API ile doğrulanmış)? Doğrulayıcı yoksa (testler) hazır sayılır.
+        Hazır olmaktan çıkınca/olunca kurucuya TEK özel bildirim gider (yağmur yok)."""
+        if self._kanal is None:
+            return True
+        try:
+            hazir = await self._kanal.hazirla()
+        except Exception:
+            log.exception("kanal doğrulama hatası")
+            hazir = False
+        durum = getattr(self._kanal, "durum", None)
+        if not hazir and not self._kanal_bildirilen_hazir_degil:
+            self._kanal_bildirilen_hazir_degil = True
+            self._kanal_bildir(False, getattr(durum, "neden", "unknown"))
+        elif hazir and self._kanal_bildirilen_hazir_degil:
+            self._kanal_bildirilen_hazir_degil = False
+            self._kanal_bildir(True, "ok")
+        return hazir
+
+    def _kanal_bildir(self, hazir: bool, neden: str) -> None:
+        simdi = self.saat()
+        try:
+            with islem(self.conn):
+                outbox.kuyruga_ekle(
+                    self.conn,
+                    hedef_sohbet=self.kurucu_id,
+                    grup_id=None,
+                    tur="kanal_durumu",
+                    idem_anahtari=f"kanal_durumu:{int(hazir)}:{iso(simdi)}",
+                    veri={"hazir": hazir, "neden": neden[:200], "kanal_id": self.kanal_id, "zaman": iso(simdi)},
+                    simdi=simdi,
+                )
+        except Exception:
+            log.exception("kanal durum bildirimi kuyruğa alınamadı")
+
     async def calis(self, gonderici: outbox.Gonderici, durdur: asyncio.Event) -> None:
         """Üretim döngüsü. `durdur` kurulunca devam eden grup taramalarını bitirip çıkar."""
         gorevler: set[asyncio.Task] = set()
@@ -359,10 +413,12 @@ class TaramaZamanlayici:
                     self.prev_politikasi_uygula()
                 except Exception:
                     log.warning("token .prev politikası uygulanamadı")
+            kanal_hazir = await self._kanal_kontrol()
             try:
-                for g in self.tick():
-                    gorevler.add(g)
-                    g.add_done_callback(gorevler.discard)
+                if kanal_hazir:  # kanal hazır değilken tarama yapılmaz: değişiklik bildirimsiz yutulmasın
+                    for g in self.tick():
+                        gorevler.add(g)
+                        g.add_done_callback(gorevler.discard)
                 ardisik = 0
                 self.token_hatirlat()
             except Exception as e:  # tick istisnası döngüyü öldürmez; maskeli, izsiz log
@@ -370,7 +426,10 @@ class TaramaZamanlayici:
                 log.error("tick hatası (art arda %d): %s", ardisik, maskele(f"{type(e).__name__}: {str(e)[:200]}"))
                 bekleme = min(config.TICK_SECONDS * (2**ardisik), config.SCHEDULER_ERROR_BACKOFF_MAX_SECONDS)
             try:
-                await outbox.bekleyenleri_gonder(self.conn, gonderici, self.saat)
+                await outbox.bekleyenleri_gonder(
+                    self.conn, gonderici, self.saat, izinli_hedefler={self.kurucu_id, self.kanal_id},
+                    izinli_kapsamlar=self._aktif,
+                )
             except Exception:
                 log.exception("outbox gönderim turu hatası")
             try:

@@ -13,6 +13,18 @@ NOT_FOUND_STREAK_THRESHOLD = 3
 # Tek taramada bu sayıdan fazla yeni savaş çıkarsa ayrı bildirimler yerine TEK özet bildirimi gider.
 YENI_SAVAS_BILDIRIM_UST = 5
 
+# MERKEZİ TAKİP ALANI: oyuncu/parti/savaş takibi Telegram gruplarından BAĞIMSIZDIR. Tüm takip verisi bu tek (Telegram
+# kimliği olmayan) alan kimliği altında tutulur; kanal değişse de takip geçmişi korunur. Eski grup kimlikleri YALNIZ arşiv /
+# geçiş kaynağıdır (satırlar silinmez; taranmaz, bildirim üretmez, komut kabul etmez). 0 hiçbir Telegram sohbet kimliğiyle çakışmaz.
+MERKEZ_ID = 0
+MERKEZ_DONEM = 1  # merkezi alanın sabit "onay dönemi" (onay mekanizması kullanılmaz; outbox satırlarında değişmez)
+
+# BİLDİRİM KANALI: tüm otomatik takip bildirimleri (oyuncu/parti/savaş) YALNIZ bu Telegram kanalına gider.
+# Eski gruplara bildirim gönderilmez ve grup komutları işlenmez; yönetim yalnız kurucunun özel sohbetindedir.
+# Kanal değişirse takip verisi etkilenmez (veri modeli kanal kimliğine bağlı değildir; yalnız bekleyen bildirimler yeni kanala yönlendirilir).
+# Ortamdan LOG_CHANNEL_ID ile değiştirilebilir (tg/yapilandirma.py); varsayılan üretim kanalıdır.
+LOG_KANAL_ID = -1003998002227
+
 # Zaman: kayıt UTC, kullanıcıya gösterim Europe/Istanbul.
 STORAGE_TIMEZONE = "UTC"
 DISPLAY_TIMEZONE = "Europe/Istanbul"
