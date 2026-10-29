@@ -762,3 +762,45 @@ def test_hicbir_bildirim_log_ya_da_veritabani_token_veya_proxy_sirri_icermez(o, 
     # sırlar yalnız hesap dizinindeki dosyalarda
     assert (o.tmp / "hesaplar" / str(h1) / "token").read_text() == T_A
     assert o.hy.depo.izin_sorunlari() == []
+
+
+# ================================================================= regresyon: Retry-After alt sınırı, 403 üstel geri çekilme tavanı, kısa proxy kimlikleri
+def test_retry_after_sifir_cooldown_alt_siniri_alir(o):
+    o.oyuncu_ekle(205)
+    h1, h2 = o.hesap("A1"), o.hesap("A2")
+    o.kaynak(h1).hatalar[("oyuncu", "1")] = IstekSiniri("429", bekle_saniye=0)
+    o.tick()
+    r = o.h(h1)
+    assert r["durum"] == "rate_limit" and r["son_rate_limit"] == iso(o.saat())
+    assert o.hy.cooldown_kalan(h1) == config.HESAP_COOLDOWN_ALT_SN > 0, "Retry-After: 0 bile bekleme penceresi açar"
+    assert o.hy.cooldown_kalan(h2) == config.HESAP_COOLDOWN_ALT_SN, "aynı çıkış noktası (doğrudan) paylaşılır"
+    assert o.z._hata_isle(h1, IstekSiniri("429", bekle_saniye=-3)) == "rate_limit"
+    assert o.hy.cooldown_kalan(h1) == config.HESAP_COOLDOWN_ALT_SN, "negatif de alt sınıra çekilir"
+
+
+def test_tekrarlayan_403_ustel_geri_cekilme_tavana_kadar_ve_basaride_sifirlanir(o):
+    h1 = o.hesap("A1")
+    taban, ust = config.ERISIM_REDDI_BEKLEME_SECONDS, config.HESAP_ERISIM_REDDI_UST_SN
+    beklenen = [min(taban * 2**i, ust) for i in range(14)]
+    assert beklenen[:5] == [60, 120, 240, 480, 900] and set(beklenen[4:]) == {ust}
+    for n, bekle in enumerate(beklenen, 1):
+        assert o.z._hata_isle(h1, ErisimReddedildi("403")) == "erisim_reddi"
+        assert o.hy.cooldown_kalan(h1) == bekle, f"{n}. 403"
+        assert o.hy.cooldown_kalan(h1) <= ust
+    assert o.h(h1)["durum"] == "erisim_reddi" and o.durumlar() == [], "403 bildirimsiz"
+    o.z._basari(h1)
+    o.z._hata_isle(h1, ErisimReddedildi("403"))
+    assert o.hy.cooldown_kalan(h1) == taban, "başarıdan sonra sayaç sıfırlanır"
+
+
+def test_kisa_proxy_kimlik_bilgileri_loglardan_ve_hata_metinlerinden_maskelenir():
+    from dipbot.hesaplar import proxy_ayristir
+    from dipbot.maske import maskele
+
+    ayar = proxy_ayristir("http://zq7u:zq7pw@10.77.66.55:3128")  # kullanıcı 4, parola 5 karakter (< 8)
+    for sir in ("zq7u", "zq7pw", "10.77.66.55", ayar.url):
+        m = maskele(f"proxy failed for {sir}!")
+        assert sir not in m and "<GIZLI>" in m
+    m = maskele(f"connect error via {ayar.url}: auth zq7u/zq7pw")
+    assert "zq7" not in m and "10.77.66.55" not in m
+    assert "zq7" not in repr(ayar)

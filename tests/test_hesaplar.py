@@ -624,3 +624,210 @@ def test_token_gecersiz_kusagi_hata_uzerinde_tasinir(tmp_path):
     with pytest.raises(TokenGecersiz) as e2:
         run(hy.kaynak(h).fetch_player("1"))
     assert e2.value.kusak == 1, "token yenilenince kuşak artar: uçuştaki eski 401 yenisini duraklatmaz"
+
+
+# ================================================================= regresyon: kaynak kuşağı, emekli istemci, birlikte güncelleme, ad tekilliği, açılış temizliği
+PROXY2 = "http://proxy2user:Pass2Secret@10.9.8.7:3128"
+
+
+def zamanli(coro, sn=5):
+    """Kilitlenme (deadlock) olursa test askıda kalmasın."""
+    return run(asyncio.wait_for(coro, sn))
+
+
+def test_sinirli_kaynak_hatada_onceden_atanmis_kusagi_ezmez():
+    from dipbot.kaynak import SinirliKaynak
+
+    class Ic:
+        def __init__(self, kusak):
+            self.kusak = kusak
+
+        async def fetch_player(self, oid):
+            e = TokenGecersiz("x")
+            if self.kusak is not ...:
+                e.kusak = self.kusak
+            raise e
+
+    for onceki in (3, 0):  # iç (hesap) kaynağının kuşağı: kuşak_fn yokken EZİLMEZ
+        with pytest.raises(TokenGecersiz) as e:
+            run(SinirliKaynak(Ic(onceki)).fetch_player("1"))
+        assert e.value.kusak == onceki
+    with pytest.raises(TokenGecersiz) as e:  # hiç kuşak yoksa None olarak işaretlenir (öznitelik her zaman var)
+        run(SinirliKaynak(Ic(...)).fetch_player("1"))
+    assert e.value.kusak is None
+
+
+def test_emekli_istemci_ucustaki_istek_varken_kapanmaz_bosalinca_emekli_temizle_kapatir(tmp_path):
+    from dipbot.hesaplar import GenelSinir
+
+    ics = []
+    kapi, baslandi = asyncio.Event(), asyncio.Event()
+
+    class Ic:
+        yapilandirildi = True
+        token_hazir = True
+
+        def __init__(self):
+            self.kapatildi = 0
+
+        async def fetch_player(self, oid):
+            baslandi.set()
+            await kapi.wait()
+            return oid
+
+        async def aclose(self):
+            self.kapatildi += 1
+
+    def fab(hid, proxy, depo):
+        ics.append(Ic())
+        return ics[-1]
+
+    hy, c, _ = kur(tmp_path, hesap_aralik=0, genel_sinir=GenelSinir(esler=4, aralik=0), istemci_fabrikasi=fab)
+    hid = hesap(hy, "A")
+
+    async def senaryo():
+        eski = hy.kaynak(hid)
+        gorev = asyncio.ensure_future(eski.fetch_player("1"))
+        await baslandi.wait()
+        assert eski.aktif_istek == 1
+        await hy.kaynagi_yenile(hid)
+        assert hy.kaynak(hid) is not eski and len(ics) == 2
+        assert ics[0].kapatildi == 0, "uçuşta istek varken emekli istemci kapatılmaz"
+        await hy.emekli_temizle()
+        assert ics[0].kapatildi == 0
+        kapi.set()
+        assert await gorev == "1" and eski.aktif_istek == 0
+        await hy.emekli_temizle()
+        assert ics[0].kapatildi == 1 and ics[1].kapatildi == 0 and hy._emekli == []
+        await hy.emekli_temizle()
+        assert ics[0].kapatildi == 1, "ikinci temizlik tekrar kapatmaz"
+
+    zamanli(senaryo())
+
+
+def _birlikte_kur(tmp_path):
+    hy, c, saat = kur(tmp_path)
+    hid, _ = run(hy.hesap_olustur("Main", TOKEN1, PROXY))
+    return hy, c, hid
+
+
+def test_birlikte_guncelle_ikisi_de_yazilmadan_once_sinanir_basarida_ikisi_de_degisir(tmp_path):
+    hy, c, hid = _birlikte_kur(tmp_path)
+    hy.durum_yaz(hid, "token_gecersiz", "token rejected (401)")
+    gecisler = []
+    hy.durum_geri_cagrisi = lambda *a: gecisler.append(a)
+    gorulen = {}
+
+    def sonuc():  # doğrulama anında dosyalar HÂLÂ eski
+        gorulen["token"], gorulen["proxy"] = hy.depo.token(hid).oku(), hy.depo.proxy_oku(hid).url
+        return DogrulamaSonucu("gecerli", "ok")
+
+    hy.sonuclar[TOKEN2] = sonuc
+    s = zamanli(hy.birlikte_guncelle(hid, TOKEN2, PROXY2))
+    assert s.gecerli and gorulen == {"token": TOKEN1, "proxy": PROXY}
+    assert hy.kayit[-1] == (TOKEN2, proxy_ayristir(PROXY2).url), "aday token ADAY proxy üzerinden sınandı"
+    assert hy.depo.token(hid).oku() == TOKEN2 and hy.depo.proxy_oku(hid).url == proxy_ayristir(PROXY2).url
+    h = hy.getir(hid)
+    assert (h["durum"], h["proxy_var"], h["proxy_durum"], h["cooldown_bitis"]) == ("hazir", 1, "calisiyor", None)
+    assert gecisler == [(hid, "token_gecersiz", "hazir", None)]
+    assert hy._token_kusaklari[hid] == 1
+    assert hy.depo.izin_sorunlari() == []
+
+
+@pytest.mark.parametrize("sonuc", [DogrulamaSonucu("gecersiz", "401"), DogrulamaSonucu("proxy_hatasi", "no proxy")])
+def test_birlikte_guncelle_dogrulama_basarisizsa_eski_token_ve_eski_proxy_korunur(tmp_path, sonuc):
+    hy, c, hid = _birlikte_kur(tmp_path)
+    hy.sonuclar[TOKEN2] = sonuc
+    once = (tuple(hy.getir(hid)), (tmp_path / "hesaplar" / str(hid) / "proxy").read_bytes())
+    s = zamanli(hy.birlikte_guncelle(hid, TOKEN2, PROXY2))
+    assert not s.gecerli
+    assert hy.depo.token(hid).oku() == TOKEN1 and hy.depo.proxy_oku(hid).url == proxy_ayristir(PROXY).url
+    assert (tuple(hy.getir(hid)), (tmp_path / "hesaplar" / str(hid) / "proxy").read_bytes()) == once
+    assert not hy.depo.token(hid).yedek_yolu.exists() and hy._token_kusaklari.get(hid, 0) == 0
+
+
+@pytest.mark.parametrize("eski_proxy", [PROXY, None])
+def test_birlikte_guncelle_token_yazimi_patlarsa_eski_proxy_geri_konur_ve_kilitlenme_yok(tmp_path, monkeypatch, eski_proxy):
+    hy, c, _ = kur(tmp_path)
+    hid, _ = run(hy.hesap_olustur("Main", TOKEN1, eski_proxy))
+    yol = tmp_path / "hesaplar" / str(hid) / "proxy"
+    eski_bayt = yol.read_bytes() if eski_proxy else None
+    once = tuple(hy.getir(hid))
+
+    def boom(self, token):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(TokenDeposu, "yaz", boom)
+    with pytest.raises(OSError):
+        zamanli(hy.birlikte_guncelle(hid, TOKEN2, PROXY2))
+    monkeypatch.undo()
+    assert (yol.read_bytes() if yol.exists() else None) == eski_bayt, "eski proxy aynen geri konur (yoksa yeni proxy kalmaz)"
+    assert hy.depo.token(hid).oku() == TOKEN1 and tuple(hy.getir(hid)) == once
+    assert not list(yol.parent.glob(".token-*")), "geçici dosya kalmadı"
+    # kilit/durum bozulmadı: sonraki güncelleme normal çalışır
+    assert zamanli(hy.birlikte_guncelle(hid, TOKEN2, PROXY2)).gecerli and hy.depo.token(hid).oku() == TOKEN2
+
+
+def test_hesap_adi_buyuk_kucuk_harf_duyarsiz_tekil_ikinci_olusturma_temiz_basarisiz(tmp_path):
+    hy, c, _ = kur(tmp_path)
+    hid = hesap(hy, "main")
+    dogrulama_sayisi = len(hy.kayit)
+    dizinler = sorted(p.name for p in (tmp_path / "hesaplar").iterdir())
+    for ad in ("main", "MAIN", "Main"):
+        with pytest.raises(HesapHatasi, match="already exists"):
+            run(hy.hesap_olustur(ad, TOKEN2, PROXY))
+    assert [r["ad"] for r in hy.listele()] == ["main"] and hid == 1
+    assert sorted(p.name for p in (tmp_path / "hesaplar").iterdir()) == dizinler == ["1"], "dizin/dosya oluşmadı"
+    assert len(hy.kayit) == dogrulama_sayisi, "ağ doğrulaması bile yapılmadı"
+    assert hy.depo.token(hid).oku() == TOKEN1 and hy.depo.proxy_oku(hid) is None
+    # veritabanı da tek başına tekilliği zorlar (ux_hesap_ad)
+    with pytest.raises(sqlite3.IntegrityError):
+        c.execute("INSERT INTO hesaplar(ad, olusturuldu) VALUES('MaIn', 'x')")
+
+
+def test_acilis_temizligi_hesap_dizinlerindeki_eski_gecici_dosyalari_siler(tmp_path):
+    hy, c, _ = kur(tmp_path)
+    a = hesap(hy, "A")
+    b, _ = run(hy.hesap_olustur("B", TOKEN2, PROXY))
+    for hid, adlar in ((a, [".token-aaa111"]), (b, [".token-bbb222", ".token-ccc333"])):
+        for ad in adlar:
+            (tmp_path / "hesaplar" / str(hid) / ad).write_text("yarim-token-veya-proxy")
+    (tmp_path / "hesaplar" / str(a) / "baska.txt").write_text("kalmali")
+    assert hy.acilis_temizligi() == 3
+    for hid in (a, b):
+        assert not list((tmp_path / "hesaplar" / str(hid)).glob(".token-*"))
+    assert (tmp_path / "hesaplar" / str(a) / "baska.txt").exists()
+    assert hy.depo.token(a).oku() == TOKEN1 and hy.depo.token(b).oku() == TOKEN2 and hy.depo.proxy_oku(b).url == PROXY
+    assert hy.acilis_temizligi() == 0, "idempotent"
+
+
+# ================================================================= kompaktlama yalnız sağlıklı (hazir) hesaplar arasında
+def _atamalar(c):
+    return {r[0]: r[1] for r in c.execute("SELECT oyuncu_id, hesap_id FROM oyuncu_atamalari")}
+
+
+@pytest.mark.parametrize("sorunlu_durum", ["token_gecersiz", "proxy_hatasi", "erisim_reddi", "rate_limit", "hata", "token_yok"])
+@pytest.mark.parametrize("sorunlu", [1, 2, 3])
+def test_kompaktlama_sorunlu_hesaptan_veya_hesaba_oyuncu_tasimaz(tmp_path, sorunlu, sorunlu_durum):
+    hy, c, _ = kur(tmp_path, kapasite=3)
+    ids = [hesap(hy, f"A{i}") for i in (1, 2, 3)]
+    oyuncular(c, 9)
+    hy.dagit()
+    assert dagilim(hy) == ([3, 3, 3], 0)
+    # hesap 1'den iki oyuncu çıkar -> 1. hesapta 2 boş yer; sağlıklı olanlar kompaktlanabilir, sorunlu olan dokunulmaz kalır
+    sil(c, [r[0] for r in c.execute("SELECT oyuncu_id FROM oyuncu_atamalari WHERE hesap_id=1 ORDER BY CAST(oyuncu_id AS INTEGER) LIMIT 2")])
+    hy.durum_yaz(sorunlu, sorunlu_durum)
+    once = _atamalar(c)
+    hy.dagit()
+    sonra = _atamalar(c)
+    # sorunlu hesabın kümesi (hem alıcı hem verici olarak) AYNI kalır; bekleyen yok
+    assert all(h is not None for h in sonra.values())
+    degisenler = {o for o in sonra if sonra[o] != once.get(o)}
+    assert all(once[o] != sorunlu and sonra[o] != sorunlu for o in degisenler), "sorunlu hesaptan/hesaba taşıma yok"
+    if sorunlu == 1:
+        assert degisenler == set(), "sorunlu hesap alıcı olamaz: diğerleri yerinde kalır"
+    elif sorunlu == 2:
+        assert len(degisenler) == 2 and all(once[o] == 3 and sonra[o] == 1 for o in degisenler), "yalnız 3 -> 1 taşıması"
+    else:
+        assert len(degisenler) == 2 and all(once[o] == 2 and sonra[o] == 1 for o in degisenler), "3. hesap sorunlu: 2 -> 1"
+    assert hy.dagit() and _atamalar(c) == sonra, "idempotent"

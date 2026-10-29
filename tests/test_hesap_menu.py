@@ -1277,3 +1277,29 @@ def test_yanlis_adimda_gonderilen_sir_gibi_metin_silinir_islenmez_yansitilmaz(o)
     y = o.m("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl")
     assert "did not process" in y.metin and "eyJhbGci" not in y.metin
     assert o.conn.execute("SELECT COUNT(*) FROM hesaplar").fetchone()[0] == 1
+
+
+# ====================================================================== 'hi' (eski token içe aktarma) korumaları
+def test_hi_hesap_varken_dogrulama_bile_yapmadan_reddeder(tmp_path):
+    o = Ortam(tmp_path, eski_token=TOKEN1)
+    o.hesap("Main", TOKEN2)
+    n = len(o.kayit)
+    y = o.d("hi")
+    assert "Could not import" in y.metin and "already exist" in y.metin
+    assert o.hesap_sayisi() == 1 and o.satir(1)["ad"] == "Main" and len(o.kayit) == n, "ağ doğrulaması yapılmadı"
+    assert o.token_dosyasi(1) == TOKEN2 and o.eski_yol.read_text().strip() == TOKEN1
+
+
+def test_hi_eski_token_dosyasi_yoksa_reddeder_hesap_olusmaz(tmp_path):
+    o = Ortam(tmp_path)
+    o.ui.eski_token_yolu = tmp_path / "yok" / "token"
+    y = o.d("hi")
+    assert "Could not import" in y.metin and "No previous token file" in y.metin
+    assert o.hesap_sayisi() == 0 and o.kayit == [] and not (tmp_path / "hesaplar").exists()
+
+
+def test_hi_eski_token_yolu_yapilandirilmamissa_gecersiz_dugme_sayilir(tmp_path):
+    o = Ortam(tmp_path)  # eski_token_yolu=None
+    y = o.d("hi")
+    assert "no longer valid" in y.uyari and not y.metin
+    assert o.hesap_sayisi() == 0 and o.kayit == []
