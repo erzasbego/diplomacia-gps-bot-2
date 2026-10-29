@@ -104,7 +104,7 @@ def test_komut_arguman_botadi_ile(b, bot, conn, src):
     komut_calistir(b, "/oyuncu_ekle@dipbot " + url, KURUCU, G1, "supergroup")  # grupta yok sayılır
     assert bot.say("send_message") == 0
     assert "72400" not in {r[0] for r in conn.execute("SELECT oyuncu_id FROM takip_oyuncular WHERE group_id=?", (G1,))}
-    b.arayuz._secili[KURUCU] = G1
+    b.arayuz.kapsam = G1  # test: separate tracking area (production always uses the central area)
     komut_calistir(b, "/oyuncu_ekle@dipbot " + url, KURUCU, KURUCU, "private")
     assert "72400" in {r[0] for r in conn.execute("SELECT oyuncu_id FROM takip_oyuncular WHERE group_id=?", (G1,))}
     assert "Ali &lt;b&gt;" in bot.son("send_message")["text"]
@@ -159,7 +159,7 @@ def test_eski_dugme_anlasilir_cevap(b, bot):
 
 def test_her_callbackte_tam_bir_answer(b, bot, src, conn):
     src.oyuncu("1", "A")
-    b.arayuz._secili[KURUCU] = G1  # yönetim yalnız kurucunun özel sohbetinde; takip listesi = G1
+    b.arayuz.kapsam = G1  # yönetim yalnız kurucunun özel sohbetinde; takip alanı = G1 (test)
     komut_calistir(b, "/oyuncu_ekle 1", KURUCU, KURUCU, "private")
     for veri in ("m", "ol:0", "od:1", "du", "yo", "ta", "tv:15", "sl:0", "yd", "nop", "yok", "pl:0", "os:1"):
         bot.cagrilar.clear()
@@ -174,7 +174,7 @@ def test_her_callbackte_tam_bir_answer(b, bot, src, conn):
 
 def test_ag_cagrisi_oncesi_erken_ack_tek_answer(b, bot, src):
     # savaşlar kaynak çağrısı yapar: callback önce hemen yanıtlanır, sonra tekrar yanıtlanmaz
-    b.arayuz._secili[KURUCU] = G1
+    b.arayuz.kapsam = G1
     run(b.buton_isle(update_dugme("sl:0", KURUCU, KURUCU, "private"), Ctx()))
     assert bot.say("answer_callback_query") == 1
     sira = [a for a, _ in bot.cagrilar]
@@ -221,21 +221,32 @@ def test_my_chat_member_update_onaysiz_ekleme(b, conn):
 
 
 def test_my_chat_member_onayli_grup_bildirim_yok(b, conn):
+    """DELIBERATE CHANGE: there is no 'approved group' any more; adding the bot to any group (even an id that was once
+    approved at the service layer) is recorded and the owner is notified."""
     run(b.uyelik_isle(update_uyelik(G1, YABANCI, "kicked", "member"), Ctx()))
-    assert not bildirimler(conn, "yetkisiz_deneme")
+    v = bildirimler(conn, "yetkisiz_deneme", hedef=KURUCU)[0]["veri"]
+    assert v["islem"] == "onaysiz_gruba_eklendi" and v["grup_id"] == G1 and v["kullanici_id"] == YABANCI
+    # leaving / being demoted stays silent
+    run(b.uyelik_isle(update_uyelik(G1, YABANCI, "member", "left"), Ctx()))
+    assert len(bildirimler(conn, "yetkisiz_deneme")) == 1
 
 
 def test_migrate_mesaji_yeni_kimligi_yetkili_saymaz(b, conn, bot):
+    """DELIBERATE CHANGE: the group-migration (migrate_*) handler was removed; migrate service messages are not handled,
+    produce no notification and authorize nothing; the new id stays a silently ignored group."""
     yeni = -1009876543210
+    assert not hasattr(b, "goc_isle") and not hasattr(b.arayuz, "grup_goc")
     u_eski = Update.de_json({"update_id": 5, "message": {
         "message_id": 1, "date": 1760000000, "chat": _sohbet(G1, "group"), "migrate_to_chat_id": yeni}}, None)
     u_yeni = Update.de_json({"update_id": 6, "message": {
         "message_id": 1, "date": 1760000000, "chat": _sohbet(yeni, "supergroup"), "migrate_from_chat_id": G1}}, None)
-    run(b.goc_isle(u_eski, Ctx()))
-    run(b.goc_isle(u_yeni, Ctx()))
-    assert len(bildirimler(conn, "grup_goc", hedef=KURUCU)) == 1  # iki servis mesajı, tek bildirim
+    app = Application.builder().token(BOT_TOKEN).build()
+    kayit_et(app, b)
+    isleyiciler = [h for grup in app.handlers.values() for h in grup]
+    for u in (u_eski, u_yeni):  # no registered handler accepts a migrate service message
+        assert not any(h.check_update(u) for h in isleyiciler)
+    assert not bildirimler(conn, "grup_goc")
     assert yeni not in yonetim.durum_yukle(conn, KURUCU).onayli_gruplar
-    # Bilinçli değişiklik: yeni kimlik artık reddedilmez-kaydedilmez; gruplar tamamen sessizce yok sayılır.
     bot.cagrilar.clear()
     komut_calistir(b, "/oyuncular", KURUCU, yeni, "supergroup")
     assert bot.say("send_message") == 0
@@ -251,11 +262,14 @@ def test_handlerlar_kayit_edilir_ve_allowed_updates():
     komutlar = {c for h in isleyiciler if isinstance(h, CommandHandler) for c in h.commands}
     # Legacy underscore names and the short Turkish names stay registered (backward compatibility) but are not in the menu.
     assert komutlar == set(KOMUTLAR) | set(ESKI_KOMUTLAR) | set(TR_KOMUTLAR)
-    assert {"oyuncu_ekle", "oyuncuekle", "yardim", "grup_onayla", "addplayer", "help"} <= komutlar
+    assert {"oyuncu_ekle", "oyuncuekle", "yardim", "durum", "addplayer", "help"} <= komutlar
+    # DELIBERATE CHANGE: group-administration commands (and their Turkish aliases) are no longer registered at all
+    assert not {"grant", "revoke", "approve_group", "remove_group", "move_group", "yetki_ver", "yetki_al",
+                "grup_onayla", "grup_kaldir", "grup_tasi"} & komutlar
     assert any(isinstance(h, CallbackQueryHandler) for h in isleyiciler)
     assert any(isinstance(h, ChatMemberHandler) and h.chat_member_types == ChatMemberHandler.MY_CHAT_MEMBER
                for h in isleyiciler)
-    assert sum(isinstance(h, MessageHandler) for h in isleyiciler) == 2  # metin + migrate
+    assert sum(isinstance(h, MessageHandler) for h in isleyiciler) == 1  # metin only (the migrate handler was removed)
     assert "my_chat_member" in IZINLI_GUNCELLEMELER and "callback_query" in IZINLI_GUNCELLEMELER
     assert app.error_handlers
     assert [c.command for c in bot_komutlari()] == list(KOMUTLAR)

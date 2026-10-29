@@ -10,7 +10,7 @@ import sqlite3
 from datetime import timedelta
 
 from . import config, db, outbox, yetki
-from .db import islem
+from .db import alan_aktif, islem
 from .yetki import YetkiDurumu
 from .zaman import Saat, iso, iso_coz
 
@@ -371,8 +371,9 @@ def tarama_araligi_ayarla(conn, grup_id: int, dakika: int) -> None:
     if dakika not in config.ALLOWED_SCAN_INTERVALS_MINUTES:
         raise ValueError(f"invalid interval: allowed values {config.ALLOWED_SCAN_INTERVALS_MINUTES}")
     with islem(conn):
-        if conn.execute("SELECT 1 FROM onayli_gruplar WHERE group_id=?", (grup_id,)).fetchone() is None:
+        if not alan_aktif(conn, grup_id):  # merkezi alan her zaman aktif; (testler) diğer alanlar onaylı olmalı
             raise YonetimHatasi("group is not approved")
+        conn.execute("INSERT OR IGNORE INTO grup_ayarlari(group_id) VALUES(?)", (grup_id,))
         conn.execute("UPDATE grup_ayarlari SET tarama_araligi_dk=? WHERE group_id=?", (dakika, grup_id))
 
 

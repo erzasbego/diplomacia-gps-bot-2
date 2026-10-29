@@ -125,7 +125,8 @@ def test_gruplar_komut_ve_dugmeyi_sessizce_yoksayar(ui, conn, src, kisi, grup):
     _hic_iz_yok(conn)
     assert src.cagrilar == []
     assert _durum_ozeti(conn) == once
-    assert ui._secili == {} and ui._token_bekleyen == {}
+    assert ui._token_bekleyen == {} and ui.kapsam == config.MERKEZ_ID
+    assert not hasattr(ui, "_secili") and not hasattr(ui, "_grup_secimi")  # grup/liste seçimi mimaride yok
 
 
 def test_grup_olayi_komut_dugme_yardimcilari_yalniz_kurucuyu_ozele_cevirir(ui):
@@ -236,7 +237,7 @@ def test_baska_gruptaki_oyuncu_gorunmez_ve_silinemez(ui, conn, src):
     # G1 bağlamında G2'nin oyuncusu yok
     assert run(ui.buton(grup_dugme("od:1"))).uyari_goster
     y = run(ui.komut(grup_komut("oyuncu_sil", "1")))
-    assert "not tracked in this group" in y.metin and not y.klavye
+    assert "This player is not tracked." in y.metin and not y.klavye
     assert "1" in takipte(conn, G2)
 
 
@@ -351,12 +352,14 @@ def test_komut_adlari_telegram_kuralina_uyar():
         assert 1 <= len(aciklama) <= 256
     istenen = {
         "addplayer", "players", "removeplayer", "addparty", "parties", "removeparty", "wars",
-        "scan", "status", "grant", "revoke", "approve_group", "remove_group", "help", "start",
-        "move_group",  # D9: moving data in the owner's private chat
-        "channel", "lists",  # notification-channel re-verification and tracking-list overview (owner only)
+        "scan", "status", "help", "start",
+        "channel", "lists",  # notification-channel re-verification and central tracking-list overview (owner only)
     }
-    assert len(KOMUTLAR) == 18
+    assert len(KOMUTLAR) == 13
     assert istenen == set(KOMUTLAR)
+    # DELIBERATE CHANGE (single central area): the group-administration commands are no longer offered at all
+    assert not {"grant", "revoke", "approve_group", "remove_group", "move_group"} & set(KOMUTLAR)
+    assert not {"grant", "revoke", "approve_group", "remove_group", "move_group"} & set(ar.EN_KOMUTLAR)
     # The menu is English-only: legacy alt-name Turkish commands and the short Turkish names are NOT listed ...
     assert not {"oyuncu_ekle", "oyuncu_sil", "parti_ekle", "parti_sil"} & set(KOMUTLAR)
     assert not set(ar.TR_KOMUTLAR) & set(KOMUTLAR)
@@ -448,75 +451,84 @@ def test_tarama_komutu(ui, conn):
     assert bad.sessiz and yonetim.tarama_araligi(conn, G1) == 20
 
 
-def test_ozel_sohbette_grup_secimi_gerekir(ui, conn, src):
+def test_ozel_sohbette_grup_secimi_yok_tek_merkezi_alan(ui, conn, src):
+    """DELIBERATE CHANGE: there is no group/list selection any more; the owner's private chat always works on the
+    single central area (config.MERKEZ_ID). Legacy 'gs:' buttons are dead and never create a selection."""
     src.oyuncu("1", "A")
-    y = run(ui.komut(komut("oyuncular")))  # iki onaylı grup, seçim yok
-    assert "Select the tracking list" in y.metin and f"gs:{G1}" in veriler(y)
-    y = run(ui.buton(dugme(f"gs:{G1}")))
-    assert f"Selected group: <code>{G1}</code>" in y.metin
+    y = run(ui.komut(komut("oyuncular")))  # no selection prompt: straight to the (empty) central list
+    assert "Select the tracking list" not in y.metin and "No players are tracked yet." in y.metin
+    assert not any(v.startswith("gs:") for v in veriler(y))
+    for g in (G1, G3):
+        r = run(ui.buton(dugme(f"gs:{g}")))
+        assert r.sessiz and r.uyari_goster and r.uyari == ar.ESKI_DUGME and not r.metin
+    assert ui.kapsam == config.MERKEZ_ID
     run(ui.komut(komut("oyuncu_ekle", "1")))
-    assert takipte(conn, G1) == {"1"} and takipte(conn, G2) == set()
-    # grup onayı kalkarsa seçim geçersiz olur
+    assert takipte(conn, config.MERKEZ_ID) == {"1"} and takipte(conn, G1) == set() and takipte(conn, G2) == set()
+    assert ui._grup(komut("oyuncular")) == config.MERKEZ_ID
+    # approving / removing old groups at the service layer does not change the working area
     yonetim.grup_kaldir(conn, ui.saat, KURUCU, KURUCU, G1)
-    # seçili grup artık onaylı değil: eski seçim KULLANILMAZ (tek kalan onaylı grup G2 otomatik seçilir)
-    assert ui._grup(komut("oyuncular")) == G2
-    yonetim.grup_kaldir(conn, ui.saat, KURUCU, KURUCU, G2)
-    assert "No approved groups yet" in run(ui.komut(komut("oyuncular"))).metin
-    yonetim.grup_onayla(conn, ui.saat, KURUCU, KURUCU, G1)
-    yonetim.grup_onayla(conn, ui.saat, KURUCU, KURUCU, G2)
-    # onaysız gruba seçim yapılamaz
-    r = run(ui.buton(dugme(f"gs:{G3}")))
-    assert r.sessiz and r.uyari_goster
+    assert ui._grup(komut("oyuncular")) == config.MERKEZ_ID
+    assert "1" in run(ui.komut(komut("oyuncular"))).metin
 
 
 def test_yetki_komutlari(ui, conn):
-    assert "usage" in run(ui.komut(grup_komut("yetki_ver", "-5"))).metin.lower()
-    assert "/grant" in run(ui.komut(grup_komut("grant", "-5"))).metin  # English menu name = same handler
-    assert "Access granted" in run(ui.komut(grup_komut("yetki_ver", "300"))).metin
-    assert "already authorized" in run(ui.komut(grup_komut("grant", "300"))).metin
-    assert 300 in yonetim.durum_yukle(conn, KURUCU).yetkililer
-    y = run(ui.komut(grup_komut("yetki_al", "300")))
-    kid = onay_kimligi(y)
-    assert 300 in yonetim.durum_yukle(conn, KURUCU).yetkililer, "onaydan önce kaldırılmamalı"
-    assert "Access revoked" in run(ui.buton(grup_dugme(f"c:e:{kid}"))).metin
+    """DELIBERATE CHANGE: /grant and /revoke (and their Turkish aliases) were removed from Telegram; they are not
+    dispatched at all (None), neither in the owner's private chat nor in groups, and change no authorization data.
+    The service layer (yonetim.yetki_ver / yetki_al) is still tested directly."""
+    assert "grant" not in KOMUTLAR and "revoke" not in KOMUTLAR
+    for ad in ("yetki_ver", "grant", "yetki_al", "revoke"):
+        assert ar.komut_ic_adi(ad) is None, ad
+        assert run(ui.komut(grup_komut(ad, "300"))) is None, ad
+        assert run(ui.komut(komut(ad, "300"))) is None, ad
+        assert run(ui.komut(komut(ad, "301", kul=YETKILI))) is None, ad
+        assert run(ui.komut(gercek_grup_komut(ad, "300"))) is None, ad
     assert 300 not in yonetim.durum_yukle(conn, KURUCU).yetkililer
-    # kurucunun yetkisi alınamaz
-    assert "cannot be revoked" in run(ui.komut(grup_komut("yetki_al", str(KURUCU)))).metin
-    # yetkili kullanıcı hiçbir yerde yetki yönetemez: grupta sessiz, özelde kapalı
-    assert run(ui.komut(grup_komut("yetki_al", str(KURUCU), kul=YETKILI))) is None
-    assert run(ui.komut(komut("yetki_ver", "301", kul=YETKILI))).metin == ar.KAPALI_OZEL
-    assert 301 not in yonetim.durum_yukle(conn, KURUCU).yetkililer
-    # listede olmayan
-    assert "not in the authorized list" in run(ui.komut(grup_komut("yetki_al", "9999"))).metin
+    # service layer still works
+    assert yonetim.yetki_ver(conn, ui.saat, KURUCU, KURUCU, 300) is True
+    assert 300 in yonetim.durum_yukle(conn, KURUCU).yetkililer
+    # ...but granting never changes runtime authorization: 300 is still not allowed in the private chat
+    assert run(ui.komut(komut("yardim", kul=300))).metin == ar.KAPALI_OZEL
 
 
 def test_grup_onayla_ve_kaldir(ui, conn):
-    assert "Usage" in run(ui.komut(komut("grup_onayla", "123"))).metin  # pozitif kimlik grup değildir
-    assert "Group approved" in run(ui.komut(komut("approve_group", str(G3)))).metin
+    """DELIBERATE CHANGE: /approve_group and /remove_group (and the 'gk:' / 'yk:' buttons) were removed; they are not
+    dispatched and approve/remove nothing. The service layer (yonetim.grup_onayla / grup_kaldir) is checked directly."""
+    assert "approve_group" not in KOMUTLAR and "remove_group" not in KOMUTLAR
+    for ad, arg in (("grup_onayla", str(G3)), ("approve_group", str(G3)), ("grup_kaldir", str(G1)),
+                    ("remove_group", str(G1)), ("grup_tasi", f"{G1} {G2}"), ("move_group", f"{G1} {G2}")):
+        assert ar.komut_ic_adi(ad) is None, ad
+        assert run(ui.komut(komut(ad, arg))) is None, ad
+        assert run(ui.komut(gercek_grup_komut(ad, arg, grup=G3))) is None, ad
+    for veri in (f"gk:{G1}", f"yk:{YETKILI}", f"gs:{G1}", "gl"):
+        y = run(ui.buton(dugme(veri)))
+        assert y.sessiz and y.uyari_goster and y.uyari == ar.ESKI_DUGME and not y.metin and not y.klavye, veri
+    d = yonetim.durum_yukle(conn, KURUCU)
+    assert G3 not in d.onayli_gruplar and {G1, G2} <= d.onayli_gruplar
+    # service layer: unchanged archive/library behaviour
+    assert yonetim.grup_onayla(conn, ui.saat, KURUCU, KURUCU, G3) is True
     assert G3 in yonetim.durum_yukle(conn, KURUCU).onayli_gruplar
-    assert "already approved" in run(ui.komut(komut("grup_onayla", str(G3)))).metin
-    kid = onay_kimligi(run(ui.komut(komut("remove_group", str(G3)))))
-    assert G3 in yonetim.durum_yukle(conn, KURUCU).onayli_gruplar
-    assert "approval removed" in run(ui.buton(dugme(f"c:e:{kid}"))).metin
+    assert yonetim.grup_kaldir(conn, ui.saat, KURUCU, KURUCU, G3) == 0
     assert G3 not in yonetim.durum_yukle(conn, KURUCU).onayli_gruplar
-    # kaldırılan grup artık işlem yapamaz: grup sohbeti sessiz; özelde bu liste seçilemez/kullanılamaz
+    # a group chat stays silent regardless
     assert run(ui.komut(gercek_grup_komut("yardim", grup=G3))) is None
-    y = run(ui.komut(grup_komut("oyuncular", grup=G3)))  # eski seçim doğrulanır: G3 hedef OLMAZ
-    assert "Select the tracking list" in y.metin and f"gs:{G3}" not in veriler(y)
-    assert ui._secili.get(KURUCU) != G3
 
 
 def test_yonetim_ekrani_grup_listesi_yalniz_ozelde(ui):
+    """DELIBERATE CHANGE: the administration screen has only an info text, 'Renew Token' and 'Main menu' (no
+    authorized-user / approved-group / revoke / remove-approval buttons); it still opens only in the owner's private chat."""
     ozel = run(ui.buton(dugme("yo")))
-    assert f"gk:{G1}" in veriler(ozel) and "tk" in veriler(ozel)
-    assert f"yk:{YETKILI}" in veriler(ozel)
-    # BİLİNÇLİ DEĞİŞİKLİK: grup sohbetinde yönetim ekranı hiç açılmaz (kurucu için bile); gk düğmesi elle üretilse de
-    # sessizce yok sayılır (eskiden 'eski düğme' uyarısı dönerdi)
+    assert "Administration" in ozel.metin and veriler(ozel) == ["tk", "m"]
+    assert not any(v.startswith(("gk:", "yk:", "gs:")) for v in veriler(ozel))
+    assert "Approved groups" not in ozel.metin and "Authorized" not in ozel.metin
+    # in a group the administration screen never opens (even for the owner); a hand-made 'gk' is silently ignored
     grup = run(ui.buton(gercek_grup_dugme("yo")))
     assert grup.sessiz and not grup.metin and not grup.klavye and not veriler(grup)
     g = run(ui.buton(gercek_grup_dugme(f"gk:{G2}")))
     assert g.sessiz and not g.metin and not g.uyari and not g.uyari_goster
     assert G2 in yonetim.durum_yukle(ui.conn, KURUCU).onayli_gruplar
+    # in the owner's private chat the removed 'gk:' button is a dead button and removes nothing
+    k = run(ui.buton(dugme(f"gk:{G2}")))
+    assert k.sessiz and k.uyari == ar.ESKI_DUGME and G2 in yonetim.durum_yukle(ui.conn, KURUCU).onayli_gruplar
 
 
 # ---------------------------------------------------------------- parti kaldırma (çekirdek onay akışı)
@@ -630,7 +642,7 @@ def test_durum_ekrani_alanlari_ve_sir_yok(ui, conn, src, saat):
     src.oyuncu("1", "A")
     run(ui.komut(grup_komut("oyuncu_ekle", "1")))
     y = run(ui.komut(grup_komut("durum"))).metin
-    for parca in ("Bot Status", f"Group: <code>{G1}</code>", "Tracked Players: 1", "Tracked Parties: 0",
+    for parca in ("Bot Status", "Tracked Players: 1", "Tracked Parties: 0",
                   "Scan Interval: 10 minutes", "Last Successful Scan", "• Players: none yet",
                   "• Parties: none yet", "• Wars: none yet",
                   "Next Scheduled Scan: waiting for the first scan", "Scan in Progress: No",
@@ -639,6 +651,8 @@ def test_durum_ekrani_alanlari_ve_sir_yok(ui, conn, src, saat):
     # The fixed "connection configured / no scan yet" boilerplate and the pagination note were removed:
     # the connection line only appears when there is a real problem.
     assert "Diplomacia connection" not in y and "unpaginated" not in y
+    # DELIBERATE CHANGE: no group line / approved-groups / tracking-list-status lines in /status
+    assert "Group:" not in y and "Approved groups" not in y and "Tracking list status" not in y
     for tip in ("oyuncular", "partiler", "savaslar"):
         conn.execute("INSERT INTO tarama_isleri(group_id, is_tipi, son_deneme, son_basari) VALUES(?,?,?,?)",
                      (G1, tip, iso(saat()), iso(saat())))
@@ -666,7 +680,10 @@ def test_durum_token_duraklatildi_ve_devam_eden(conn, src, saat):
 
 def test_durum_ozel_sohbette_genel(ui):
     y = run(ui.komut(komut("durum"))).metin
-    assert "general status" in y and "Approved groups: 2; authorized users: 1" in y
+    # DELIBERATE CHANGE: no 'general status' / approved-groups / authorized-users lines any more (single central area)
+    assert "Bot Status" in y and "Tracked Players: 0" in y and "Scan Interval: 10 minutes" in y
+    assert "general status" not in y and "Approved groups" not in y and "authorized users" not in y
+    assert "Group:" not in y and "Tracking list status" not in y
 
 
 # ---------------------------------------------------------------- my_chat_member / migrate
@@ -683,48 +700,52 @@ def test_onaysiz_gruba_eklenme_tespit_ve_bildirim(ui, conn):
 
 
 def test_my_chat_member_diger_durumlar(ui, conn):
-    assert ui.bot_uyelik_degisti(G1, "supergroup", "left", "member", YABANCI) == "onayli_ekleme"
+    # DELIBERATE CHANGE: there is no 'onayli_ekleme' any more; every group/supergroup addition (even to a once-approved
+    # group id) is 'onaysiz_ekleme' and is recorded for the owner.
+    assert ui.bot_uyelik_degisti(G1, "supergroup", "left", "member", YABANCI) == "onaysiz_ekleme"
+    assert len(bildirimler(conn, "yetkisiz_deneme")) == 1
+    assert conn.execute("SELECT COUNT(*) FROM yetkisiz_denemeler WHERE group_id=? AND islem='onaysiz_gruba_eklendi'",
+                        (G1,)).fetchone()[0] == 1
     assert ui.bot_uyelik_degisti(G3, "supergroup", "member", "left", YABANCI) == "diger"  # çıkarıldı
     assert ui.bot_uyelik_degisti(G3, "supergroup", "member", "administrator", YABANCI) == "diger"  # terfi
     assert ui.bot_uyelik_degisti(5, "private", "kicked", "member", 5) == "diger"
     assert ui.bot_uyelik_degisti(-77, "channel", "left", "administrator", 5) == "diger"
-    assert not bildirimler(conn, "yetkisiz_deneme")
+    assert len(bildirimler(conn, "yetkisiz_deneme")) == 1  # only the G1 addition above; the rest add no notification
 
 
 def test_grup_goc_kaydi_sessizce_yetkili_saymaz(ui, conn):
+    """DELIBERATE CHANGE: Arayuz.grup_goc (migrate handling) was removed; the UI no longer reacts to group migration.
+    The service functions (goc_kaydet / grup_kaldir_sistem) still work and still never authorize the new id."""
     yeni = -1009999
-    # C3: göç öncesi eski grupta bekleyen bildirim var
+    assert not hasattr(ui, "grup_goc")
+    # old group has a pending notification (service-layer data, only reachable in tests)
     from dipbot import outbox
     outbox.kuyruga_ekle(conn, hedef_sohbet=G1, grup_id=G1, tur="yeni_savas", idem_anahtari="x1",
                         veri={"savas_id": "s"}, simdi=ui.saat())
-    assert ui.grup_goc(G1, yeni) is True
-    # eski grubun onayı düştü: tarama/gönderim durur, bekleyen iptal, veri silinmez
+    assert yonetim.goc_kaydet(conn, ui.saat, G1, yeni) is True  # records only; grants/moves nothing
+    assert yonetim.goc_kaydet(conn, ui.saat, G1, yeni) is False  # same pair: single record
+    assert yeni not in yonetim.durum_yukle(conn, KURUCU).onayli_gruplar
+    assert not bildirimler(conn, "grup_goc")  # no 'grup_goc' notification is produced by the UI any more
+    # system-side drop of the old approval (library code): scanning/sending stops, pending is cancelled, data kept
+    yonetim.grup_kaldir_sistem(conn, ui.saat, KURUCU, G1, neden="grup_goc")
     assert G1 not in yonetim.durum_yukle(conn, KURUCU).onayli_gruplar
     assert conn.execute("SELECT COUNT(*) FROM outbox WHERE grup_id=? AND durum='bekliyor'", (G1,)).fetchone()[0] == 0
     assert conn.execute("SELECT durum FROM outbox WHERE idem_anahtari='x1'").fetchone()[0] == "iptal"
-    assert run(ui.komut(gercek_grup_komut("oyuncular", grup=G1))) is None  # eski grup sohbeti: sessiz
-    # kurucunun özelinde eski liste seçilse bile hedef OLMAZ (onay düştü; tek onaylı liste G2 hedeflenir)
-    run(ui.komut(grup_komut("oyuncular", grup=G1)))
-    assert ui._secili[KURUCU] == G2
+    assert run(ui.komut(gercek_grup_komut("oyuncular", grup=G1))) is None  # old group chat: silent
     from dipbot.takip import TakipServisi
     from fakes import SahteKaynak
     sv = TakipServisi(conn, ui.saat)
     k = SahteKaynak()
-    run(sv.savaslari_tara(G1, k))  # onay yok: baseline/kayıt yazılmaz
+    run(sv.savaslari_tara(G1, k))  # no approval: no baseline/record written
     assert conn.execute("SELECT COUNT(*) FROM savaslar WHERE group_id=?", (G1,)).fetchone()[0] == 0
     r = conn.execute("SELECT savas_baseline_tamam FROM grup_ayarlari WHERE group_id=?", (G1,)).fetchone()
     assert r is None or r[0] == 0
-    assert ui.grup_goc(G1, yeni) is False  # aynı göç için ikinci bildirim yok
-    b = bildirimler(conn, "grup_goc", hedef=KURUCU)
-    assert len(b) == 1 and b[0]["veri"]["eski"] == G1 and b[0]["veri"]["yeni"] == yeni
-    # yeni kimlik ONAYSIZ kalır: hiçbir komut çalışmaz
-    d = yonetim.durum_yukle(conn, KURUCU)
-    assert yeni not in d.onayli_gruplar
+    # the new id stays unapproved: group chats stay silent, and the UI always works on the central area
     assert run(ui.komut(gercek_grup_komut("oyuncular", grup=yeni))) is None
-    run(ui.komut(grup_komut("oyuncular", grup=yeni)))
-    assert ui._secili[KURUCU] == G2  # onaysız yeni kimlik hedef olamaz
-    # onaysız grubun göçü bildirim üretmez
-    assert ui.grup_goc(G3, -10088) is False
+    assert run(ui.komut(komut("oyuncular"))).metin  # private chat unaffected
+    assert ui.kapsam == config.MERKEZ_ID
+    # an unapproved group's migration record is not an error either
+    assert yonetim.goc_kaydet(conn, ui.saat, G3, -10088) is True
 
 
 # ---------------------------------------------------------------- token yenileme (arayüz akışı)

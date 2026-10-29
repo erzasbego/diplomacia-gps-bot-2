@@ -30,24 +30,24 @@ ORTAM = {"BOT_TOKEN": BOT_TOKEN, "OWNER_TELEGRAM_ID": "1000", "DB_PATH": "/tmp/x
 
 
 # ---------------------------------------------------------------- yapılandırma
-def test_varsayilan_kanal_ve_bos_aktif_liste():
+def test_varsayilan_kanal_ve_merkezi_alan_telegram_kimligi_degil():
     assert config.LOG_KANAL_ID == KANAL
+    assert config.MERKEZ_ID == 0 and config.MERKEZ_ID != KANAL, "takip verisi kanal kimliğine bağlı değil"
     ta = TelegramAyarlari.from_env(ORTAM)
     assert ta.kanal_id == KANAL
-    assert ta.aktif_takip_listeleri == frozenset(), "hiçbir liste kurucu seçmeden taranmaz"
+    assert not hasattr(ta, "aktif_takip_listeleri"), "TRACKING_GROUP_IDS mekanizması kaldırıldı"
 
 
-def test_ortamdan_kanal_ve_liste_secimi():
-    ta = TelegramAyarlari.from_env({**ORTAM, "LOG_CHANNEL_ID": "-1001234567890", "TRACKING_GROUP_IDS": "-1004375821471, -1004485206993"})
+def test_ortamdan_kanal_secimi_ve_tracking_group_ids_yok_sayilir():
+    ta = TelegramAyarlari.from_env({**ORTAM, "LOG_CHANNEL_ID": "-1001234567890", "TRACKING_GROUP_IDS": "-1004375821471"})
     assert ta.kanal_id == -1001234567890
-    assert ta.aktif_takip_listeleri == frozenset({-1004375821471, -1004485206993})
+    assert not hasattr(ta, "aktif_takip_listeleri")
 
 
-@pytest.mark.parametrize("ad,deger", [("LOG_CHANNEL_ID", "12345"), ("LOG_CHANNEL_ID", "abc"), ("TRACKING_GROUP_IDS", "x"),
-                                      ("TRACKING_GROUP_IDS", "-1001,0")])
-def test_gecersiz_kanal_veya_liste_yapilandirmasi_reddedilir(ad, deger):
+@pytest.mark.parametrize("deger", ["12345", "abc", "0"])
+def test_gecersiz_kanal_yapilandirmasi_reddedilir(deger):
     with pytest.raises(YapilandirmaHatasi):
-        TelegramAyarlari.from_env({**ORTAM, ad: deger})
+        TelegramAyarlari.from_env({**ORTAM, "LOG_CHANNEL_ID": deger})
 
 
 # ---------------------------------------------------------------- bildirimler yalnız kanala
@@ -277,16 +277,16 @@ def _tick(z):
     return run(z.tick_ve_bekle())
 
 
-def test_secili_olmayan_liste_taranmaz_bildirim_uretmez_veri_korunur(conn, saat, src):
+def test_yalniz_secili_alan_taranir_digerleri_taranmaz_veri_korunur(conn, saat, src):
     src.oyuncu("1", "Ali", "Varna")
     sv = TaramaZamanlayici(conn, src, KURUCU, saat).takip
     run(sv.oyuncu_ekle(G1, "1", src))
     run(sv.oyuncu_ekle(G2, "1", src))
     once = (takipte(conn, G1), takipte(conn, G2))
-    z_bos = TaramaZamanlayici(conn, src, KURUCU, saat, aktif_listeler=frozenset())
+    z_bos = TaramaZamanlayici(conn, src, KURUCU, saat, kapsamlar=frozenset())
     assert _tick(z_bos) == []
     assert conn.execute("SELECT COUNT(*) FROM tarama_isleri").fetchone()[0] == 0
-    z_g1 = TaramaZamanlayici(conn, src, KURUCU, saat, aktif_listeler=frozenset({G1}))
+    z_g1 = TaramaZamanlayici(conn, src, KURUCU, saat, kapsamlar=frozenset({G1}))
     sonuc = _tick(z_g1)
     assert len(sonuc) == 1
     taranan = {r["group_id"] for r in conn.execute("SELECT DISTINCT group_id FROM tarama_isleri")}
@@ -300,7 +300,7 @@ def test_secili_olmayan_liste_taranmaz_bildirim_uretmez_veri_korunur(conn, saat,
 def test_kanal_hazir_degilken_kontrol_false_kurucuya_tek_bildirim_sonra_bir_toparlanma_bildirimi(conn, saat, src):
     bot = KanalBot(uye="member")
     d = KanalDogrulayici(bot, KANAL, saat)
-    z = TaramaZamanlayici(conn, src, KURUCU, saat, aktif_listeler=frozenset({G1}), kanal=d)
+    z = TaramaZamanlayici(conn, src, KURUCU, saat, kapsamlar=frozenset({G1}), kanal=d)
     for _ in range(3):
         assert run(z._kanal_kontrol()) is False
         saat.ilerle(301)
@@ -326,7 +326,7 @@ def test_calis_dongusu_kanal_hazir_degilken_tarama_baslatmaz_ama_kurucu_bildirim
     sv = TaramaZamanlayici(conn, src, KURUCU, saat).takip
     run(sv.oyuncu_ekle(G1, "1", src))
     d = KanalDogrulayici(KanalBot(uye="member"), KANAL, saat)
-    z = TaramaZamanlayici(conn, src, KURUCU, saat, aktif_listeler=frozenset({G1}), kanal=d)
+    z = TaramaZamanlayici(conn, src, KURUCU, saat, kapsamlar=frozenset({G1}), kanal=d)
     g = SahteGonderici()
 
     async def dongu():
@@ -350,7 +350,7 @@ def test_calis_dongusu_kanal_hazirsa_secili_liste_taranir_ve_bildirimler_yalniz_
     run(sv.oyuncu_ekle(G1, "1", src))
     run(sv.oyuncu_ekle(G2, "1", src))
     d = KanalDogrulayici(KanalBot(), KANAL, saat)
-    z = TaramaZamanlayici(conn, src, KURUCU, saat, aktif_listeler=frozenset({G1}), kanal=d)
+    z = TaramaZamanlayici(conn, src, KURUCU, saat, kapsamlar=frozenset({G1}), kanal=d)
     run(z.tick_ve_bekle())  # baseline
     src.oyuncu("1", "Ali", "Sofia")
     saat.ilerle(700)
@@ -410,26 +410,17 @@ def test_gruba_eklenme_olayi_kanal_icin_sahte_alarm_uretmez(conn, src, saat):
 
 
 # ---------------------------------------------------------------- durum / kanal / listeler komutları (kurucu, özel sohbet)
-def test_status_kanal_ve_liste_durumunu_gosterir(conn, src, saat):
+def test_status_kanal_durumunu_gosterir_grup_ve_liste_secimi_yok(conn, src, saat):
     d = KanalDogrulayici(KanalBot(), KANAL, saat)
-    z = TaramaZamanlayici(conn, src, KURUCU, saat, aktif_listeler=frozenset({G1}), kanal=d)
+    z = TaramaZamanlayici(conn, src, KURUCU, saat, kapsamlar=frozenset({config.MERKEZ_ID}), kanal=d)
     ui = Arayuz(conn, src, KURUCU, saat=saat, zamanlayici=z, kanal=d)
-    t = run(ui.komut(grup_komut("status", grup=G1))).metin
+    t = run(ui.komut(komut("status"))).metin
     assert f"Notification channel: <code>{KANAL}</code> (not verified yet)" in t
-    assert "Tracking list status: ACTIVE (scanned)" in t
+    assert "Group:" not in t and "Approved groups" not in t and "Tracking list status" not in t
     run(d.dogrula())
-    assert f"Notification channel: <code>{KANAL}</code> — ready" in run(ui.komut(grup_komut("status", grup=G1))).metin
-    t2 = run(ui.komut(grup_komut("status", grup=G2))).metin
-    assert "Tracking list status: not active (not scanned)" in t2
+    assert f"Notification channel: <code>{KANAL}</code> — ready" in run(ui.komut(komut("status"))).metin
     d.durum = type(d.durum)(False, "the bot is not an administrator of the channel (status: member)")
-    assert "NOT READY: the bot is not an administrator" in run(ui.komut(grup_komut("status", grup=G1))).metin
-
-
-def test_status_hicbir_liste_aktif_degilse_uyarir(conn, src, saat):
-    z = TaramaZamanlayici(conn, src, KURUCU, saat, aktif_listeler=frozenset())
-    ui = Arayuz(conn, src, KURUCU, saat=saat, zamanlayici=z)
-    assert "No tracking list is active" in run(ui.komut(grup_komut("status", grup=G1))).metin
-    assert "No tracking list is active" in run(ui.komut(komut("status"))).metin
+    assert "NOT READY: the bot is not an administrator" in run(ui.komut(komut("status"))).metin
 
 
 def test_kanal_komutu_yeniden_dogrular_ve_mesaj_gondermez(conn, src, saat):
@@ -443,140 +434,17 @@ def test_kanal_komutu_yeniden_dogrular_ve_mesaj_gondermez(conn, src, saat):
     assert run(ui.komut(komut("channel", kul=YABANCI))).metin == "In private chat, this bot is available to the owner only."
 
 
-def test_listeler_komutu_aktif_listeyi_isaretler(conn, src, saat):
+def test_listeler_komutu_merkezi_listeyi_gosterir_eski_gruplari_degil(conn, src, saat):
     src.oyuncu("1", "Ali")
-    z = TaramaZamanlayici(conn, src, KURUCU, saat, aktif_listeler=frozenset({G2}))
-    run(z.takip.oyuncu_ekle(G1, "1", src))
-    ui = Arayuz(conn, src, KURUCU, saat=saat, zamanlayici=z)
+    ui = Arayuz(conn, src, KURUCU, saat=saat)  # üretim varsayılanı: merkezi alan
+    run(ui.komut(komut("addplayer", "1")))
+    # eski grup (arşiv) verisi
+    run(TaramaZamanlayici(conn, src, KURUCU, saat).takip.oyuncu_ekle(G1, "1", src))
     t = run(ui.komut(komut("lists"))).metin
-    assert f"<code>{G1}</code> — not active" in t and f"<code>{G2}</code> — ✅ ACTIVE (scanned)" in t
-    assert "players 1" in t
-    ui_bos = Arayuz(conn, src, KURUCU, saat=saat, zamanlayici=TaramaZamanlayici(conn, src, KURUCU, saat, aktif_listeler=frozenset()))
-    assert "No list is active" in run(ui_bos.komut(komut("lists"))).metin
-
-
-def test_grup_secimi_aktif_listeyi_isaretler(conn, src, saat):
-    z = TaramaZamanlayici(conn, src, KURUCU, saat, aktif_listeler=frozenset({G2}))
-    ui = Arayuz(conn, src, KURUCU, saat=saat, zamanlayici=z)
-    y = run(ui.komut(komut("start")))
-    y = run(ui.buton(__import__("tg_fakes").dugme("gl")))
-    etiketler = [d.etiket for satir in y.klavye for d in satir]
-    assert f"Group {G2} ✅ active" in etiketler and f"Group {G1}" in etiketler
-
-
-# ---------------------------------------------------------------- rapor (salt okunur)
-def _rapor_verisi(conn, saat, src):
-    src.oyuncu("1", "Ali")
-    src.oyuncu("2", "Bob")
-    src.oyuncu("3", "Cem")
-    sv = TaramaZamanlayici(conn, src, KURUCU, saat).takip
-    for g, ids in ((G1, ("1", "2")), (G2, ("2", "3"))):
-        for i in ids:
-            run(sv.oyuncu_ekle(g, i, src))
-    src.parti("5", "P", [("1", "Ali")])
-    run(sv.parti_ekle(G1, "5", src))
-    run(sv.parti_ekle(G2, "5", src))
-    _satir_ekle(conn, saat, G1, anahtar="eski")
-    _satir_ekle(conn, saat, KANAL, anahtar="yeni")
-
-
-def test_rapor_sayilar_cakisma_ve_bekleyen_hedefler(conn, saat, src):
-    _rapor_verisi(conn, saat, src)
-    ozet = {o["liste_id"]: o for o in rapor.liste_ozeti(conn, frozenset({G2}))}
-    # G1: oyuncular {1,2}; G2: {2,3} + parti üyesi 1 = {1,2,3}
-    assert ozet[G1]["oyuncu"] == 2 and ozet[G1]["parti"] == 1 and ozet[G1]["aktif"] is False and ozet[G1]["onayli"]
-    assert ozet[G2]["oyuncu"] == 3 and ozet[G2]["aktif"] is True and ozet[G1]["oyuncu_elle"] == 2
-    c = rapor.cakisma(conn)
-    assert len(c) == 1 and (c[0]["a"], c[0]["b"]) == (G2, G1)  # kimliğe göre sıralı: -1002 < -1001
-    ortak = c[0]["oyuncu"]
-    assert (ortak["ortak"], ortak["yalniz_a"], ortak["yalniz_b"]) == (2, 1, 0)
-    assert c[0]["parti"]["ortak"] == 1
-    assert dict(rapor.bekleyen_hedefler(conn)) == {G1: 1, KANAL: 1}
-    t = rapor.metin(conn, frozenset({G2}), kanal_id=KANAL)
-    assert "nothing was changed" in t and "ACTIVE (scanned)" in t and "not active" in t
-    assert f"{G1}: 1 pending -> OLD GROUP/OTHER" in t and f"{KANAL}: 1 pending -> log channel" in t
-    assert "TRACKING_GROUP_IDS" in t and "NOT merged automatically" in t
-    assert "Ali" not in t and "Bob" not in t, "varsayılan raporda oyuncu adı yok"
-
-
-def test_rapor_hicbir_sey_degistirmez_cli_salt_okunur(tmp_path, conn, saat, src, capsys):
-    yol = tmp_path / "dipbot.db"
-    c = db.baglan(yol)
-    yonetim.grup_onayla(c, saat, KURUCU, KURUCU, G1)
-    src.oyuncu("1", "Ali")
-    run(TaramaZamanlayici(c, src, KURUCU, saat).takip.oyuncu_ekle(G1, "1", src))
-    c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-    c.close()
-    once = hashlib.sha256(yol.read_bytes()).hexdigest()
-    assert rapor.main([str(yol), "--aktif", str(G1)]) == 0
-    out = capsys.readouterr().out
-    assert f"List {G1}: ACTIVE (scanned)" in out and "players: 1" in out
-    assert hashlib.sha256(yol.read_bytes()).hexdigest() == once, "rapor DB'yi değiştirmedi"
-    assert rapor.main([str(tmp_path / "yok.db")]) == 2
-    assert rapor.main([str(yol), "--aktif", "abc"]) == 2
-
-
-# ---------------------------------------------------------------- calistir: başlangıçta eski grup satırları iptal, liste seçilmeden tarama yok
-def test_calistir_baslangicta_eski_grup_bekleyenlerini_iptal_eder_kanal_dogrular_ve_listesiz_taramaz(monkeypatch, tmp_path):
-    from test_telegram_uygulama import Ctx, _SahteUygulama, _calistir_hazirla
-    from telegram.error import Conflict
-
-    class KanalliUygulama(_SahteUygulama):
-        def __init__(self, **kw):
-            super().__init__(**kw)
-            self.kanal_bot = KanalBot()
-            self.mesajlar = []
-
-        async def get_chat(self, chat_id):
-            return await self.kanal_bot.get_chat(chat_id)
-
-        async def get_me(self):
-            return await self.kanal_bot.get_me()
-
-        async def get_chat_member(self, chat_id, user_id):
-            return await self.kanal_bot.get_chat_member(chat_id, user_id)
-
-        async def send_message(self, **kw):
-            self.mesajlar.append(kw)
-            return SimpleNamespace(message_id=1)
-
-    async def polling(app):
-        async def sonra():
-            await asyncio.sleep(0.4)  # zamanlayıcı döngüsü en az bir tur çalışsın
-            ctx = Ctx()
-            ctx.error = Conflict("terminated by other getUpdates request")
-            await app.hata_isleyici(None, ctx)
-
-        app.gorev = asyncio.get_running_loop().create_task(sonra())  # polling hemen döner; durdurma gecikmeli
-
-    app = KanalliUygulama(polling_sirasinda=polling)
-    c, ta, baglantilar = _calistir_hazirla(monkeypatch, tmp_path, app)
-    saat = SahteSaat()
-    yol = ta.ayarlar.db_path
-    ilk = db.baglan(yol)
-    yonetim.grup_onayla(ilk, saat, 1000, 1000, G1)
-    ilk.execute("INSERT INTO takip_oyuncular(group_id, oyuncu_id, ad, eklendi) VALUES(?,?,?,?)", (G1, "1", "Ali", iso(saat())))
-    ilk.execute("INSERT INTO takip_partiler(group_id, parti_id, ad, eklendi) VALUES(?,?,?,?)", (G1, "5", "P", iso(saat())))
-    ilk.execute("INSERT INTO savaslar(group_id, savas_id, ad, ilk_gorulme) VALUES(?,?,?,?)", (G1, "w1", "W", iso(saat())))
-    _satir_ekle(ilk, saat, G1, anahtar="eski-grup")
-    _satir_ekle(ilk, saat, KANAL, anahtar="kanal-satiri")
-    ilk.close()
-    monkeypatch.setattr(c.config if hasattr(c, "config") else config, "TICK_SECONDS", 0.05)
-    kod = asyncio.run(asyncio.wait_for(c.calistir(ta), 20))
-    assert kod == 3
-    conn2 = sqlite3.connect(yol)
-    conn2.row_factory = sqlite3.Row
-    durum = {r["idem_anahtari"]: r["durum"] for r in conn2.execute("SELECT idem_anahtari, durum FROM outbox")}
-    assert durum["eski-grup"] == "iptal", "eski grup bildirimi iptal; kanala da gitmedi"
-    assert all(m["chat_id"] != G1 for m in app.mesajlar), "eski gruba hiçbir mesaj gitmedi"
-    assert [m["chat_id"] for m in app.mesajlar] == [KANAL] and durum["kanal-satiri"] == "gonderildi"
-    # veri silinmedi, hiçbir liste seçilmediği için taranmadı
-    assert conn2.execute("SELECT COUNT(*) FROM takip_oyuncular").fetchone()[0] == 1
-    assert conn2.execute("SELECT COUNT(*) FROM takip_partiler").fetchone()[0] == 1
-    assert conn2.execute("SELECT COUNT(*) FROM savaslar").fetchone()[0] == 1
-    assert conn2.execute("SELECT COUNT(*) FROM tarama_isleri").fetchone()[0] == 0, "TRACKING_GROUP_IDS boş: tarama yok"
-    conn2.close()
-    assert ("set_my_commands", len(__import__("dipbot.tg.arayuz", fromlist=["KOMUTLAR"]).KOMUTLAR)) in app.olaylar
+    assert "Central tracking list" in t and "Players: 1" in t
+    assert str(G1) not in t and "Select" not in t
+    assert "Archived old-group records: 2" in t and "Migration: NOT applied yet" in t  # G1, G2 (onaylı kayıtlar)
+    assert takipte(conn, config.MERKEZ_ID) == {"1"}
 
 
 # ---------------------------------------------------------------- deploy/onkontrol.sh: kanal ve liste seçimi
@@ -596,19 +464,18 @@ def _onkontrol(tmp_path, env_icerik):
     return subprocess.run(["bash", os.path.join(kok, "deploy", "onkontrol.sh")], env=env, capture_output=True, text=True, timeout=60).stdout
 
 
-def test_onkontrol_liste_secilmediyse_uyarir_tarama_yok(tmp_path):
+def test_onkontrol_kanal_varsayilan_tamam_ve_eski_tracking_group_ids_uyarisi(tmp_path):
     out = _onkontrol(tmp_path, "BOT_TOKEN=1:x\nOWNER_TELEGRAM_ID=1000\nDB_PATH=/x/dipbot.db\n")
-    assert "UYARI : TRACKING_GROUP_IDS bos/yok: HICBIR takip listesi taranmaz" in out
     assert "TAMAM : LOG_CHANNEL_ID tanimli degil: varsayilan bildirim kanali" in out
+    assert "TRACKING_GROUP_IDS" not in out
+    out2 = _onkontrol(tmp_path, "BOT_TOKEN=1:x\nTRACKING_GROUP_IDS=-1004375821471\n")
+    assert "UYARI : TRACKING_GROUP_IDS artik KULLANILMIYOR" in out2
 
 
-def test_onkontrol_gecerli_kanal_ve_liste_tamam(tmp_path):
-    out = _onkontrol(tmp_path, "LOG_CHANNEL_ID=-1003998002227\nTRACKING_GROUP_IDS=-1004375821471\nBOT_TOKEN=1:x\n")
-    assert "TAMAM : LOG_CHANNEL_ID tanimli (negatif sayi)" in out and "TAMAM : TRACKING_GROUP_IDS tanimli" in out
-    assert "TRACKING_GROUP_IDS bos/yok" not in out
+def test_onkontrol_gecerli_kanal_tamam(tmp_path):
+    out = _onkontrol(tmp_path, "LOG_CHANNEL_ID=-1003998002227\nBOT_TOKEN=1:x\n")
+    assert "TAMAM : LOG_CHANNEL_ID tanimli (negatif sayi)" in out
 
 
-@pytest.mark.parametrize("satir,beklenen", [("LOG_CHANNEL_ID=12345", "HATA  : LOG_CHANNEL_ID negatif"),
-                                           ("TRACKING_GROUP_IDS=abc", "HATA  : TRACKING_GROUP_IDS virgulle")])
-def test_onkontrol_gecersiz_kanal_veya_liste_hata_verir(tmp_path, satir, beklenen):
-    assert beklenen in _onkontrol(tmp_path, f"BOT_TOKEN=1:x\n{satir}\n")
+def test_onkontrol_gecersiz_kanal_hata_verir(tmp_path):
+    assert "HATA  : LOG_CHANNEL_ID negatif" in _onkontrol(tmp_path, "BOT_TOKEN=1:x\nLOG_CHANNEL_ID=12345\n")

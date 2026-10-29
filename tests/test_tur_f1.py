@@ -3,7 +3,7 @@ import pytest
 from conftest import bildirimler, run, takipte
 from tg_fakes import (
     G1, G2, KURUCU, YABANCI, YETKILI,
-    dugme, gercek_grup_dugme, grup_dugme, grup_komut, komut, onay_kimligi, veriler,
+    dugme, gercek_grup_dugme, gercek_grup_komut, grup_dugme, grup_komut, komut, onay_kimligi,
 )
 
 from dipbot import yonetim
@@ -27,18 +27,14 @@ def _yetkisiz_kayit(conn, kul):
 
 # ------------------------------------------------------------ F1-1
 def test_f1_yetkili_komutla_grup_kaldiramaz(ui, conn):
-    """BİLİNÇLİ DEĞİŞİKLİK: yetkili kullanıcının GRUPTAKİ komutu artık tamamen yok sayılır (yanıt/kayıt/bildirim yok);
-    özel sohbette ise yetkili için sohbet kapalıdır (KAPALI_OZEL) ve kayıt + kurucu bildirimi düşer."""
-    assert run(ui.komut(grup_komut("grup_kaldir", str(G2), kul=YETKILI))) is None
+    """BİLİNÇLİ DEĞİŞİKLİK: /grup_kaldir (ve /remove_group) Telegram'dan kaldırıldı; yetkili için grupta da özelde de
+    komut adı çözülmez (None): onay düğmesi, yetkisiz-deneme kaydı ve kurucu bildirimi yoktur, onay değişmez."""
+    for ad in ("grup_kaldir", "remove_group"):
+        assert run(ui.komut(grup_komut(ad, str(G2), kul=YETKILI))) is None
+        assert run(ui.komut(komut(ad, str(G2), kul=YETKILI))) is None
     assert G2 in _onayli(conn)
     assert _yetkisiz_kayit(conn, YETKILI) == 0
     assert not bildirimler(conn, "yetkisiz_deneme")
-    y = run(ui.komut(komut("grup_kaldir", str(G2), kul=YETKILI)))
-    assert y is not None and not veriler(y), "onay düğmesi üretilmemeli"
-    assert y.metin == ar.KAPALI_OZEL
-    assert G2 in _onayli(conn)
-    assert _yetkisiz_kayit(conn, YETKILI) == 1
-    assert len(bildirimler(conn, "yetkisiz_deneme", hedef=KURUCU)) == 1
 
 
 def test_f1_yetkili_dugmeyle_grup_kaldiramaz(ui, conn):
@@ -61,18 +57,27 @@ def test_f1_yetkili_onay_islemi_elle_uretilse_de_servis_reddeder(ui, conn):
     assert "approval removed" not in (y.metin or "")
 
 
-def test_f1_kurucu_komutla_ozelde_ve_grupta_kaldirir(ui, conn):
-    kid = onay_kimligi(run(ui.komut(komut("grup_kaldir", str(G2)))))
-    assert "approval removed" in run(ui.buton(dugme(f"c:e:{kid}"))).metin
+def test_f1_kurucu_komutla_ozelde_ve_grupta_kaldirir(ui, conn, saat):
+    """BİLİNÇLİ DEĞİŞİKLİK: kurucu için de /grup_kaldir komutu Telegram'da yok (özel/grup: None, onay değişmez);
+    kurucunun kaldırması yalnız servis katmanı (yonetim.grup_kaldir) üzerinden yapılır."""
+    assert run(ui.komut(komut("grup_kaldir", str(G2)))) is None
+    assert run(ui.komut(grup_komut("grup_kaldir", str(G1)))) is None
+    assert run(ui.komut(gercek_grup_komut("grup_kaldir", str(G1)))) is None
+    assert G1 in _onayli(conn) and G2 in _onayli(conn)
+    assert yonetim.grup_kaldir(conn, saat, KURUCU, KURUCU, G2) == 0
     assert G2 not in _onayli(conn)
-    kid = onay_kimligi(run(ui.komut(grup_komut("grup_kaldir", str(G1)))))
-    assert "approval removed" in run(ui.buton(grup_dugme(f"c:e:{kid}"))).metin
+    assert yonetim.grup_kaldir(conn, saat, KURUCU, KURUCU, G1) == 0
     assert G1 not in _onayli(conn)
 
 
-def test_f1_kurucu_dugmeyle_ozelde_kaldirir(ui, conn):
-    kid = onay_kimligi(run(ui.buton(dugme(f"gk:{G2}"))))
-    assert "approval removed" in run(ui.buton(dugme(f"c:e:{kid}"))).metin
+def test_f1_kurucu_dugmeyle_ozelde_kaldirir(ui, conn, saat):
+    """BİLİNÇLİ DEĞİŞİKLİK: 'gk:' / 'yk:' / 'gs:' / 'gl' düğmeleri kaldırıldı: kurucu için de geçersiz-düğme uyarısı
+    (sessiz), onay işlemi üretilmez, hiçbir şey değişmez; kaldırma servis katmanından yapılır."""
+    for veri in (f"gk:{G2}", f"yk:{YETKILI}", f"gs:{G2}", "gl"):
+        y = run(ui.buton(dugme(veri)))
+        assert y.sessiz and y.uyari == ar.ESKI_DUGME and not y.klavye, veri
+    assert G2 in _onayli(conn)
+    assert yonetim.grup_kaldir(conn, saat, KURUCU, KURUCU, G2) == 0
     assert G2 not in _onayli(conn)
 
 
@@ -91,23 +96,30 @@ def test_f1_sistem_kaynakli_dusurme_aktorsuz_calisir(conn, saat):
     assert G1 not in _onayli(conn)
 
 
-def test_f1_goc_otomatik_dusurme_calismaya_devam_eder(ui, conn):
-    assert ui.grup_goc(G1, -1009999) is True
+def test_f1_goc_otomatik_dusurme_calismaya_devam_eder(conn, saat):
+    """Servis katmanı: göç kaydı + eski onaylı kimliğin sistem kaynaklı düşürülmesi (Arayuz.grup_goc kaldırıldı)."""
+    assert yonetim.goc_kaydet(conn, saat, G1, -1009999) is True
+    yonetim.grup_kaldir_sistem(conn, saat, KURUCU, G1, neden="grup_goc")
     assert G1 not in _onayli(conn)
 
 
-def test_f1_onay_islemi_sohbet_ve_kullaniciya_bagli(ui, conn):
-    kid = onay_kimligi(run(ui.komut(komut("grup_kaldir", str(G2)))))
+def test_f1_onay_islemi_sohbet_ve_kullaniciya_bagli(ui, conn, servis, src):
+    """Onay işlemi sohbete+kullanıcıya bağlıdır. (grup_kaldir onayı kaldırıldı; aynı bağlama mekanizması yaşayan bir
+    onay türü olan oyuncu_sil üzerinden doğrulanır.)"""
+    src.oyuncu("72401", "Z")
+    run(servis.oyuncu_ekle(G1, "72401", src))
+    kid = onay_kimligi(run(ui.komut(grup_komut("removeplayer", "72401"))))
     # başka sohbetten (kurucu aynı kullanıcı ama grup sohbeti) ve başka kullanıcıdan kabul edilmez
     # BİLİNÇLİ DEĞİŞİKLİK: grup sohbetinden gelen düğme (kurucu dahil) sessizce yok sayılır: işlem uygulanmaz ve
     # tüketilmez; başka kullanıcı özel sohbette kapalı yanıtı alır.
     y = run(ui.buton(gercek_grup_dugme(f"c:e:{kid}")))
-    assert y.sessiz and y.uyari is None and not y.metin and G2 in _onayli(conn)
+    assert y.sessiz and y.uyari is None and not y.metin and takipte(conn, G1) == {"72401"}
     y = run(ui.buton(grup_dugme(f"c:e:{kid}", kul=YETKILI)))
-    assert y.sessiz and y.uyari is None and not y.metin and G2 in _onayli(conn)
+    assert y.sessiz and y.uyari is None and not y.metin and takipte(conn, G1) == {"72401"}
     y = run(ui.buton(dugme(f"c:e:{kid}", kul=YETKILI)))
-    assert y.uyari == ar.KAPALI_OZEL and G2 in _onayli(conn)
-    assert "approval removed" in run(ui.buton(dugme(f"c:e:{kid}"))).metin
+    assert y.uyari == ar.KAPALI_OZEL and takipte(conn, G1) == {"72401"}
+    assert "Player removed" in run(ui.buton(dugme(f"c:e:{kid}"))).metin
+    assert takipte(conn, G1) == set()
 
 
 # ------------------------------------------------------------ F1-2 denetim bildirimi
@@ -225,7 +237,9 @@ def test_f2_bildirim_yalniz_kurucu_ozel_sohbetine_gider(ui, conn, saat):
     assert not _denetim(conn)
     yonetim.yetki_ver(conn, saat, KURUCU, YETKILI, 300)
     yonetim.grup_onayla(conn, saat, KURUCU, YETKILI, -4444)
-    ui.grup_goc(G2, -100999)
+    # (eski Arayuz.grup_goc'un servis etkisi: göç kaydı + eski onaylı kimliğin sistem kaynaklı düşürülmesi)
+    yonetim.goc_kaydet(conn, saat, G2, -100999)
+    yonetim.grup_kaldir_sistem(conn, saat, KURUCU, G2, neden="grup_goc")
     b = _denetim(conn)
     assert {x["veri"]["eylem"] for x in b} == {"yetki_ver", "grup_onayla", "grup_goc_dusur"}
     for x in conn.execute("SELECT hedef_sohbet, grup_id FROM outbox WHERE tur IN ('denetim','denetim_ozet')"):

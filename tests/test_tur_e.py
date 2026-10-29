@@ -229,9 +229,12 @@ def test_e7_401_metinleri_kesin_degil_ve_dogrulanmadi_yorumu():
 def test_e8_grup_goc_bildirimi_celiskisiz():
     from dipbot.tg import bicim
     m = bicim.bildirim_metni("grup_goc", {"eski": -100111, "yeni": -100222, "zaman": "2026-10-20T10:00:00+00:00"})
-    assert "/approve_group -100222" in m
-    assert "/remove_group" not in m, "eski kimlik zaten otomatik düşürüldü; kaldırma önerisi çelişkili"
-    assert "automatically revoked" in m
+    # DELIBERATE CHANGE: the 'grup_goc' formatter was removed with group migration handling; an (old) row of this type
+    # falls back to the generic notification text and never suggests the removed group commands.
+    assert "grup_goc" not in bicim._BICIMLER
+    assert m == "<b>Notification</b>\nType: grup_goc"
+    assert "/approve_group" not in m and "/remove_group" not in m and "automatically revoked" not in m
+    assert "-100222" not in m and "-100111" not in m
 
 
 # ------------------------------------------------------------------ E10

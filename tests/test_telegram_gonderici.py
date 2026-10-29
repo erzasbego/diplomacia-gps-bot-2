@@ -113,9 +113,12 @@ def test_oyuncu_degisti_birden_fazla_alan_tek_mesaj():
 
 
 def test_onaysiz_ekleme_bildirimi_onay_komutunu_icerir():
+    """DELIBERATE CHANGE: groups are not supported; the notification says so and no longer offers '/approve_group'."""
     m = bicim.bildirim_metni("yetkisiz_deneme", {"kullanici_id": 77, "grup_id": -1003,
                                                   "islem": "onaysiz_gruba_eklendi", "zaman": "2026-10-19T12:00:00.000000Z"})
-    assert "added to an unapproved group" in m and "<code>/approve_group -1003</code>" in m
+    assert "Bot was added to a group" in m and "Groups are not supported" in m
+    assert "User ID: <code>77</code>" in m and "Group ID: <code>-1003</code>" in m
+    assert "/approve_group" not in m and "unapproved" not in m
 
 
 # ---------------------------------------------------------------- bölme

@@ -2,13 +2,13 @@
 import pytest
 from conftest import bildirimler, run
 from tg_fakes import (
-    G1, G2, G3, KURUCU, YETKILI, YABANCI, dugme, gercek_grup_komut, grup_dugme, grup_komut, komut, onay_kimligi,
+    G1, G2, G3, KURUCU, YETKILI, YABANCI, dugme, gercek_grup_komut, grup_dugme, grup_komut, komut,
 )
 
 from dipbot import config, outbox, yonetim
 from dipbot.kaynak import SavasOzet
 from dipbot.takip import TakipServisi
-from dipbot.tg.arayuz import Arayuz
+from dipbot.tg.arayuz import GRUP_ONAYSIZ_YANIT, Arayuz
 
 YENI = -1009001
 YENI2 = -1009002
@@ -69,28 +69,42 @@ def _say(conn, g):
     }
 
 
+def _goc(conn, saat, eski, yeni):
+    """Eski Arayuz.grup_goc'un servis-katmanı etkisi (kaldırılan arayüz yöntemi ve 'grup_goc' bildirimi hariç):
+    göç kaydı + eski kimlik onaylıysa sistem kaynaklı onay düşürme. Dönüş: işlem yapıldı mı."""
+    onayliydi = eski in yonetim.durum_yukle(conn, KURUCU).onayli_gruplar
+    if not onayliydi and not yonetim.grup_verisi_var_mi(conn, eski):
+        return False
+    yonetim.goc_kaydet(conn, saat, eski, yeni)
+    if onayliydi:
+        yonetim.grup_kaldir_sistem(conn, saat, KURUCU, eski, neden="grup_goc")
+    return True
+
+
 def _hazir(ui, conn, saat, eski=G1, yeni=YENI, onayla=True):
     _tohum(conn, saat, eski)
-    ui.grup_goc(eski, yeni)
+    _goc(conn, saat, eski, yeni)
     if onayla:
         yonetim.grup_onayla(conn, saat, KURUCU, KURUCU, yeni)
 
 
-def _tasi_komutu(ui, eski=G1, yeni=YENI, **kw):
-    return run(ui.komut(komut("grup_tasi", f"{eski} {yeni}", **kw)))
-
-
 def _tasi(ui, eski=G1, yeni=YENI):
-    y = _tasi_komutu(ui, eski, yeni)
-    return run(ui.buton(dugme(f"c:e:{onay_kimligi(y)}")))
+    """Kurucu adına servis katmanıyla taşır (Telegram komutu kaldırıldı); taşınan satır sayılarını döner."""
+    return yonetim.grup_tasi(ui.conn, ui.saat, KURUCU, KURUCU, eski, yeni)
+
+
+def _komut_dispatch_edilmez(ui, arg, **kw):
+    """/grup_tasi (ve /move_group) artık Telegram'da yok: komut adı çözülmez, yanıt None."""
+    assert run(ui.komut(komut("grup_tasi", arg, **kw))) is None
+    assert run(ui.komut(komut("move_group", arg, **kw))) is None
 
 
 # ---------------------------------------------------------------- G1
 def test_goc_olayi_yalniz_kayit_uretir_yetki_vermez(ui, conn, saat):
     _tohum(conn, saat, G1)
     onceki = _say(conn, G1)
-    ui.grup_goc(G1, YENI)
-    ui.grup_goc(G1, YENI)  # tekrar: tek kayıt
+    _goc(conn, saat, G1, YENI)
+    _goc(conn, saat, G1, YENI)  # tekrar: tek kayıt
     r = conn.execute("SELECT eski_id, yeni_id, durum FROM grup_gocleri").fetchall()
     assert [tuple(x) for x in r] == [(G1, YENI, "bekliyor")]
     d = yonetim.durum_yukle(conn, KURUCU)
@@ -100,8 +114,10 @@ def test_goc_olayi_yalniz_kayit_uretir_yetki_vermez(ui, conn, saat):
     # kurucu özel sohbette onaysız YENI'yi seçse de seçim kabul edilmez (liste YENI'ye geçmez).
     assert run(ui.komut(gercek_grup_komut("oyuncular", grup=YENI))) is None
     assert run(ui.komut(gercek_grup_komut("oyuncular", grup=YENI, kul=YETKILI))) is None
-    run(ui.komut(grup_komut("oyuncular", grup=YENI)))
-    assert ui._secili.get(KURUCU) != YENI
+    # (seçim kavramı kalmadı: onaysız YENI alanında kurucu komutu da yazma yapamaz; göç olayı yetki vermemiştir)
+    y = run(ui.komut(grup_komut("addplayer", "123", grup=YENI)))
+    assert y is not None and y.metin == GRUP_ONAYSIZ_YANIT, y
+    assert _say(conn, YENI)["takip_oyuncular"] == 0 and YENI not in yonetim.durum_yukle(conn, KURUCU).onayli_gruplar
     assert not conn.execute("SELECT 1 FROM yetkisiz_denemeler").fetchall()
 
 
@@ -114,8 +130,8 @@ def test_kurucu_ozelde_tasir_tum_tablolar(ui, conn, saat):
                               veri={}, simdi=saat())
     assert bek
     ui.islemler.olustur("oyuncu_sil", G1, YETKILI, G1, {"id": "11"})
-    y = _tasi(ui)
-    assert "Players: 2" in y.metin and "parties: 1" in y.metin, y.metin
+    sayilar = _tasi(ui)
+    assert sayilar["takip_oyuncular"] == 2 and sayilar["takip_partiler"] == 1, sayilar
     assert _say(conn, YENI) == onceki
     assert all(v == 0 for v in _say(conn, G1).values())
     assert conn.execute("SELECT COUNT(*) FROM grup_ayarlari WHERE group_id=?", (G1,)).fetchone()[0] == 0
@@ -142,22 +158,22 @@ def test_kurucu_ozelde_tasir_tum_tablolar(ui, conn, saat):
 def test_yetkili_ozelde_veya_grupta_tasiyamaz_kurucu_grupta_da_tasiyamaz(ui, conn, saat):
     _hazir(ui, conn, saat)
     once = _anlik(conn)
-    # yetkili kullanıcı: özel sohbet kurucuya özel
-    y = run(ui.komut(komut("grup_tasi", f"{G1} {YENI}", kul=YETKILI)))
-    assert y is not None and not any(v.startswith("c:e:") for v in (d.veri or "" for s in (y.klavye or []) for d in s))
+    # BİLİNÇLİ DEĞİŞİKLİK: /grup_tasi komutu Telegram'dan kaldırıldı; yetkili/kurucu/özel/grup fark etmeksizin
+    # komut adı çözülmez (None), onay düğmesi üretilmez. Servis katmanı ise yalnız kurucuyu kabul eder.
+    _komut_dispatch_edilmez(ui, f"{G1} {YENI}", kul=YETKILI)
+    _komut_dispatch_edilmez(ui, f"{G1} {YENI}")
+    with pytest.raises(yonetim.YetkiHatasi):
+        yonetim.grup_tasi(conn, saat, KURUCU, YETKILI, G1, YENI)
     # yetkili kullanıcı onaylı yeni grubun içinden
     kayit_once = conn.execute("SELECT COUNT(*) FROM yetkisiz_denemeler").fetchone()[0]
-    # BİLİNÇLİ DEĞİŞİKLİK: grup içinden gelen komut (yetkili / kurucu / yabancı) artık YANIT bile üretmez (None)
-    # ve yetkisiz-deneme kaydı düşmez; eskiden yetkili/kurucu için 'onay düğmesiz' bir yanıt dönerdi.
+    # grup içinden gelen komut (yetkili / kurucu / yabancı) YANIT üretmez (None) ve yetkisiz-deneme kaydı düşmez
     assert run(ui.komut(grup_komut("grup_tasi", f"{G1} {YENI}", grup=YENI, kul=YETKILI))) is None
     assert run(ui.komut(gercek_grup_komut("grup_tasi", f"{G1} {YENI}", grup=YENI, kul=KURUCU))) is None
     assert run(ui.komut(grup_komut("grup_tasi", f"{G1} {YENI}", grup=G2, kul=YABANCI))) is None
     assert conn.execute("SELECT COUNT(*) FROM yetkisiz_denemeler").fetchone()[0] == kayit_once
     sonra = _anlik(conn)
-    # yalnız yetkisiz deneme/bildirim kayıtları artabilir; takip verisi ve göç kaydı aynı
-    for t in ("takip_oyuncular", "takip_partiler", "parti_uyeleri", "engeller", "savaslar", "grup_gocleri", "grup_ayarlari"):
-        assert sonra[t] == once[t], t
-    assert conn.execute("SELECT COUNT(*) FROM yetkisiz_denemeler WHERE user_id=?", (YETKILI,)).fetchone()[0] >= 1
+    # hiçbir şey değişmez: takip verisi, göç kaydı, ayarlar (komut hiç çalışmadı)
+    assert sonra == once
 
 
 def test_onay_islemi_grup_icinden_veya_baskasi_tarafindan_uygulanmaz(ui, conn, saat):
@@ -186,8 +202,7 @@ def test_servis_aktor_kurucu_degilse_reddeder(ui, conn, saat):
 def test_kayitsiz_cift_reddedilir(ui, conn, saat):
     _hazir(ui, conn, saat)
     once = _anlik(conn)
-    y = _tasi_komutu(ui, G1, YENI2)
-    assert not any(v.startswith("c:e:") for v in (d.veri or "" for s in (y.klavye or []) for d in s))
+    _komut_dispatch_edilmez(ui, f"{G1} {YENI2}")  # BİLİNÇLİ DEĞİŞİKLİK: komut kaldırıldı; reddi servis verir
     with pytest.raises(yonetim.TasimaHatasi):
         yonetim.grup_tasi(conn, saat, KURUCU, KURUCU, G1, YENI2)
     assert _anlik(conn)["takip_oyuncular"] == once["takip_oyuncular"]
@@ -197,21 +212,20 @@ def test_kayitsiz_cift_reddedilir(ui, conn, saat):
 def test_gecersiz_kimlik_reddedilir(ui, conn, saat, arg):
     _hazir(ui, conn, saat)
     once = _anlik(conn)
-    y = run(ui.komut(komut("grup_tasi", arg)))
-    assert y is not None and not any(v.startswith("c:e:") for v in (d.veri or "" for s in (y.klavye or []) for d in s))
+    # BİLİNÇLİ DEĞİŞİKLİK: komut kaldırıldı (hangi argümanla olursa olsun yanıt None); geçersiz çiftin reddi servis
+    # katmanında doğrulanır (iki tam sayı verilen durumlarda TasimaHatasi, hiçbir şey değişmez).
+    _komut_dispatch_edilmez(ui, arg)
     assert _anlik(conn) == once
+    p = arg.split()
+    if len(p) == 2 and all(x.lstrip("-").isdigit() for x in p):
+        with pytest.raises(yonetim.TasimaHatasi):
+            yonetim.grup_tasi(conn, saat, KURUCU, KURUCU, int(p[0]), int(p[1]))
+        assert _anlik(conn) == once
 
 
 def _reddedilir(ui, conn):
     once = _anlik(conn)
-    y = _tasi_komutu(ui)
-    kid = None
-    for s in (y.klavye or []):
-        for d in s:
-            if (d.veri or "").startswith("c:e:"):
-                kid = d.veri.split(":")[2]
-    if kid is not None:  # onay öncesi doğrulama kaçırdıysa onayda da reddedilmeli
-        run(ui.buton(dugme(f"c:e:{kid}")))
+    _komut_dispatch_edilmez(ui, f"{G1} {YENI}")
     with pytest.raises(yonetim.TasimaHatasi):
         yonetim.grup_tasi(conn, ui.saat, KURUCU, KURUCU, G1, YENI)
     sonra = _anlik(conn)
@@ -261,7 +275,7 @@ def test_yeni_grupta_savas_taramasi_baslamissa_tasima_yine_calisir(ui, conn, saa
 
 
 def test_eski_grupta_tasinacak_veri_yoksa_reddedilir(ui, conn, saat):
-    ui.grup_goc(G1, YENI)  # G1'de takip verisi yok
+    assert yonetim.goc_kaydet(conn, saat, G1, YENI) is True  # G1'de takip verisi yok
     yonetim.grup_onayla(conn, saat, KURUCU, KURUCU, YENI)
     yonetim.grup_kaldir(conn, saat, KURUCU, KURUCU, G1)
     with pytest.raises(yonetim.TasimaHatasi):
@@ -283,10 +297,11 @@ def test_transaction_ortasinda_hata_tam_geri_alinir(ui, conn, saat, monkeypatch)
     assert _anlik(conn) == once
     assert conn.execute("SELECT durum FROM grup_gocleri").fetchone()[0] == "bekliyor"
     # UI yolu da çökmeden "değişmedi" söyler
-    monkeypatch.setattr(outbox, "grup_bekleyenlerini_iptal_et", patla)
-    y = _tasi(ui)
-    assert y is not None and "rolled back" in y.metin and "nothing was moved" in y.metin
-    assert _anlik(conn)["takip_oyuncular"] == once["takip_oyuncular"]
+    # tekrar denemede de aynı: hata yayılır, hiçbir şey değişmez (UI'daki "rolled back" yanıtı kaldırıldı)
+    with pytest.raises(RuntimeError):
+        _tasi(ui)
+    assert not conn.in_transaction
+    assert _anlik(conn) == once
 
 
 # ---------------------------------------------------------------- izolasyon / tekrar
@@ -294,7 +309,7 @@ def test_baska_gruplarin_verisi_ve_diger_cift_dokunulmaz(ui, conn, saat):
     _tohum(conn, saat, G2)
     _tohum(conn, saat, ESKI2)
     _hazir(ui, conn, saat)
-    ui.grup_goc(ESKI2, YENI2)  # ikinci kayıtlı çift: onaylı değil ama veri var
+    _goc(conn, saat, ESKI2, YENI2)  # ikinci kayıtlı çift: onaylı değil ama veri var
     yonetim.grup_onayla(conn, saat, KURUCU, KURUCU, YENI2)
     g2_once, e2_once = _say(conn, G2), _say(conn, ESKI2)
     ayar_g2 = tuple(conn.execute("SELECT * FROM grup_ayarlari WHERE group_id=?", (G2,)).fetchone())
@@ -317,8 +332,7 @@ def test_ikinci_tasima_reddedilir(ui, conn, saat):
     with pytest.raises(yonetim.TasimaHatasi):
         yonetim.grup_tasi(conn, saat, KURUCU, KURUCU, G1, YENI)
     assert _anlik(conn) == once
-    y = _tasi_komutu(ui)
-    assert not any(v.startswith("c:e:") for v in (d.veri or "" for s in (y.klavye or []) for d in s))
+    _komut_dispatch_edilmez(ui, f"{G1} {YENI}")
 
 
 # ---------------------------------------------------------------- baseline / bildirim seli
@@ -343,7 +357,7 @@ def test_denetim_bildirimi_yalniz_kimlik_ve_bayrak(ui, conn, saat, monkeypatch):
 
     # bayrak açıkken: ikinci taşıma
     _tohum(conn, saat, ESKI2)
-    ui.grup_goc(ESKI2, YENI2)
+    _goc(conn, saat, ESKI2, YENI2)
     yonetim.grup_onayla(conn, saat, KURUCU, KURUCU, YENI2)
     monkeypatch.setattr(config, "AUDIT_NOTIFY_OWNER_ACTIONS", True)
     yonetim.grup_tasi(conn, saat, KURUCU, KURUCU, ESKI2, YENI2)
@@ -366,3 +380,18 @@ def test_semadaki_tum_group_id_tablolari_tasima_tarafindan_ele_alinir(ui, conn):
     assert set(yonetim.TASINAN_TABLOLAR) <= bulunan
     # yalnız yeni oluşan göç tablosu id sütunları eski_id/yeni_id; sistem_durumu anahtarı ayrıca ele alınır
     assert "savas_taninmayan:" in yonetim.TASINAN_DURUM_ANAHTARLARI
+
+
+# ---------------------------------------------------------------- kaldırılan Telegram yüzeyi
+def test_grup_goc_arayuzu_ve_tasima_komutu_artik_yok(ui, conn, saat):
+    """BİLİNÇLİ DEĞİŞİKLİK: tek merkezi alan; Arayuz.grup_goc, migrate işleyicisi ve /grup_tasi kaldırıldı:
+    komut/düğme yanıt üretmez, hiçbir tabloya yazılmaz; servis katmanı (yonetim) arşiv kodu olarak çalışır."""
+    assert not hasattr(ui, "grup_goc")
+    _hazir(ui, conn, saat)
+    once = _anlik(conn)
+    _komut_dispatch_edilmez(ui, f"{G1} {YENI}")
+    for veri in (f"gk:{G1}", f"gs:{YENI}", "gl", f"yk:{YETKILI}"):
+        y = run(ui.buton(dugme(veri)))
+        assert y.sessiz and not y.metin and not y.klavye, veri
+    assert _anlik(conn) == once
+    assert yonetim.grup_tasi(conn, saat, KURUCU, KURUCU, G1, YENI)["takip_oyuncular"] == 2

@@ -63,18 +63,15 @@ if [[ -f "$ENV_FILE" ]]; then
     # Varsayilan <proje>/data/dipbot.db, ProtectSystem=strict altinda salt okunurdur: servis baslamaz.
     hata "DB_PATH bos/yok: $ENV_FILE icine DB_PATH=$DB_FILE yazin (varsayilan yol servis icinde yazilamaz)"
   fi
-  # Bildirim kanali ve taranacak takip listesi (kanal gecisi): kanal negatif sayi olmali; liste secilmediyse tarama YOK.
+  # Bildirim kanali (kanal gecisi): negatif sayi olmali. Takip merkezi alandadir; TRACKING_GROUP_IDS kaldirildi.
   if grep -Eq '^[[:space:]]*LOG_CHANNEL_ID=[^[:space:]]+' "$ENV_FILE"; then
     grep -Eq '^[[:space:]]*LOG_CHANNEL_ID=-[0-9]+[[:space:]]*$' "$ENV_FILE" && tamam "LOG_CHANNEL_ID tanimli (negatif sayi)" \
       || hata "LOG_CHANNEL_ID negatif Telegram sohbet kimligi olmali (ör. -100...)"
   else
     tamam "LOG_CHANNEL_ID tanimli degil: varsayilan bildirim kanali kullanilir (config.LOG_KANAL_ID)"
   fi
-  if grep -Eq '^[[:space:]]*TRACKING_GROUP_IDS=[^[:space:]]+' "$ENV_FILE"; then
-    grep -Eq '^[[:space:]]*TRACKING_GROUP_IDS=-?[0-9]+([,;][[:space:]]*-?[0-9]+)*[[:space:]]*$' "$ENV_FILE" && tamam "TRACKING_GROUP_IDS tanimli" \
-      || hata "TRACKING_GROUP_IDS virgulle ayrilmis tamsayilar olmali"
-  else
-    uyari "TRACKING_GROUP_IDS bos/yok: HICBIR takip listesi taranmaz ve bildirim uretilmez. Once 'python -m dipbot.rapor' ile veriyi raporlayin, sonra kullanilacak listeyi yazin (KANAL-GECISI-PLANI.md)."
+  if grep -Eq '^[[:space:]]*TRACKING_GROUP_IDS=' "$ENV_FILE"; then
+    uyari "TRACKING_GROUP_IDS artik KULLANILMIYOR (merkezi takip alani); satiri silebilirsiniz. Eski gruplar taranmaz."
   fi
   # .env.example'dan kalma BOS `KEY=` override satirlari (ozellikle DIPLOMACIA_AUTH_SEMA=) Bearer onekini dusurur.
   if grep -Eq '^[[:space:]]*DIPLOMACIA_AUTH_(SEMA|BASLIK)=[[:space:]]*$' "$ENV_FILE"; then

@@ -448,11 +448,13 @@ def test_sinirli_durum_yeniden_baslatmada_korunur_ve_tarama_sessiz_devam_eder(tm
 
 
 def test_grup_tasi_sinirli_parti_alanlarini_tasir(conn, servis, src, saat):
-    from dipbot.tg.arayuz import Arayuz as _A
+    # DELIBERATE CHANGE: Arayuz.grup_goc was removed; the service layer (library code) records the migration and drops
+    # the old approval directly.
     _kaynakta(100, src=src, toplam=329)
     run(servis.parti_ekle(G1, "1244", src))
     yeni = -1009001
-    _A(conn, src, KURUCU, saat=saat).grup_goc(G1, yeni)
+    assert yonetim.goc_kaydet(conn, saat, G1, yeni) is True
+    yonetim.grup_kaldir_sistem(conn, saat, KURUCU, G1, neden="grup_goc")
     yonetim.grup_onayla(conn, saat, KURUCU, KURUCU, yeni)
     yonetim.grup_tasi(conn, saat, KURUCU, KURUCU, G1, yeni)
     r = _parti_satiri(conn, yeni)

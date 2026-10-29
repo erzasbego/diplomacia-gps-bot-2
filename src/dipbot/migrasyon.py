@@ -238,6 +238,9 @@ def plan_olustur(conn: sqlite3.Connection, kaynaklar: list[int] | None = None) -
 
 
 # ---------------------------------------------------------------- metin raporu
+_ETIKET = {"oyuncu": "player", "parti": "party", "savas": "war", "engel": "block"}
+
+
 def metin(p: Plan) -> str:
     L = ["MIGRATION ANALYSIS (dry-run; READ-ONLY — nothing was changed, merged or deleted)", ""]
     L.append(f"Central tracking area id: {config.MERKEZ_ID} (not a Telegram id); log channel: {config.LOG_KANAL_ID}")
@@ -267,12 +270,12 @@ def metin(p: Plan) -> str:
     if p.atlananlar:
         L += ["", f"SKIPPED ({len(p.atlananlar)})"]
         for a in p.atlananlar[:200]:
-            L.append(f"  {a['tur']} {a['id']}: {a['neden']}")
+            L.append(f"  {_ETIKET.get(a['tur'], a['tur'])} {a['id']}: {a['neden']}")
     L += ["", f"CONFLICTS BETWEEN SOURCES ({len(p.cakismalar)}; ids and field values only)"]
     if not p.cakismalar:
         L.append("  none")
     for c in p.cakismalar[:300]:
-        L.append(f"  {c['tur']} {c['id']} in {c['kaynaklar']}" + (f"; kept record from {c['secilen_kaynak']}" if 'secilen_kaynak' in c else ""))
+        L.append(f"  {_ETIKET.get(c['tur'], c['tur'])} {c['id']} in {c['kaynaklar']}" + (f"; kept record from {c['secilen_kaynak']}" if 'secilen_kaynak' in c else ""))
         for alan, vals in c["alanlar"].items():
             L.append(f"      {alan}: " + "; ".join(f"{g}={v!r}" for g, v in vals.items()))
     L += ["", "RECOMMENDED CENTRAL SETTINGS", f"  scan interval: {p.aralik_onerisi} min ({p.aralik_gerekce})",
