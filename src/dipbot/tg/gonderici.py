@@ -30,6 +30,7 @@ from telegram.error import (
 )
 
 from ..outbox import GonderimHatasi
+from .kanal import kanal_sorunu_mu
 from . import bicim
 from .modeller import Klavye
 
@@ -201,17 +202,25 @@ class TelegramGonderici:
             # Kanal doğrulanamadı: satır hata/deneme sayılmadan beklemeye alınır (bekle_saniye = 429 benzeri erteleme).
             raise GonderimHatasi("log channel is not ready", bekle_saniye=300.0)
         metin = bicim.bildirim_metni(tur, veri)
-        for parca in bicim.bol(metin):
-            await self._yap(
-                sohbet_id,
-                lambda p=parca: self.bot.send_message(
-                    chat_id=sohbet_id,
-                    text=p,
-                    parse_mode="HTML",
-                    link_preview_options=_ONIZLEME_KAPALI,
-                ),
-                OUTBOX_AZAMI_UYKU,
-            )
+        try:
+            for parca in bicim.bol(metin):
+                await self._yap(
+                    sohbet_id,
+                    lambda p=parca: self.bot.send_message(
+                        chat_id=sohbet_id,
+                        text=p,
+                        parse_mode="HTML",
+                        link_preview_options=_ONIZLEME_KAPALI,
+                    ),
+                    OUTBOX_AZAMI_UYKU,
+                )
+        except GonderimHatasi as h:
+            # Kanal erişimi/yetkisi gönderim sırasında kaybolduysa satır KALICI hata olmaz (bildirim kaybolmasın):
+            # kanal 'hazır değil' işaretlenir (tarama duraklar, kurucuya bildirim gider) ve satır bekletilir.
+            if self._kanal is not None and sohbet_id == self._kanal.kanal_id and kanal_sorunu_mu(h.__cause__):
+                self._kanal.hazir_degil_isaretle(f"sending failed: {h}"[:200])
+                raise GonderimHatasi("log channel is not ready", bekle_saniye=300.0) from h
+            raise
 
     # ---- etkileşimli yanıtlar (RetryAfter kısaysa bir kez bekleyip yeniden dener)
     async def _etkilesim(self, sohbet_id: int, cagri: Callable[[], Awaitable]):

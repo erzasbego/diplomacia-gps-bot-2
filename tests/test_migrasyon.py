@@ -90,6 +90,20 @@ def _dokum(c, tablolar=KAYNAK_TABLOLAR, hariç_merkez=True):
     return out
 
 
+def _uygula(c, **k):
+    """Fixture'daki sahte eski bekleyen bildirimler nedeniyle kayıp kabulü açıkça verilir (kabul edilmezse reddedilir: ayrı test)."""
+    k.setdefault("bekleyen_kaybi_kabul", True)
+    return migrasyon.uygula(c, **k)
+
+
+def _cli_uygula(yol, yedek, *ek):
+    c = sqlite3.connect(f"file:{yol}?mode=ro", uri=True)
+    c.row_factory = sqlite3.Row
+    ozet = migrasyon.plan_ozeti(migrasyon.plan_olustur(c))
+    c.close()
+    return migrasyon.main(["uygula", str(yol), "--yedek", str(yedek), "--onayliyorum", "--plan", ozet, "--bekleyen-kaybi-kabul", *ek])
+
+
 def _merkez(c, t):
     return [dict(r) for r in c.execute(f"SELECT * FROM {t} WHERE group_id=?", (M,))]
 
@@ -144,7 +158,7 @@ def test_beklenmeyen_eski_alan_raporlanir_ama_varsayilan_aktarilmaz(veri):
 def test_uygulama_kayipsiz_tekillestirir_ve_kaynaklara_dokunmaz(veri):
     yol, c = veri
     once = _dokum(c)
-    r = migrasyon.uygula(c)
+    r = _uygula(c)
     assert r["durum"] == "uygulandi" and r["eklenen"]["oyuncu"] == 5 and r["eklenen"]["parti"] == 2
     assert _dokum(c) == once, "eski grup kayıtları AYNEN korundu (silinmedi/değişmedi)"
     oy = {x["oyuncu_id"]: x for x in _merkez(c, "takip_oyuncular")}
@@ -171,20 +185,20 @@ def test_uygulama_kayipsiz_tekillestirir_ve_kaynaklara_dokunmaz(veri):
 def test_dry_run_ile_uygulama_ayni_sonucu_verir(veri):
     yol, c = veri
     p = migrasyon.plan_olustur(c)
-    r = migrasyon.uygula(c)
+    r = _uygula(c)
     assert r["eklenen"] == {"oyuncu": len(p.oyuncular), "parti": len(p.partiler), "parti_uyesi": len(p.parti_uyeleri),
                             "savas": len(p.savaslar), "engel": len(p.engeller), "sayac": len(p.sayaclar)}
 
 
 def test_ikinci_calistirma_veri_cogaltmaz_idempotent(veri):
     yol, c = veri
-    migrasyon.uygula(c)
+    _uygula(c)
     sayim = lambda: {t: c.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in  # noqa: E731
                      ("takip_oyuncular", "takip_partiler", "parti_uyeleri", "savaslar", "engeller", "bulunamadi_sayaclari", "grup_ayarlari")}
     once, dokum = sayim(), _dokum(c, hariç_merkez=False)
-    assert migrasyon.uygula(c) == {"durum": "zaten_uygulanmis"}
+    assert _uygula(c) == {"durum": "zaten_uygulanmis"}
     assert sayim() == once
-    r = migrasyon.uygula(c, zorla=True)  # işaret olsa da zorlansa BİLE mükerrer oluşmaz (birincil anahtar + OR IGNORE)
+    r = _uygula(c, zorla=True)  # işaret olsa da zorlansa BİLE mükerrer oluşmaz (birincil anahtar + OR IGNORE)
     assert r["eklenen"] == {"oyuncu": 0, "parti": 0, "parti_uyesi": 0, "savas": 0, "engel": 0, "sayac": 0}
     assert sayim() == once and _dokum(c, hariç_merkez=False) == dokum
 
@@ -193,14 +207,14 @@ def test_merkezde_mevcut_kayit_ezilmez(veri):
     yol, c = veri
     _ekle_oyuncu(c, M, "2", "BobCentral", "Burgas", "Bulgaria", T2, elle=1)
     _ayar(c, M, 20, baseline=0)
-    r = migrasyon.uygula(c)
+    r = _uygula(c)
     oy = {x["oyuncu_id"]: x for x in _merkez(c, "takip_oyuncular")}
     assert oy["2"]["ad"] == "BobCentral" and oy["2"]["bolge"] == "Burgas", "merkezdeki kayıt korunur"
     assert r["eklenen"]["oyuncu"] == 4
     ay = _merkez(c, "grup_ayarlari")[0]
     assert ay["tarama_araligi_dk"] == 20, "mevcut merkezi aralık yalnız --aralik ile değişir"
     assert ay["savas_baseline_tamam"] == 1, "baseline yalnız yükselir"
-    migrasyon.uygula(c, zorla=True, aralik=15)
+    _uygula(c, zorla=True, aralik=15)
     assert _merkez(c, "grup_ayarlari")[0]["tarama_araligi_dk"] == 15
 
 
@@ -217,7 +231,7 @@ def test_hata_halinde_tum_degisiklikler_geri_alinir(veri, monkeypatch):
 
     monkeypatch.setattr(migrasyon, "_ekle", bozuk)
     with pytest.raises(RuntimeError):
-        migrasyon.uygula(c)
+        _uygula(c)
     for t in ("takip_oyuncular", "takip_partiler", "parti_uyeleri", "savaslar", "engeller", "bulunamadi_sayaclari", "grup_ayarlari"):
         assert _merkez(c, t) == [], t
     assert c.execute("SELECT 1 FROM sistem_durumu WHERE anahtar=?", (migrasyon.ANAHTAR,)).fetchone() is None
@@ -226,29 +240,29 @@ def test_hata_halinde_tum_degisiklikler_geri_alinir(veri, monkeypatch):
 def test_gecersiz_aralik_ve_kaynaksiz_calisma_reddedilir(veri):
     yol, c = veri
     with pytest.raises(migrasyon.MigrasyonHatasi):
-        migrasyon.uygula(c, aralik=7)
+        _uygula(c, aralik=7)
     c2 = db.baglan(":memory:")
     with pytest.raises(migrasyon.MigrasyonHatasi):
-        migrasyon.uygula(c2)
+        _uygula(c2)
 
 
 def test_geri_al_yalniz_merkezi_kayitlari_kaldirir(veri):
     yol, c = veri
     once = _dokum(c)
-    migrasyon.uygula(c)
+    _uygula(c)
     r = migrasyon.geri_al(c)
     assert r["takip_oyuncular"] == 5 and r["takip_partiler"] == 2
     assert _dokum(c) == once, "eski grup kayıtları dokunulmamış"
     for t in ("takip_oyuncular", "takip_partiler", "savaslar"):
         assert _merkez(c, t) == []
     assert c.execute("SELECT 1 FROM sistem_durumu WHERE anahtar=?", (migrasyon.ANAHTAR,)).fetchone() is None
-    assert migrasyon.uygula(c)["durum"] == "uygulandi", "geri alma sonrası yeniden uygulanabilir"
+    assert _uygula(c)["durum"] == "uygulandi", "geri alma sonrası yeniden uygulanabilir"
 
 
 # ---------------------------------------------------------------- aktarım sonrası merkezi takip: sessiz baseline, tek bildirim, tekrar yok
 def test_aktarim_sonrasi_tarama_degisiklik_bildirimi_tek_kez_ve_tekrar_yok(veri):
     yol, c = veri
-    migrasyon.uygula(c)
+    _uygula(c)
     saat = SahteSaat()
     sv = TakipServisi(c, saat)
     src = SahteKaynak()
@@ -288,7 +302,8 @@ def test_cli_uygula_onay_ve_yedek_zorunlu(veri, tmp_path, capsys):
     c.close()
     assert migrasyon.main(["uygula", str(yol)]) == 2
     assert migrasyon.main(["uygula", str(yol), "--onayliyorum"]) == 2
-    assert migrasyon.main(["uygula", str(yol), "--yedek", str(tmp_path / "yok.db"), "--onayliyorum"]) == 3
+    assert migrasyon.main(["uygula", str(yol), "--yedek", str(tmp_path / "yok.db"), "--onayliyorum"]) == 2, "--plan zorunlu"
+    assert migrasyon.main(["uygula", str(yol), "--yedek", str(tmp_path / "yok.db"), "--onayliyorum", "--plan", "x"]) == 3
     c = db.baglan(yol)
     assert _merkez(c, "takip_oyuncular") == [], "reddedilen çalıştırmalar hiçbir şey yazmadı"
     c.close()
@@ -301,7 +316,7 @@ def test_cli_bayat_veya_yabanci_yedek_reddedilir_gecerli_yedekle_uygular(veri, t
     c.execute("INSERT INTO takip_oyuncular(group_id, oyuncu_id, ad, eklendi) VALUES(?,?,?,?)", (A, "99", "Yeni", T2))  # yedekten sonra veri
     c.commit()
     c.close()
-    assert migrasyon.main(["uygula", str(yol), "--yedek", str(yedek), "--onayliyorum"]) == 3
+    assert _cli_uygula(yol, yedek) == 3
     assert "GÜNCEL değil" in capsys.readouterr().err
     yedek2 = _yedek_al(yol, tmp_path / "yedek2.db")
     yabanci = tmp_path / "yabanci.db"
@@ -309,13 +324,13 @@ def test_cli_bayat_veya_yabanci_yedek_reddedilir_gecerli_yedekle_uygular(veri, t
     s.execute("CREATE TABLE x(a)")
     s.commit()
     s.close()
-    assert migrasyon.main(["uygula", str(yol), "--yedek", str(yabanci), "--onayliyorum"]) == 3
-    assert migrasyon.main(["uygula", str(yol), "--yedek", str(yedek2), "--onayliyorum", "--aralik", "10"]) == 0
+    assert _cli_uygula(yol, yabanci) == 3
+    assert _cli_uygula(yol, yedek2, "--aralik", "10") == 0
     c = db.baglan(yol)
     assert len(_merkez(c, "takip_oyuncular")) == 6 and _merkez(c, "grup_ayarlari")[0]["tarama_araligi_dk"] == 10
     c.close()
     # ikinci çalıştırma: veri çoğalmaz
-    assert migrasyon.main(["uygula", str(yol), "--yedek", str(_yedek_al(yol, tmp_path / "yedek3.db")), "--onayliyorum"]) == 0
+    assert _cli_uygula(yol, _yedek_al(yol, tmp_path / "yedek3.db")) == 0
     c = db.baglan(yol)
     assert len(_merkez(c, "takip_oyuncular")) == 6
     c.close()
@@ -323,7 +338,7 @@ def test_cli_bayat_veya_yabanci_yedek_reddedilir_gecerli_yedekle_uygular(veri, t
 
 def test_cli_geri_al_ve_olmayan_db(veri, tmp_path):
     yol, c = veri
-    migrasyon.uygula(c)
+    _uygula(c)
     c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     c.close()
     yedek = _yedek_al(yol, tmp_path / "y.db")
@@ -338,7 +353,171 @@ def test_rapor_merkez_ozeti_arsiv_ve_migrasyon_durumu(veri):
     yol, c = veri
     o = rapor.merkez_ozeti(c)
     assert o["oyuncu"] == 0 and o["arsiv_alanlari"] == 3 and o["migrasyon_uygulandi"] is False
-    migrasyon.uygula(c)
+    _uygula(c)
     o = rapor.merkez_ozeti(c)
     assert o["oyuncu"] == 5 and o["parti"] == 2 and o["savas"] == 3 and o["aralik_dk"] == 5 and o["migrasyon_uygulandi"] is True
     assert o["arsiv_alanlari"] == 3
+
+
+# ================================================================= Opus incelemesi bulguları (kilitleyen testler)
+def test_yedek_canli_veritabaninin_kendisi_olamaz(veri, capsys):
+    yol, c = veri
+    c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    c.close()
+    assert _cli_uygula(yol, yol) == 3
+    assert "KENDİSİ" in capsys.readouterr().err
+    c = db.baglan(yol)
+    assert _merkez(c, "takip_oyuncular") == []
+    c.close()
+
+
+def test_yedek_satir_sayisi_ayni_ama_icerik_farkliysa_reddedilir(veri, tmp_path, capsys):
+    yol, c = veri
+    yedek = _yedek_al(yol, tmp_path / "y.db")
+    c.execute("UPDATE takip_oyuncular SET bolge='Burgas' WHERE group_id=? AND oyuncu_id='1'", (A,))  # sayılar aynı, içerik farklı
+    c.commit()
+    c.close()
+    assert _cli_uygula(yol, yedek) == 3
+    assert "AYNI değil" in capsys.readouterr().err
+    c = db.baglan(yol)
+    assert _merkez(c, "takip_oyuncular") == []
+    c.close()
+
+
+def test_sema_surumu_beklenenden_farkliysa_baglanmadan_reddedilir(veri, tmp_path, capsys):
+    yol, c = veri
+    c.execute("PRAGMA user_version=3")
+    c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    c.close()
+    once = hashlib.sha256(yol.read_bytes()).hexdigest()
+    assert migrasyon.main(["uygula", str(yol), "--yedek", str(yol), "--onayliyorum", "--plan", "x"]) == 3
+    assert "şema sürümü 3" in capsys.readouterr().err
+    assert hashlib.sha256(yol.read_bytes()).hexdigest() == once, "güvenlik kontrolleri geçmeden veritabanına YAZILMADI (db.baglan çağrılmadı)"
+
+
+def test_plan_ozeti_uyusmazsa_reddedilir_ve_analiz_ozeti_yazar(veri, capsys):
+    yol, c = veri
+    p = migrasyon.plan_olustur(c)
+    ozet = migrasyon.plan_ozeti(p)
+    assert len(ozet) == 16 and migrasyon.plan_ozeti(migrasyon.plan_olustur(c)) == ozet, "aynı veri -> aynı özet (deterministik)"
+    assert f"PLAN DIGEST: {ozet}" in migrasyon.metin(p)
+    with pytest.raises(migrasyon.MigrasyonHatasi, match="plan özeti uyuşmuyor"):
+        _uygula(c, plan="0" * 16)
+    assert _merkez(c, "takip_oyuncular") == []
+    _ekle_oyuncu(c, A, "55", "Yeni", "X", "Y", T2)  # analizden sonra veri değişti
+    with pytest.raises(migrasyon.MigrasyonHatasi, match="plan özeti uyuşmuyor"):
+        _uygula(c, plan=ozet)
+    assert _uygula(c, plan=migrasyon.plan_ozeti(migrasyon.plan_olustur(c)))["durum"] == "uygulandi"
+
+
+def test_bekleyen_eski_bildirim_varsa_acik_kabul_olmadan_uygulanmaz(veri):
+    yol, c = veri
+    with pytest.raises(migrasyon.MigrasyonHatasi, match="teslim edilmemiş bildirim"):
+        migrasyon.uygula(c)
+    assert _merkez(c, "takip_oyuncular") == []
+    assert migrasyon.uygula(c, bekleyen_kaybi_kabul=True)["durum"] == "uygulandi"
+    # bekleyen satırlar migrasyon tarafından DEĞİŞTİRİLMEZ (açılışta hizalama iptal eder)
+    assert c.execute("SELECT COUNT(*) FROM outbox WHERE durum='bekliyor'").fetchone()[0] == 2
+
+
+def test_merkezde_engelli_oyuncu_geri_eklenmez_ve_zorla_merkez_degismisse_reddedilir(veri):
+    yol, c = veri
+    c.execute("INSERT INTO engeller(group_id, oyuncu_id, neden, olusturuldu) VALUES(?,?,?,?)", (M, "4", "elle_silindi", T2))
+    r = _uygula(c)
+    assert "4" not in {x["oyuncu_id"] for x in _merkez(c, "takip_oyuncular")}
+    assert r["eklenen"]["oyuncu"] == 4
+    p = migrasyon.plan_olustur(c)
+    assert any(a["id"] == "4" and "engelli" in a["neden"] for a in p.atlananlar)
+    # geçişten sonra merkezde bir oyuncu silinir -> --zorla yeniden eklemesin
+    c.execute("DELETE FROM takip_oyuncular WHERE group_id=? AND oyuncu_id='1'", (M,))
+    with pytest.raises(migrasyon.MigrasyonHatasi, match="DEĞİŞMİŞ"):
+        _uygula(c, zorla=True)
+    assert "1" not in {x["oyuncu_id"] for x in _merkez(c, "takip_oyuncular")}
+
+
+def test_uid_mukerrerinde_elle_eklenmis_kayit_tercih_edilir_ve_bayraklar_birlesir(veri):
+    yol, c = veri
+    c.execute("DELETE FROM takip_oyuncular WHERE oyuncu_id IN ('7','8')")
+    _ekle_oyuncu(c, A, "123", "Eda", "Sofia", "Bulgaria", T1, elle=0, uid="u-dup", xp_onayli=1)
+    _ekle_oyuncu(c, B, "0123", "Eda", "Sofia", "Bulgaria", T1, elle=1, uid="u-dup", xp_onayli=0)
+    _uygula(c)
+    oy = {x["oyuncu_id"]: x for x in _merkez(c, "takip_oyuncular")}
+    assert "0123" in oy and "123" not in oy, "elle eklenmiş kayıt kazandı"
+    assert oy["0123"]["elle_eklendi"] == 1 and oy["0123"]["xp_onayli"] == 0, "manuel kişi XP kuralıyla otomatik silinmez"
+    c2 = db.baglan(":memory:")
+    _ekle_oyuncu(c2, A, "123", "Eda", "S", "B", T1, elle=0, uid="u", xp_onayli=1)
+    _ekle_oyuncu(c2, B, "0123", "Eda", "S", "B", T1, elle=0, uid="u", xp_onayli=0)
+    c2.execute("INSERT INTO onayli_gruplar(group_id, onaylandi, donem) VALUES(?,?,1)", (A, T0))
+    p = migrasyon.plan_olustur(c2, [A, B])
+    assert [r["oyuncu_id"] for r in p.oyuncular] == ["123"] and p.oyuncular[0]["xp_onayli"] == 0, "xp_onayli en düşük (korumacı)"
+
+
+def test_geri_al_isaret_olmadan_reddedilir_ve_onceden_var_olan_veya_sonradan_eklenen_merkezi_kayda_dokunmaz(veri):
+    yol, c = veri
+    _ekle_oyuncu(c, M, "900", "Manuel", "X", "Y", T2, elle=1)
+    with pytest.raises(migrasyon.MigrasyonHatasi, match="işareti yok"):
+        migrasyon.geri_al(c)
+    assert len(_merkez(c, "takip_oyuncular")) == 1, "işaretsiz geri alma hiçbir şey silmedi"
+    _ayar(c, M, 20, baseline=0)
+    _uygula(c)
+    _ekle_oyuncu(c, M, "901", "SonradanEklendi", "X", "Y", T2, elle=1)  # geçişten SONRA eklendi
+    r = migrasyon.geri_al(c)
+    kalan = {x["oyuncu_id"] for x in _merkez(c, "takip_oyuncular")}
+    assert kalan == {"900", "901"}, "yalnız migrasyonun eklediği 5 oyuncu silindi"
+    assert r["takip_oyuncular"] == 5
+    ay = _merkez(c, "grup_ayarlari")[0]
+    assert ay["tarama_araligi_dk"] == 20, "önceden var olan merkezi ayar silinmedi"
+    assert ay["savas_baseline_tamam"] == 0, "migrasyonun yükselttiği baseline geri alındı"
+    assert _merkez(c, "takip_partiler") == [] and _merkez(c, "savaslar") == []
+
+
+def test_eski_gozlemler_sessiz_yeniden_gozlenir_secenegi(veri):
+    yol, c = veri
+    p = migrasyon.plan_olustur(c, sessiz_gun=1)  # T0-T2 (2026-10) gözlemleri bir günden eski kabul edilir
+    assert p.sessiz_oyuncu >= 4 and p.sessiz_parti == 2
+    oy = {r["oyuncu_id"]: r for r in p.oyuncular}
+    assert oy["2"]["baseline_tamam"] == 0 and oy["3"]["baseline_tamam"] == 0
+    assert oy["4"]["baseline_tamam"] == 0
+    assert all(r["baseline_tamam"] == 0 for r in p.partiler)
+    assert [g["alan"] for g in p.gozlem_yasi] == [A, B, C] and p.gozlem_yasi[1]["en_yeni"] == T2
+    out = migrasyon.metin(p)
+    assert "AGE OF LAST OBSERVATIONS" in out and "re-observed SILENTLY" in out
+    # seçenek yokken kayıtlar aynen kalır
+    p0 = migrasyon.plan_olustur(c)
+    assert {r["oyuncu_id"]: r["baseline_tamam"] for r in p0.oyuncular}["2"] == 1 and p0.sessiz_oyuncu == 0
+
+
+def test_onerilen_aralik_uygulanmadiysa_gercek_deger_raporlanir(veri):
+    yol, c = veri
+    _ayar(c, M, 20, baseline=0)  # tick'in oluşturduğu benzeri mevcut merkezi ayar
+    r = _uygula(c)
+    assert r["aralik"] == 20 and r["onerilen_aralik"] == 5 and r["aralik_uygulandi"] is False
+    c2 = db.baglan(":memory:")
+    c2.execute("INSERT INTO onayli_gruplar(group_id, onaylandi, donem) VALUES(?,?,1)", (A, T0))
+    _ekle_oyuncu(c2, A, "1", "A", "V", "B", T1)
+    _ayar(c2, A, 15)
+    r2 = migrasyon.uygula(c2, bekleyen_kaybi_kabul=True)
+    assert r2["aralik"] == 15 and r2["aralik_uygulandi"] is True
+
+
+def test_dogrulama_tum_tablolar_icin_eklenen_sayisini_plana_esitler(veri, monkeypatch):
+    yol, c = veri
+    gercek = migrasyon._ekle
+
+    def ignore_uye(conn, tablo, kolonlar, satir):  # parti_uyeleri satırlarını sessizce düşüren hata simülasyonu
+        return 0 if tablo == "parti_uyeleri" else gercek(conn, tablo, kolonlar, satir)
+
+    monkeypatch.setattr(migrasyon, "_ekle", ignore_uye)
+    with pytest.raises(migrasyon.MigrasyonHatasi, match="parti_uyesi"):
+        _uygula(c)
+    assert _merkez(c, "takip_oyuncular") == [] and c.execute("SELECT 1 FROM sistem_durumu WHERE anahtar=?", (migrasyon.ANAHTAR,)).fetchone() is None
+
+
+def test_analiz_tek_tutarli_anlik_goruntude_calisir_ve_plan_ozeti_yazar(veri, capsys):
+    yol, c = veri
+    c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    assert migrasyon.main(["analiz", str(yol)]) == 0  # servis (başka bağlantı) açıkken de çalışır
+    out = capsys.readouterr().out
+    assert "PLAN DIGEST:" in out and "--plan <digest>" in out and "--bekleyen-kaybi-kabul" in out
+    assert migrasyon.main(["analiz", str(yol), "--json", "--eski-gozlem-sessiz", "3"]) == 0
+    assert json.loads(capsys.readouterr().out)["plan_ozeti"]

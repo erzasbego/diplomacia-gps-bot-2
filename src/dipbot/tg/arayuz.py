@@ -85,7 +85,7 @@ ESKI_KOMUTLAR: dict[str, str] = {
     "parti_ekle": "partiekle",
     "parti_sil": "partisil",
 }
-# The short Turkish names (/oyuncuekle, /durum, /grup_onayla, ...) also keep working.
+# The short Turkish names (/oyuncuekle, /durum, ...) also keep working.
 TR_KOMUTLAR: tuple[str, ...] = tuple(v for v in EN_KOMUTLAR.values() if v != "start")
 TUM_KOMUT_ADLARI = tuple(KOMUTLAR) + tuple(ESKI_KOMUTLAR) + TR_KOMUTLAR
 
@@ -171,7 +171,7 @@ class Arayuz:
         self.kaynak = ZamanlayiciKorumali(kaynak, zamanlayici) if zamanlayici is not None else kaynak
         self.kurucu_id = kurucu_id
         self.saat = saat
-        self.servis = TakipServisi(conn, saat)
+        self.servis = TakipServisi(conn, saat, kanal_id=kanal.kanal_id if kanal is not None else None)
         self.zamanlayici = zamanlayici
         self.dogrulayici = dogrulayici or YapilandirilmamisDogrulayici()
         self.token_deposu = token_deposu

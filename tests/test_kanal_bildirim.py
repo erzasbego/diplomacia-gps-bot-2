@@ -479,3 +479,67 @@ def test_onkontrol_gecerli_kanal_tamam(tmp_path):
 
 def test_onkontrol_gecersiz_kanal_hata_verir(tmp_path):
     assert "HATA  : LOG_CHANNEL_ID negatif" in _onkontrol(tmp_path, "BOT_TOKEN=1:x\nLOG_CHANNEL_ID=12345\n")
+
+
+# ---------------------------------------------------------------- Opus bulguları: kanal kimliği tutarlılığı ve gönderim sırasında kanal kaybı
+def test_ozel_kanal_kimligi_takip_bildirimi_hedefi_gonderici_ve_izinli_hedeflerle_ayni(conn, src, saat):
+    ozel = -100777
+    z = TaramaZamanlayici(conn, src, KURUCU, saat, kapsamlar=None, kanal_id=ozel)
+    assert z.takip.kanal_id == ozel and z.kanal_id == ozel
+    src.oyuncu("1", "Ali", "Varna")
+    run(z.takip.oyuncu_ekle(G1, "1", src))
+    run(z.takip.oyuncular_tara(G1, src))
+    src.oyuncu("1", "Ali", "Sofia")
+    run(z.takip.oyuncular_tara(G1, src))
+    assert {b["hedef_sohbet"] for b in bildirimler(conn, "oyuncu_degisti")} == {ozel}
+    g = SahteGonderici()
+    run(outbox.bekleyenleri_gonder(conn, g, saat, izinli_hedefler={KURUCU, z.kanal_id}))
+    assert [h for h, _, _ in g.gonderilen] == [ozel], "özel kanal yapılandırmasında bildirim iptal EDİLMEDİ, kanala gitti"
+    ui = Arayuz(conn, src, KURUCU, saat=saat, kanal=KanalDogrulayici(KanalBot(), ozel, saat))
+    assert ui.servis.kanal_id == ozel
+
+
+def _forbidden_bot(hata):
+    class B(SahteBot):
+        async def send_message(self, **kw):
+            await self._kayit("send_message", **kw)
+            raise hata
+
+    return B()
+
+
+def test_gonderim_sirasinda_kanal_yetkisi_kaybi_satiri_kalici_hata_yapmaz_ve_kanali_hazir_degil_isaretler(conn, saat):
+    for hata in (Forbidden("Forbidden: bot is not a member of the channel chat"), BadRequest("Not enough rights to send text messages to the chat"),
+                 BadRequest("Chat not found")):
+        conn.execute("DELETE FROM outbox")
+        _satir_ekle(conn, saat, KANAL, anahtar="k")
+        d, _ = _dogrula(KanalBot())
+        assert d.hazir_mi()
+        g = TelegramGonderici(_forbidden_bot(hata), izinli_hedefler={KURUCU, KANAL}, kanal=d)
+        run(outbox.bekleyenleri_gonder(conn, g, saat))
+        r = conn.execute("SELECT durum, deneme FROM outbox WHERE idem_anahtari='k'").fetchone()
+        assert (r["durum"], r["deneme"]) == ("bekliyor", 0), f"{hata}: satır kalıcı başarısız olmadı"
+        assert not d.hazir_mi() and "sending failed" in d.durum.neden, "6 saati beklemeden hazır değil işaretlendi"
+        saat.ilerle(400)
+
+
+def test_icerik_hatasi_kanal_sorunu_sayilmaz_kalici_hata_olarak_kalir(conn, saat):
+    _satir_ekle(conn, saat, KANAL, anahtar="k")
+    d, _ = _dogrula(KanalBot())
+    g = TelegramGonderici(_forbidden_bot(BadRequest("Can't parse entities: unsupported start tag")), izinli_hedefler={KURUCU, KANAL}, kanal=d)
+    run(outbox.bekleyenleri_gonder(conn, g, saat))
+    assert conn.execute("SELECT durum FROM outbox WHERE idem_anahtari='k'").fetchone()["durum"] == "basarisiz"
+    assert d.hazir_mi(), "içerik hatası kanalı 'hazır değil' yapmaz"
+
+
+def test_gonderim_kaybi_sonrasi_tarama_duraklar_ve_kurucuya_bildirilir(conn, src, saat):
+    _satir_ekle(conn, saat, KANAL, anahtar="k")
+    kb = KanalBot()
+    d = KanalDogrulayici(kb, KANAL, saat)
+    z = TaramaZamanlayici(conn, src, KURUCU, saat, kapsamlar=None, kanal=d)
+    assert run(z._kanal_kontrol()) is True
+    g = TelegramGonderici(_forbidden_bot(Forbidden("bot was kicked from the channel chat")), izinli_hedefler={KURUCU, KANAL}, kanal=d)
+    run(outbox.bekleyenleri_gonder(conn, g, saat))
+    assert run(z._kanal_kontrol()) is False, "bir sonraki zamanlayıcı turunda tarama duraklar (6 saat beklenmez)"
+    b = bildirimler(conn, "kanal_durumu")
+    assert len(b) == 1 and b[0]["veri"]["hazir"] is False and b[0]["hedef_sohbet"] == KURUCU

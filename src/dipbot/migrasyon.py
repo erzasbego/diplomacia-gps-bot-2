@@ -7,7 +7,11 @@ GÜVENLİK İLKELERİ
   Eksik (NULL) alanlar başka kayıttan DOLDURULMAZ (eski/bayat değer sahte değişiklik bildirimi üretmesin; ilk gerçek bilgi sessiz yazılır).
 - Merkezde zaten var olan kayıt EZİLMEZ (INSERT OR IGNORE). Uygulama tek transaction'dır ve İDEMPOTENTTİR: ikinci çalıştırma
   `sistem_durumu['merkez_migrasyon']` işaretini görüp hiçbir şey yapmaz (zorlansa bile birincil anahtarlar çoğalmayı önler).
-- Gerçek uygulama kurucunun açık onayını (`--onayliyorum`) ve DOĞRULANMIŞ, GÜNCEL bir yedek dosyasını (`--yedek`) gerektirir.
+- Gerçek uygulama kurucunun açık onayını (`--onayliyorum`), `analiz` çıktısındaki plan özetini (`--plan <özet>`: onaylanan plan = uygulanan plan)
+  ve DOĞRULANMIŞ, GÜNCEL bir yedek dosyasını (`--yedek`) gerektirir. Yedek, canlı veritabanıyla AYNI dosya olamaz ve kaynak tabloların
+  İÇERİĞİ (özet değeri) canlıyla birebir eşleşmelidir; bayat/yabancı yedek reddedilir.
+- Eski grupta teslim edilmemiş bekleyen bildirim varsa uygulama REDDEDİLİR (o değişiklikler hiçbir yere gönderilmeyecek): kurucu bunu
+  `--bekleyen-kaybi-kabul` ile açıkça kabul etmelidir.
 - Bildirim kopyası oluşmaz: giden kuyruğa (outbox) hiçbir satır eklenmez; eski bekleyen satırlar açılışta iptal edilir.
 
 Kullanım (sunucuda, servis DURDURULMUŞKEN uygula; `dipbot` kullanıcısıyla):
@@ -18,9 +22,12 @@ Kullanım (sunucuda, servis DURDURULMUŞKEN uygula; `dipbot` kullanıcısıyla):
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import sqlite3
 import sys
+from datetime import timedelta
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -57,6 +64,10 @@ class Plan:
     aralik_gerekce: str = ""
     savas_baseline: bool = False
     bekleyen_eski_bildirim: int = 0
+    gozlem_yasi: list = field(default_factory=list)  # kaynak başına en eski/en yeni gözlem (ilk merkezi taramada bildirim seli riski)
+    sessiz_gun: int | None = None
+    sessiz_oyuncu: int = 0
+    sessiz_parti: int = 0
     istatistik: dict = field(default_factory=dict)
 
 
@@ -92,10 +103,13 @@ def _farklar(satirlar: list[tuple[int, dict]], alanlar) -> dict:
 
 
 # ---------------------------------------------------------------- plan (analiz = uygulama)
-def plan_olustur(conn: sqlite3.Connection, kaynaklar: list[int] | None = None) -> Plan:
+def plan_olustur(conn: sqlite3.Connection, kaynaklar: list[int] | None = None, sessiz_gun: int | None = None) -> Plan:
     M = config.MERKEZ_ID
     kaynaklar_, beklenmeyen, eksik = kaynaklari_belirle(conn, kaynaklar)
     p = Plan(kaynaklar_, beklenmeyen, eksik, [rapor.alan_ozeti(conn, g) for g in kaynaklar_], rapor.alan_ozeti(conn, M))
+    kesim = iso(simdi_utc() - timedelta(days=sessiz_gun)) if sessiz_gun is not None else None
+    p.sessiz_gun = sessiz_gun
+    merkez_engelli = {r[0] for r in conn.execute("SELECT oyuncu_id FROM engeller WHERE group_id=?", (M,))}
     sira = {g: i for i, g in enumerate(kaynaklar_)}
     merkez_oyuncu = {r[0] for r in conn.execute("SELECT oyuncu_id FROM takip_oyuncular WHERE group_id=?", (M,))}
     merkez_parti = {r[0] for r in conn.execute("SELECT parti_id FROM takip_partiler WHERE group_id=?", (M,))}
@@ -131,21 +145,46 @@ def plan_olustur(conn: sqlite3.Connection, kaynaklar: list[int] | None = None) -
             yeni["uid"] = next((r["uid"] for _, r in rows if r["uid"]), None)
         secilen_oyuncu[oid] = yeni
 
-    # uid mükerrer (aynı kişi farklı numarayla): TEK kayıt kalır
-    uid_sahibi: dict[str, str] = dict(merkez_uid)
+    # merkezde zaten var / merkezde ELLE SİLİNMİŞ (engelli) kimlikler aktarılmaz
+    adaylar: dict[str, dict] = {}
     for oid in sorted(secilen_oyuncu, key=lambda x: (len(x), x)):
-        r = secilen_oyuncu[oid]
         if oid in merkez_oyuncu:
             p.atlananlar.append({"tur": "oyuncu", "id": oid, "neden": "zaten merkezde (ezilmedi)"})
-            continue
-        if r["uid"] and r["uid"] in uid_sahibi and uid_sahibi[r["uid"]] != oid:
-            p.atlananlar.append({"tur": "oyuncu", "id": oid,
-                                 "neden": f"aynı kimlik (uid) başka numarayla zaten aktarıldı: {uid_sahibi[r['uid']]}"})
-            continue
+        elif oid in merkez_engelli:
+            p.atlananlar.append({"tur": "oyuncu", "id": oid, "neden": "merkezde engelli (merkezde silinmiş/engellenmiş; yeniden eklenmedi)"})
+        else:
+            adaylar[oid] = secilen_oyuncu[oid]
+    # uid mükerrer (aynı kişi farklı numarayla): TEK kayıt kalır — ELLE EKLENMİŞ olan tercih edilir, bayraklar birleştirilir
+    uid_grup: dict[str, list[str]] = {}
+    for oid, r in adaylar.items():
         if r["uid"]:
-            uid_sahibi[r["uid"]] = oid
+            uid_grup.setdefault(r["uid"], []).append(oid)
+    for uid_, grp in sorted(uid_grup.items()):
+        mevcut = merkez_uid.get(uid_)
+        if mevcut is not None:
+            for oid in grp:
+                p.atlananlar.append({"tur": "oyuncu", "id": oid, "neden": f"aynı kimlik (uid) merkezde başka numarayla zaten var: {mevcut}"})
+                del adaylar[oid]
+            continue
+        if len(grp) < 2:
+            continue
+        kazanan = min(grp, key=lambda o: (-adaylar[o]["elle_eklendi"], len(o), o))
+        adaylar[kazanan]["elle_eklendi"] = max(adaylar[o]["elle_eklendi"] for o in grp)
+        adaylar[kazanan]["xp_onayli"] = min(adaylar[o]["xp_onayli"] for o in grp)
+        for oid in grp:
+            if oid != kazanan:
+                p.atlananlar.append({"tur": "oyuncu", "id": oid, "neden": f"aynı kimlik (uid) başka numarayla aktarıldı: {kazanan}"})
+                del adaylar[oid]
+    for oid in sorted(adaylar, key=lambda x: (len(x), x)):
+        r = adaylar[oid]
+        if kesim is not None and r["son_gozlem"] is not None and r["son_gozlem"] < kesim:
+            r["baseline_tamam"] = 0  # eski gözlem: ilk merkezi taramada SESSİZ yeniden gözlem (bildirim seli olmasın)
+            p.sessiz_oyuncu += 1
         p.oyuncular.append(r)
     p.istatistik["benzersiz_oyuncu"] = len(secilen_oyuncu)
+    for g, o in zip(kaynaklar_, p.kaynak_ozetleri):
+        gz = [r[0] for r in conn.execute("SELECT son_gozlem FROM takip_oyuncular WHERE group_id=? AND son_gozlem IS NOT NULL", (g,))]
+        p.gozlem_yasi.append({"alan": g, "en_eski": min(gz, default=None), "en_yeni": max(gz, default=None)})
 
     # ---- partiler (+ üyeleri seçilen kaynak kaydından)
     gp: dict[str, list[tuple[int, dict]]] = {}
@@ -171,6 +210,9 @@ def plan_olustur(conn: sqlite3.Connection, kaynaklar: list[int] | None = None) -
         yeni = dict(en_r)
         yeni["group_id"] = M
         yeni["eklendi"] = min(r["eklendi"] for _, r in rows)
+        if kesim is not None and (yeni["son_dogrulama"] or "") < kesim:
+            yeni["baseline_tamam"] = 0  # eski üye listesi: ilk merkezi taramada sessiz yeniden gözlem
+            p.sessiz_parti += 1
         p.partiler.append(yeni)
         for u in _satirlar(conn, "SELECT * FROM parti_uyeleri WHERE group_id=? AND parti_id=? ORDER BY oyuncu_id", en, pid):
             u["group_id"] = M
@@ -278,9 +320,17 @@ def metin(p: Plan) -> str:
         L.append(f"  {_ETIKET.get(c['tur'], c['tur'])} {c['id']} in {c['kaynaklar']}" + (f"; kept record from {c['secilen_kaynak']}" if 'secilen_kaynak' in c else ""))
         for alan, vals in c["alanlar"].items():
             L.append(f"      {alan}: " + "; ".join(f"{g}={v!r}" for g, v in vals.items()))
+    L += ["", "AGE OF LAST OBSERVATIONS (a long gap means the first central scan may announce many real changes at once)"]
+    for g_ in p.gozlem_yasi:
+        L.append(f"  {g_['alan']}: oldest {tarih(g_['en_eski']) if g_['en_eski'] else 'none'}, newest {tarih(g_['en_yeni']) if g_['en_yeni'] else 'none'}")
+    if p.sessiz_gun is not None:
+        L.append(f"  --eski-gozlem-sessiz {p.sessiz_gun}: {p.sessiz_oyuncu} players and {p.sessiz_parti} parties older than that "
+                 "will be re-observed SILENTLY (real changes in that gap are NOT announced)")
     L += ["", "RECOMMENDED CENTRAL SETTINGS", f"  scan interval: {p.aralik_onerisi} min ({p.aralik_gerekce})",
           f"OLD PENDING NOTIFICATIONS tied to old areas: {p.bekleyen_eski_bildirim} (will be CANCELLED at start, never sent)", "",
-          "NEXT STEPS (owner approval required): stop dipbot, take a verified backup, then run 'uygula' with --yedek <backup> --onayliyorum."]
+          f"PLAN DIGEST: {plan_ozeti(p)}  (pass it as --plan to 'uygula'; a different plan is refused)",
+          "NEXT STEPS (owner approval required): stop dipbot, take a verified backup, then run 'uygula' with --yedek <backup> --onayliyorum "
+          "--plan <digest>" + (" --bekleyen-kaybi-kabul" if p.bekleyen_eski_bildirim else "") + "."]
     return "\n".join(L)
 
 
@@ -288,6 +338,7 @@ def metin(p: Plan) -> str:
 _OYUNCU_KOLON = ("group_id", "oyuncu_id", "ad", "bolge", "vatandaslik_ulkesi", "son_gozlem", "baseline_tamam", "elle_eklendi",
                  "eklendi", "uid", "xp_alti_sayac", "xp_onayli")
 _PARTI_KOLON = ("group_id", "parti_id", "ad", "baseline_tamam", "son_dogrulama", "eklendi", "kismi", "toplam_uye", "xp_sirali")
+_MERKEZ_TABLOLAR = ("takip_oyuncular", "takip_partiler", "parti_uyeleri", "savaslar", "engeller", "bulunamadi_sayaclari")
 
 
 def _ekle(conn, tablo, kolonlar, satir) -> int:
@@ -297,87 +348,183 @@ def _ekle(conn, tablo, kolonlar, satir) -> int:
     ).rowcount
 
 
-def uygula(conn: sqlite3.Connection, *, kaynaklar: list[int] | None = None, aralik: int | None = None, zorla: bool = False) -> dict:
+def plan_ozeti(p: Plan) -> str:
+    """Planın içerik özeti: `analiz` çıktısında yazılır, `uygula --plan <özet>` ile ONAYLANAN plan = UYGULANAN plan olur."""
+    govde = {k: getattr(p, k) for k in ("oyuncular", "partiler", "parti_uyeleri", "savaslar", "engeller", "sayaclar", "kaynaklar")}
+    return hashlib.sha256(json.dumps(govde, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+def _merkez_toplam(conn) -> dict:
+    return {t: conn.execute(f"SELECT COUNT(*) FROM {t} WHERE group_id=?", (config.MERKEZ_ID,)).fetchone()[0] for t in _MERKEZ_TABLOLAR}
+
+
+def uygula(conn: sqlite3.Connection, *, kaynaklar: list[int] | None = None, aralik: int | None = None, zorla: bool = False,
+           sessiz_gun: int | None = None, plan: str | None = None, bekleyen_kaybi_kabul: bool = False) -> dict:
     """Planı TEK transaction'da uygular. İdempotent. Kaynak kayıtlara DOKUNMAZ. Dönüş: sayılar (veya {'durum':'zaten_uygulanmis'})."""
     if aralik is not None and aralik not in config.ALLOWED_SCAN_INTERVALS_MINUTES:
         raise MigrasyonHatasi(f"aralık şunlardan biri olmalı: {config.ALLOWED_SCAN_INTERVALS_MINUTES}")
     M = config.MERKEZ_ID
     with islem(conn):
-        if conn.execute("SELECT 1 FROM sistem_durumu WHERE anahtar=?", (ANAHTAR,)).fetchone() and not zorla:
+        isaret = conn.execute("SELECT deger FROM sistem_durumu WHERE anahtar=?", (ANAHTAR,)).fetchone()
+        if isaret and not zorla:
             return {"durum": "zaten_uygulanmis"}
-        p = plan_olustur(conn, kaynaklar)
+        if isaret and zorla:
+            onceki = json.loads(isaret[0])
+            if onceki.get("merkez_toplam") != _merkez_toplam(conn):
+                raise MigrasyonHatasi("--zorla reddedildi: merkezi alan geçişten sonra DEĞİŞMİŞ; yeniden çalıştırmak merkezde "
+                                      "silinmiş kayıtları geri getirebilir")
+        p = plan_olustur(conn, kaynaklar, sessiz_gun)
         if not p.kaynaklar:
             raise MigrasyonHatasi("aktarılacak eski grup kaydı bulunamadı")
-        once = {t: conn.execute(f"SELECT COUNT(*) FROM {t} WHERE group_id=?", (M,)).fetchone()[0]
-                for t in ("takip_oyuncular", "takip_partiler", "parti_uyeleri", "savaslar", "engeller", "bulunamadi_sayaclari")}
+        if plan is not None and plan != plan_ozeti(p):
+            raise MigrasyonHatasi(f"plan özeti uyuşmuyor (onaylanan {plan}, şimdiki {plan_ozeti(p)}): veri veya seçenekler analizden "
+                                  "sonra değişti; analizi yeniden çalıştırıp onaylayın")
+        if p.bekleyen_eski_bildirim and not bekleyen_kaybi_kabul:
+            raise MigrasyonHatasi(f"eski gruplarda {p.bekleyen_eski_bildirim} teslim edilmemiş bildirim var; geçişte İPTAL edilecekler ve "
+                                  "hiçbir yere gönderilmeyecek (bu değişiklikler merkezde yeniden duyurulmaz). Kabul ediyorsanız "
+                                  "--bekleyen-kaybi-kabul ekleyin")
+        once = _merkez_toplam(conn)
+        ayar_vardi = conn.execute("SELECT 1 FROM grup_ayarlari WHERE group_id=?", (M,)).fetchone() is not None
+        ayar_once = conn.execute("SELECT tarama_araligi_dk, savas_baseline_tamam FROM grup_ayarlari WHERE group_id=?", (M,)).fetchone()
+        eklenen = {k: [] for k in ("oyuncu", "parti", "savas", "engel", "sayac")}
         sonuc = {"oyuncu": 0, "parti": 0, "parti_uyesi": 0, "savas": 0, "engel": 0, "sayac": 0}
         for r in p.oyuncular:
-            sonuc["oyuncu"] += _ekle(conn, "takip_oyuncular", _OYUNCU_KOLON, r)
+            if _ekle(conn, "takip_oyuncular", _OYUNCU_KOLON, r):
+                sonuc["oyuncu"] += 1
+                eklenen["oyuncu"].append(r["oyuncu_id"])
+        eklenen_parti = set()
         for r in p.partiler:
-            sonuc["parti"] += _ekle(conn, "takip_partiler", _PARTI_KOLON, r)
+            if _ekle(conn, "takip_partiler", _PARTI_KOLON, r):
+                sonuc["parti"] += 1
+                eklenen["parti"].append(r["parti_id"])
+                eklenen_parti.add(r["parti_id"])
         for r in p.parti_uyeleri:
             sonuc["parti_uyesi"] += _ekle(conn, "parti_uyeleri", ("group_id", "parti_id", "oyuncu_id", "ad", "xp"), r)
         for r in p.savaslar:
-            sonuc["savas"] += _ekle(conn, "savaslar", ("group_id", "savas_id", "ad", "ilk_gorulme"), r)
+            if _ekle(conn, "savaslar", ("group_id", "savas_id", "ad", "ilk_gorulme"), r):
+                sonuc["savas"] += 1
+                eklenen["savas"].append(r["savas_id"])
         for r in p.engeller:
-            sonuc["engel"] += _ekle(conn, "engeller", ("group_id", "oyuncu_id", "neden", "olusturuldu"), r)
+            if _ekle(conn, "engeller", ("group_id", "oyuncu_id", "neden", "olusturuldu"), r):
+                sonuc["engel"] += 1
+                eklenen["engel"].append(r["oyuncu_id"])
         for r in p.sayaclar:
-            sonuc["sayac"] += _ekle(conn, "bulunamadi_sayaclari", ("group_id", "tur", "kimlik", "sayac"), r)
+            if _ekle(conn, "bulunamadi_sayaclari", ("group_id", "tur", "kimlik", "sayac"), r):
+                sonuc["sayac"] += 1
+                eklenen["sayac"].append([r["tur"], r["kimlik"]])
         # merkezi tarama yapılandırması: kayıt yoksa oluşturulur; mevcut aralık yalnız açıkça istenirse değişir; baseline asla düşmez
         conn.execute("INSERT OR IGNORE INTO grup_ayarlari(group_id, tarama_araligi_dk, savas_baseline_tamam) VALUES(?,?,?)",
                      (M, aralik or p.aralik_onerisi, 1 if p.savas_baseline else 0))
         if aralik is not None:
             conn.execute("UPDATE grup_ayarlari SET tarama_araligi_dk=? WHERE group_id=?", (aralik, M))
-        if p.savas_baseline:
+        baseline_yukseltildi = False
+        if p.savas_baseline and ayar_vardi and not ayar_once["savas_baseline_tamam"]:
             conn.execute("UPDATE grup_ayarlari SET savas_baseline_tamam=1 WHERE group_id=?", (M,))
-        # doğrulama: eklenen satır sayıları plana eşit olmalı (aksi halde transaction GERİ ALINIR)
-        for tablo, anahtar, beklenen in (("takip_oyuncular", "oyuncu", len(p.oyuncular)), ("takip_partiler", "parti", len(p.partiler)),
-                                         ("savaslar", "savas", len(p.savaslar))):
-            simdi = conn.execute(f"SELECT COUNT(*) FROM {tablo} WHERE group_id=?", (M,)).fetchone()[0]
-            if simdi != once[tablo] + beklenen:
-                raise MigrasyonHatasi(f"doğrulama başarısız ({tablo}: {simdi} != {once[tablo]} + {beklenen}); hiçbir şey değişmedi")
-        kayit = {"zaman": iso(simdi_utc()), "kaynaklar": p.kaynaklar, "eklenen": sonuc, "aralik": aralik or p.aralik_onerisi,
-                 "cakisma_sayisi": len(p.cakismalar), "atlanan_sayisi": len(p.atlananlar)}
-        conn.execute("INSERT OR REPLACE INTO sistem_durumu(anahtar, deger) VALUES(?,?)", (ANAHTAR, json.dumps(kayit, sort_keys=True)))
+            baseline_yukseltildi = True
+        # doğrulama: HER tablo için eklenen satır sayısı plana eşit olmalı (INSERT OR IGNORE sessizce satır düşürmesin); aksi halde GERİ ALINIR
+        planli = {"oyuncu": len(p.oyuncular), "parti": len(p.partiler), "parti_uyesi": len(p.parti_uyeleri), "savas": len(p.savaslar),
+                  "engel": len(p.engeller), "sayac": len(p.sayaclar)}
+        for k, v in planli.items():
+            if sonuc[k] != v:
+                raise MigrasyonHatasi(f"doğrulama başarısız ({k}: eklenen {sonuc[k]} != planlanan {v}); hiçbir şey değişmedi")
+        sonra = _merkez_toplam(conn)
+        for tablo, anahtar in (("takip_oyuncular", "oyuncu"), ("takip_partiler", "parti"), ("parti_uyeleri", "parti_uyesi"),
+                               ("savaslar", "savas"), ("engeller", "engel"), ("bulunamadi_sayaclari", "sayac")):
+            if sonra[tablo] != once[tablo] + planli[anahtar]:
+                raise MigrasyonHatasi(f"doğrulama başarısız ({tablo}: {sonra[tablo]} != {once[tablo]} + {planli[anahtar]}); hiçbir şey değişmedi")
+        gercek_aralik = conn.execute("SELECT tarama_araligi_dk FROM grup_ayarlari WHERE group_id=?", (M,)).fetchone()[0]
+        kayit = {"zaman": iso(simdi_utc()), "kaynaklar": p.kaynaklar, "eklenen": sonuc, "aralik": gercek_aralik,
+                 "onerilen_aralik": p.aralik_onerisi, "aralik_uygulandi": gercek_aralik == (aralik or p.aralik_onerisi),
+                 "cakisma_sayisi": len(p.cakismalar), "atlanan_sayisi": len(p.atlananlar), "sessiz_oyuncu": p.sessiz_oyuncu,
+                 "sessiz_parti": p.sessiz_parti, "merkez_toplam": sonra}
+        # geri-al için: YALNIZ bu migrasyonun eklediği anahtarlar (merkezde önceden var olan hiçbir şey sayılmaz)
+        anahtarlar = {"eklenen": eklenen, "ayar_olusturuldu": not ayar_vardi, "baseline_yukseltildi": baseline_yukseltildi}
+        conn.execute("INSERT OR REPLACE INTO sistem_durumu(anahtar, deger) VALUES(?,?)",
+                     (ANAHTAR, json.dumps({**kayit, "anahtarlar": anahtarlar}, sort_keys=True)))
     return {"durum": "uygulandi", **kayit}
 
 
 def geri_al(conn: sqlite3.Connection) -> dict:
-    """YALNIZ merkezi alan kayıtlarını (ve migrasyon işaretini) kaldırır; eski grup kayıtlarına dokunmaz (hiç değişmemişlerdir).
-    Merkezde geçişten SONRA yapılan değişiklikler de kaybolur: önce yedekten geri yüklemeyi (restore) tercih edin."""
+    """YALNIZ bu migrasyonun EKLEDİĞİ merkezi kayıtları (işarette saklanan anahtarlar) ve işareti kaldırır. İşaret yoksa reddedilir.
+    Merkezde önceden var olan veya sonradan eklenen kayıtlar, eski grup kayıtları ve bekleyen bildirimler DOKUNULMAZ."""
     M = config.MERKEZ_ID
     sayilar = {}
     with islem(conn):
-        for t in ("takip_oyuncular", "takip_partiler", "parti_uyeleri", "savaslar", "engeller", "bulunamadi_sayaclari", "tarama_isleri", "grup_ayarlari"):
-            sayilar[t] = conn.execute(f"DELETE FROM {t} WHERE group_id=?", (M,)).rowcount
-        sayilar["merkezi_bekleyen_bildirim_iptal"] = conn.execute(
-            "UPDATE outbox SET durum='iptal', son_hata='merkezi migrasyon geri alindi' WHERE grup_id=? AND durum='bekliyor'", (M,)).rowcount
+        r = conn.execute("SELECT deger FROM sistem_durumu WHERE anahtar=?", (ANAHTAR,)).fetchone()
+        if r is None:
+            raise MigrasyonHatasi("migrasyon işareti yok: geri alınacak bir şey yok (merkezi kayıtlara dokunulmadı)")
+        k = json.loads(r[0]).get("anahtarlar")
+        if k is None:
+            raise MigrasyonHatasi("işaret eklenen anahtarları içermiyor (eski sürüm); yedekten geri yükleyin")
+        e = k["eklenen"]
+        sayilar["takip_oyuncular"] = sum(conn.execute("DELETE FROM takip_oyuncular WHERE group_id=? AND oyuncu_id=?", (M, x)).rowcount
+                                         for x in e["oyuncu"])
+        sayilar["takip_partiler"] = sum(conn.execute("DELETE FROM takip_partiler WHERE group_id=? AND parti_id=?", (M, x)).rowcount
+                                        for x in e["parti"])
+        sayilar["parti_uyeleri"] = sum(conn.execute("DELETE FROM parti_uyeleri WHERE group_id=? AND parti_id=?", (M, x)).rowcount
+                                       for x in e["parti"])
+        sayilar["savaslar"] = sum(conn.execute("DELETE FROM savaslar WHERE group_id=? AND savas_id=?", (M, x)).rowcount for x in e["savas"])
+        sayilar["engeller"] = sum(conn.execute("DELETE FROM engeller WHERE group_id=? AND oyuncu_id=?", (M, x)).rowcount for x in e["engel"])
+        sayilar["bulunamadi_sayaclari"] = sum(
+            conn.execute("DELETE FROM bulunamadi_sayaclari WHERE group_id=? AND tur=? AND kimlik=?", (M, t, kim)).rowcount
+            for t, kim in e["sayac"])
+        if k.get("ayar_olusturuldu"):
+            sayilar["grup_ayarlari"] = conn.execute("DELETE FROM grup_ayarlari WHERE group_id=?", (M,)).rowcount
+        elif k.get("baseline_yukseltildi"):
+            conn.execute("UPDATE grup_ayarlari SET savas_baseline_tamam=0 WHERE group_id=?", (M,))
         conn.execute("DELETE FROM sistem_durumu WHERE anahtar=?", (ANAHTAR,))
     return sayilar
 
 
 # ---------------------------------------------------------------- yedek doğrulama + CLI
-_SAYILACAK = ("takip_oyuncular", "takip_partiler", "parti_uyeleri", "savaslar", "engeller", "grup_ayarlari", "onayli_gruplar")
+_SAYILACAK = ("takip_oyuncular", "takip_partiler", "parti_uyeleri", "savaslar", "engeller", "bulunamadi_sayaclari", "grup_ayarlari",
+              "onayli_gruplar")
 
 
-def yedegi_dogrula(conn: sqlite3.Connection, yedek: Path) -> None:
-    """Yedek var, bütünlüğü 'ok' ve kaynak tabloların satır sayıları CANLI veritabanıyla AYNI olmalı (bayat yedek reddedilir)."""
+def _icerik_ozeti(conn) -> str:
+    """Kaynak tabloların İÇERİK özeti (satır sırası rowid'e göre); yedek ile canlı veri birebir aynı mı?"""
+    h = hashlib.sha256()
+    for t in _SAYILACAK:
+        h.update(t.encode())
+        for r in conn.execute(f"SELECT * FROM {t} ORDER BY rowid"):
+            h.update(repr(tuple(r)).encode())
+    return h.hexdigest()
+
+
+def yedegi_dogrula(conn: sqlite3.Connection, yedek: Path, db_yolu: Path | None = None) -> None:
+    """Yedek: var, canlı veritabanıyla AYNI DOSYA DEĞİL, bütünlüğü 'ok' ve kaynak tabloların İÇERİĞİ canlıyla birebir aynı
+    (satır sayısı değil içerik özeti; bayat/yabancı yedek reddedilir)."""
     if not yedek.is_file():
         raise MigrasyonHatasi(f"yedek dosyası yok: {yedek}")
+    if db_yolu is not None and os.path.exists(db_yolu) and os.path.samefile(yedek, db_yolu):
+        raise MigrasyonHatasi("yedek dosyası canlı veritabanının KENDİSİ olamaz")
     y = sqlite3.connect(f"file:{yedek.resolve()}?mode=ro&immutable=1", uri=True)
     try:
         if y.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
             raise MigrasyonHatasi("yedek bütünlük kontrolünden geçmedi")
         for t in _SAYILACAK:
             try:
-                a = y.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+                y.execute(f"SELECT COUNT(*) FROM {t}").fetchone()
             except sqlite3.DatabaseError:
                 raise MigrasyonHatasi(f"yedekte '{t}' tablosu yok: bu veritabanının yedeği değil") from None
-            b = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
-            if a != b:
-                raise MigrasyonHatasi(f"yedek GÜNCEL değil ({t}: yedekte {a}, canlıda {b}); yeni yedek alın")
+        if _icerik_ozeti(y) != _icerik_ozeti(conn):
+            raise MigrasyonHatasi("yedek GÜNCEL değil veya içeriği canlı veritabanıyla AYNI değil; servis durdurulmuşken TAZE yedek alın")
     finally:
         y.close()
+
+
+def _surum_kontrol(yol: Path) -> None:
+    """Canlı DB'ye yazmadan ÖNCE şema sürümü beklenenle aynı mı? (Aksi halde db.baglan şema/veri göçü yapardı.)"""
+    from . import db as dbmod
+
+    c = sqlite3.connect(f"file:{yol.resolve()}?mode=ro", uri=True)
+    try:
+        v = c.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        c.close()
+    if v != dbmod.SEMA_SURUMU:
+        raise MigrasyonHatasi(f"veritabanı şema sürümü {v}, beklenen {dbmod.SEMA_SURUMU}: önce güncel kodla servisi bir kez başlatıp "
+                              "durdurun (şema göçü), sonra yeniden yedekleyip deneyin")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -387,8 +534,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--kaynak", type=int, action="append", help="aktarılacak eski alan kimliği (tekrarlanabilir; varsayılan: beklenen üç eski grup)")
     ap.add_argument("--yedek", help="doğrulanmış ve güncel SQLite yedek dosyası (uygula/geri-al için zorunlu)")
     ap.add_argument("--onayliyorum", action="store_true", help="kurucunun açık onayı (uygula/geri-al için zorunlu)")
+    ap.add_argument("--plan", help="analiz çıktısındaki plan özeti (uygula için zorunlu)")
     ap.add_argument("--aralik", type=int, help="merkezi tarama aralığı (dakika); verilmezse önerilen")
-    ap.add_argument("--zorla", action="store_true", help="işaret olsa da yeniden çalıştır (yine de mükerrer kayıt oluşmaz)")
+    ap.add_argument("--eski-gozlem-sessiz", type=int, metavar="GUN",
+                    help="son gözlemi GUN günden eski oyuncu/parti kayıtları ilk merkezi taramada SESSİZ yeniden gözlenir (bildirim seli önlemi; "
+                         "gerçek değişiklikleri gizler: kurucu kararı)")
+    ap.add_argument("--bekleyen-kaybi-kabul", action="store_true",
+                    help="eski gruplarda teslim edilmemiş bildirimlerin iptal edilip hiçbir yere gönderilmeyeceğini kabul ediyorum")
+    ap.add_argument("--zorla", action="store_true", help="işaret olsa da yeniden çalıştır (merkez değişmemişse; mükerrer oluşmaz)")
     ap.add_argument("--json", action="store_true", help="analiz çıktısını JSON ver")
     a = ap.parse_args(argv)
     yol = Path(a.db)
@@ -399,22 +552,32 @@ def main(argv: list[str] | None = None) -> int:
         conn = sqlite3.connect(f"file:{yol.resolve()}?mode=ro", uri=True)  # SALT OKUNUR
         conn.row_factory = sqlite3.Row
         try:
-            p = plan_olustur(conn, a.kaynak)
+            conn.execute("BEGIN")  # tek tutarlı okuma anlık görüntüsü (servis çalışıyorsa bile)
+            p = plan_olustur(conn, a.kaynak, a.eski_gozlem_sessiz)
         finally:
             conn.close()
-        print(json.dumps(p.__dict__, default=str, indent=1, ensure_ascii=False) if a.json else metin(p))
+        if a.json:
+            print(json.dumps({**p.__dict__, "plan_ozeti": plan_ozeti(p)}, default=str, indent=1, ensure_ascii=False))
+        else:
+            print(metin(p))
         return 0
-    if not a.onayliyorum or not a.yedek:
-        print("ERROR: --yedek <verified backup> and --onayliyorum are required (owner approval).", file=sys.stderr)
+    if not a.onayliyorum or not a.yedek or (a.komut == "uygula" and not a.plan):
+        print("ERROR: --yedek <verified backup>, --onayliyorum (and for 'uygula' also --plan <digest from analiz>) are required.", file=sys.stderr)
         return 2
     from . import db as dbmod
 
+    try:
+        _surum_kontrol(yol)  # db.baglan'dan ÖNCE: şema/veri göçü yapma riski yok
+    except MigrasyonHatasi as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 3
     conn = dbmod.baglan(yol)
     try:
         try:
-            yedegi_dogrula(conn, Path(a.yedek))
+            yedegi_dogrula(conn, Path(a.yedek), yol)
             if a.komut == "uygula":
-                r = uygula(conn, kaynaklar=a.kaynak, aralik=a.aralik, zorla=a.zorla)
+                r = uygula(conn, kaynaklar=a.kaynak, aralik=a.aralik, zorla=a.zorla, sessiz_gun=a.eski_gozlem_sessiz, plan=a.plan,
+                           bekleyen_kaybi_kabul=a.bekleyen_kaybi_kabul)
             else:
                 r = geri_al(conn)
         except MigrasyonHatasi as e:

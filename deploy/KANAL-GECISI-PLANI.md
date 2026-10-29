@@ -12,9 +12,13 @@
 - Açılışta bekleyen outbox satırları hizalanır (silinmez): eski grup kapsamlı satırlar **iptal** (ne gruba ne kanala gider); merkezi kapsamlı satırlar güncel kanala yönlendirilir; kurucu/kanal dışı artıklar iptal. Gönderim anında da aynı koruma vardır.
 
 ## 2. Migration aracı (`python -m dipbot.migrasyon`)
-- `analiz <db>`: **salt okunur dry-run** (veritabanı `mode=ro` açılır). Gösterir: her eski grubun sayıları, benzersiz/tekilleştirilen oyuncu-parti-savaş, **kaynaklar arası çakışmalar** (alan değerleriyle), atlananlar (zaten merkezde, uid mükerrer, taşınmayan engel), **önerilen merkezi tarama aralığı**, savaş baseline durumu, eski bekleyen bildirim sayısı. Uygulamayla **aynı plan** kullanılır (dry-run = uygulama).
-- `uygula <db> --yedek <yedek.db> --onayliyorum [--aralik N] [--kaynak ID ...]`: tek transaction; yalnız merkezi alana **ekler**; eski kayıtlara dokunmaz; merkezde var olanı ezmez; idempotent (ikinci çalıştırma `zaten_uygulanmis`, `--zorla` ile bile mükerrer oluşmaz); satır sayıları plana eşit değilse **geri alınır**. `--yedek`: dosya var, `integrity_check=ok` ve kaynak tabloların satır sayıları canlı veritabanıyla **aynı** olmalı (bayat/yabancı yedek reddedilir).
-- `geri-al <db> --yedek <yedek.db> --onayliyorum`: yalnız **merkezi alan** kayıtlarını ve migration işaretini kaldırır (eski kayıtlar zaten değişmemiştir). Geçişten sonra merkezde yapılan değişiklikler de silinir; tercih sırası: kod geri alma → yedekten geri yükleme → `geri-al`.
+- `analiz <db> [--eski-gozlem-sessiz GUN] [--kaynak ID ...] [--json]`: **salt okunur dry-run** (veritabanı `mode=ro`, tek tutarlı anlık görüntü). Gösterir: her eski grubun sayıları, benzersiz/tekilleştirilen oyuncu-parti-savaş, **kaynaklar arası çakışmalar** (alan değerleriyle), atlananlar (zaten merkezde, merkezde engelli, uid mükerrer, taşınmayan engel), **son gözlemlerin yaşı** (uzun boşluk = ilk merkezi taramada çok sayıda gerçek değişiklik bildirimi), **önerilen merkezi tarama aralığı**, savaş baseline durumu, eski bekleyen bildirim sayısı ve **PLAN DIGEST** (plan özeti). Uygulama aynı planı üretir (dry-run = uygulama).
+- `uygula <db> --yedek <yedek.db> --onayliyorum --plan <özet> [--bekleyen-kaybi-kabul] [--aralik N] [--eski-gozlem-sessiz GUN] [--kaynak ID ...]`: tek transaction; yalnız merkezi alana **ekler**; eski kayıtlara dokunmaz; merkezde var olanı ve merkezde **engellenmiş/silinmiş** olanı ezmez/geri getirmez; idempotent (ikinci çalıştırma `zaten_uygulanmis`; `--zorla` yalnız merkez geçişten sonra değişmemişse çalışır ve yine mükerrer oluşturmaz); **her tablo** için eklenen satır sayısı plana eşit değilse **geri alınır**.
+  - `--plan`: `analiz`in yazdığı plan özeti; veri veya seçenekler analizden sonra değiştiyse uygulama **reddedilir** (onaylanan plan = uygulanan plan).
+  - `--yedek`: dosya var, canlı veritabanının **kendisi değil**, `integrity_check=ok` ve kaynak tabloların **içerik özeti** canlıyla birebir aynı olmalı (servis durdurulmuşken alınmış TAZE yedek; bayat/yabancı yedek reddedilir). Şema sürümü beklenenden farklıysa `db.baglan` çağrılmadan reddedilir.
+  - `--bekleyen-kaybi-kabul`: eski gruplarda teslim edilmemiş bildirim varsa **zorunlu**; bu bildirimler açılışta iptal edilir ve hiçbir yere gönderilmez (o değişiklikler merkezde yeniden duyurulmaz).
+  - `--eski-gozlem-sessiz GUN`: son gözlemi GUN günden eski oyuncu/parti kayıtları ilk merkezi taramada **sessiz** yeniden gözlenir (bildirim seli önlemi; o aralıktaki gerçek değişiklikleri **gizler** — kurucu kararı). Verilmezse kayıtlar aynen taşınır ve ilk taramada gerçek farklar kanala bildirilir.
+- `geri-al <db> --yedek <yedek.db> --onayliyorum`: **işaret şart**; yalnız bu migrasyonun **eklediği** merkezi kayıtları (işarette saklanan anahtarlar) ve işareti kaldırır. Merkezde önceden var olan veya geçişten sonra eklenen kayıtlara, eski grup kayıtlarına ve bekleyen bildirimlere dokunmaz. Tercih sırası: kod geri alma → yedekten geri yükleme → `geri-al`.
 
 **Birleştirme kuralları:** aynı oyuncu/parti birden çok grupta varsa tek kayıt: ilk gözlemi tamam olan + **en güncel gözlemli/doğrulanmış** kayıt seçilir (eşitlikte kaynak sırası); `elle_eklendi` ve `xp_onayli` en yüksek değer; `eklendi` en erken; eksik (NULL) alanlar başka kayıttan **doldurulmaz** (bayat değer sahte değişiklik bildirimi üretmesin); parti üyeleri seçilen parti kaydından; savaşlar **birleşim** (tarihsel kayıt kaybolmaz, en erken ilk görülme); engeller birleşim (merkezde takipli kimliğin engeli taşınmaz); 404 sayaçları en büyüğü; savaş baseline'ı herhangi bir kaynakta tamamsa tamam (bilinen savaşlar için bildirim seli olmaz). Aynı `uid` farklı numarayla tekrar ederse tek kayıt aktarılır (raporlanır).
 
@@ -34,15 +38,16 @@ sudo -u "$DEPLOY_USER" git -C $APP fetch origin <dal-veya-main>
 sudo -u "$DEPLOY_USER" git -C $APP merge --ff-only FETCH_HEAD
 
 # 3) DRY-RUN analiz (salt okunur; hiçbir şeyi değiştirmez). Çıktıyı inceleyin ve çakışmalara/aralık önerisine karar verin.
-sudo -u dipbot env PYTHONPATH=$APP/src $APP/.venv/bin/python -m dipbot.migrasyon analiz $DB | tee /tmp/migrasyon-analiz.txt
+sudo -u dipbot env PYTHONPATH=$APP/src $APP/.venv/bin/python -m dipbot.migrasyon analiz $DB [--eski-gozlem-sessiz GUN] | tee /tmp/migrasyon-analiz.txt
 ```
-**KARAR NOKTASI (sizin onayınız):** analiz çıktısını (özellikle *CONFLICTS*, *SKIPPED*, *RECOMMENDED CENTRAL SETTINGS*, *OLD PENDING NOTIFICATIONS*) inceleyin. Onaylamadan 4. adıma geçmeyin.
+**KARAR NOKTASI (sizin onayınız):** analiz çıktısını (özellikle *CONFLICTS*, *SKIPPED*, *AGE OF LAST OBSERVATIONS*, *RECOMMENDED CENTRAL SETTINGS*, *OLD PENDING NOTIFICATIONS* ve **PLAN DIGEST**) inceleyin; `--eski-gozlem-sessiz` gerekip gerekmediğine karar verin. Onaylamadan 4. adıma geçmeyin.
 
 ```bash
 # 4) Servisi DURDURUN, TAZE yedek alın (yedek, canlı veriyle aynı satır sayısında olmalı), migrasyonu uygulayın
 sudo systemctl stop dipbot
 sudo /usr/local/sbin/dipbot-backup           # çıktıdaki dosyayı not alın: YEDEK=/var/backups/dipbot/dipbot-<damga>.db
-sudo -u dipbot env PYTHONPATH=$APP/src $APP/.venv/bin/python -m dipbot.migrasyon uygula $DB --yedek "$YEDEK" --onayliyorum [--aralik 5]
+sudo -u dipbot env PYTHONPATH=$APP/src $APP/.venv/bin/python -m dipbot.migrasyon uygula $DB --yedek "$YEDEK" --onayliyorum --plan <PLAN-DIGEST> [--bekleyen-kaybi-kabul] [--aralik 5] [--eski-gozlem-sessiz GUN]
+#    (analizde seçtiğiniz --kaynak/--eski-gozlem-sessiz seçeneklerini AYNEN tekrarlayın; farklıysa plan özeti uyuşmaz ve uygulama reddedilir)
 
 # 5) Ön kontrol + başlat
 sudo $APP/deploy/onkontrol.sh
@@ -59,6 +64,8 @@ Kurucu hesabıyla botun **özel sohbetinde**: `/channel` (✅ kanal var, bot gö
 - Tarama aralığı kaynaklarda farklıysa merkezi aralık için **en kısa** önerilir; `--aralik` ile değiştirilebilir (5/10/15/20).
 - Aynı oyuncunun gözlemleri gruplarda farklıysa en güncel gözlem esas alınır; ilk merkezi taramada kayıtla gerçek durum farklıysa o oyuncu için **tek** bildirim kanala gider.
 - Gerçek veritabanı bu geliştirmede görülmedi: dry-run çıktısı sunucuda üretilmelidir.
+- Gönderim: çok parçalı (≈3500+ karakter) bir bildirimin ikinci parçası başarısız olursa yeniden denemede ilk parça tekrar gidebilir (en-az-bir-kez teslim; mevcut belgelenmiş sınır).
+- Kanal erişimi/yetkisi gönderim sırasında kaybolursa satır başarısız olmaz: kanal anında "hazır değil" işaretlenir, tarama duraklar, kurucuya bildirilir, kanal düzelince bekleyenler gider.
 
 ## 6. Geri dönüş
 1. **Yalnız kod (önerilen, veri kaybı yok):** servis durdurulur, `sudo -u "$DEPLOY_USER" git -C $APP checkout --detach $ONCEKI_REV`, servis başlatılır. Eski kod yalnız onaylı eski grupları tarar ve `group_id=0` kayıtlarını yok sayar; eski grup kayıtları migrasyonla değişmediği için eski davranış geri gelir (bildirimler yeniden eski gruplara gider).

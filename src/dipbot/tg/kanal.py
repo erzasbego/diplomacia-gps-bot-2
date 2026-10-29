@@ -83,6 +83,12 @@ class KanalDogrulayici:
             return KanalDurumu(False, "the bot is an administrator but lacks the 'Post messages' permission", baslik=baslik)
         return KanalDurumu(True, "ok", baslik=baslik)
 
+    def hazir_degil_isaretle(self, neden: str) -> None:
+        """Gönderim sırasında kanal erişimi/yetkisi kaybı anlaşıldı: bir sonraki zamanlayıcı turunda tarama duraklar ve kurucuya
+        bildirilir (6 saatlik periyodik kontrolü BEKLEMEZ); yeniden doğrulama 5 dk sonra denenir."""
+        self.durum = KanalDurumu(False, neden)
+        self._son = self.saat()
+
     def hazir_mi(self) -> bool:
         return bool(self.durum and self.durum.hazir)
 
@@ -93,6 +99,21 @@ class KanalDogrulayici:
         if self.durum is None or self._son is None or simdi - self._son >= aralik:
             await self.dogrula()
         return self.hazir_mi()
+
+
+_KANAL_SORUNU_IPUCLARI = ("chat not found", "not enough rights", "have no rights", "need administrator rights", "chat_write_forbidden",
+                          "not a member", "bot was kicked", "channel_private", "chat_admin_required")
+
+
+def kanal_sorunu_mu(exc: BaseException | None) -> bool:
+    """Gönderim hatası KANAL erişimi/yetkisi kaybını mı gösteriyor? (içerik hatası -> False). Forbidden her zaman; BadRequest
+    yalnız bilinen sohbet-düzeyi iletileriyle."""
+    if isinstance(exc, Forbidden):
+        return True
+    if isinstance(exc, BadRequest):
+        m = str(exc).lower()
+        return any(i in m for i in _KANAL_SORUNU_IPUCLARI)
+    return False
 
 
 def _kisa(e: BaseException) -> str:

@@ -60,7 +60,7 @@ class TaramaZamanlayici:
         self.conn = conn
         self.kurucu_id = kurucu_id
         self.saat = saat
-        self.takip = TakipServisi(conn, saat)
+        self.takip = TakipServisi(conn, saat, kanal_id=kanal_id)  # bildirim hedefi gönderici/izinli hedeflerle AYNI kanal
         self._kaynak = SinirliKaynak(kaynak, istek_esler, istek_zaman_asimi, kusak_fn=lambda: self._token_kusagi)
         self._sem = asyncio.Semaphore(grup_esler)
         self._calisan: set[int] = set()  # çalışan grup taramaları (kilit)
