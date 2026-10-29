@@ -4,6 +4,7 @@ Bunlar MOCK'tur; gerçek Telegram davranışını doğrulamaz. Ağ çağrısı y
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 from dipbot.tg.gonderici import HizSiniri, TelegramGonderici
@@ -80,7 +81,24 @@ def komut(ad, arg="", *, sohbet=None, tur="private", kul=KURUCU) -> Olay:
     )
 
 
+@dataclass
+class ListeOlayi(Olay):
+    """Kurucunun ÖZEL sohbetindeki olay + o olaydan önce seçili olacak takip listesi (eski grup kimliği).
+    conftest'teki otomatik fixture bu seçimi Arayuz'a uygular (gerçekte: 'Select Group' düğmesi)."""
+
+    liste: int | None = None
+
+
 def grup_komut(ad, arg="", *, grup=G1, kul=KURUCU) -> Olay:
+    """Kurucu için: özel sohbet + `grup` listesi seçili (gruplar artık komut İŞLEMEZ). Başka kullanıcı için: gerçek
+    GRUP olayı (artık sessizce yok sayılır)."""
+    if kul == KURUCU:
+        return ListeOlayi(sohbet_id=kul, sohbet_turu="private", kullanici_id=kul, komut=ad, arg=arg, mesaj_id=10, liste=grup)
+    return komut(ad, arg, sohbet=grup, tur="supergroup", kul=kul)
+
+
+def gercek_grup_komut(ad, arg="", *, grup=G1, kul=KURUCU) -> Olay:
+    """Gerçek bir GRUP sohbetindeki komut (üretimde tamamen yok sayılır)."""
     return komut(ad, arg, sohbet=grup, tur="supergroup", kul=kul)
 
 
@@ -95,6 +113,12 @@ def dugme(veri, *, sohbet=None, tur="private", kul=KURUCU) -> Olay:
 
 
 def grup_dugme(veri, *, grup=G1, kul=KURUCU) -> Olay:
+    if kul == KURUCU:
+        return ListeOlayi(sohbet_id=kul, sohbet_turu="private", kullanici_id=kul, veri=veri, mesaj_id=20, liste=grup)
+    return dugme(veri, sohbet=grup, tur="supergroup", kul=kul)
+
+
+def gercek_grup_dugme(veri, *, grup=G1, kul=KURUCU) -> Olay:
     return dugme(veri, sohbet=grup, tur="supergroup", kul=kul)
 
 

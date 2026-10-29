@@ -54,6 +54,8 @@ KOMUTLAR: dict[str, str] = {
     "wars": "List active wars",
     "scan": "Set the scan interval: 5, 10, 15 or 20 minutes",
     "status": "Show bot status",
+    "channel": "Verify the notification channel (exists and the bot can post)",
+    "lists": "Show tracking lists and which one is active",
     "grant": "Grant access to a user (Telegram user ID)",
     "revoke": "Revoke a user's access (Telegram user ID)",
     "approve_group": "Approve a group (Telegram group ID)",
@@ -74,6 +76,8 @@ EN_KOMUTLAR: dict[str, str] = {
     "wars": "savaslar",
     "scan": "tarama",
     "status": "durum",
+    "channel": "kanal",
+    "lists": "listeler",
     "grant": "yetki_ver",
     "revoke": "yetki_al",
     "approve_group": "grup_onayla",
@@ -171,7 +175,9 @@ class Arayuz:
         zamanlayici=None,
         dogrulayici: TokenDogrulayici | None = None,
         token_deposu: TokenDeposu | None = None,
+        kanal=None,
     ):
+        self.kanal = kanal  # KanalDogrulayici (veya None): durum ekranı ve /channel için
         self.conn = conn
         # DiplomaciaSource (SinirliKaynak ile sarılmış olması beklenir). Zamanlayıcı varsa istekler onun
         # duraklatma/istek-sınırı/403 geri çekilmesine uyar ve hataları ona iletir (O-d).
@@ -226,13 +232,16 @@ class Arayuz:
         k = yetki.karar_ver(
             self._durum(), sohbet_id=o.sohbet_id, sohbet_turu=o.sohbet_turu, kullanici_id=o.kullanici_id
         )
-        if not k and k.neden != "desteklenmeyen_sohbet":
+        if not k and k.neden not in ("desteklenmeyen_sohbet", "grup_komutlari_kapali"):
             self._kaydet_yetkisiz(o, islem_adi)
         return k
 
     def _red(self, o: Olay, k: yetki.Karar) -> Yanit | None:
         if k.neden == "desteklenmeyen_sohbet":
             return None
+        if k.neden == "grup_komutlari_kapali":
+            # Gruplar komut/düğme İŞLEMEZ ve hiçbir yanıt/uyarı/kayıt üretmez (bildirimler yalnız log kanalına gider).
+            return Yanit(sessiz=True) if o.dugme_mi else None
         if o.dugme_mi:
             metin = {"ozel_sohbet_kapali": KAPALI_OZEL, "grup_onaysiz": "This group is not approved."}.get(
                 k.neden, YETKISIZ
@@ -290,9 +299,11 @@ class Arayuz:
                 "No approved groups yet. To approve a group: "
                 "<code>/approve_group &lt;group_id&gt;</code>"
             )
-        satirlar = [[d] for d in (_dg(f"Group {g}", f"gs:{g}") for g in onayli[:20]) if d]
+        aktif = self._aktif_listeler() or frozenset()
+        satirlar = [[d] for d in (_dg(f"Group {g}{' ✅ active' if g in aktif else ''}", f"gs:{g}") for g in onayli[:20]) if d]
         satirlar.append([Dugme("🏠 Main menu", "m")])
-        return Yanit("Select the group you want to work with:", satirlar)
+        return Yanit("Select the tracking list (group) you want to work with. ✅ = scanned; notifications go to the "
+                     "log channel:", satirlar)
 
     # ====================== ortak yardımcılar ===============================
     async def _ack(self, o: Olay) -> None:
@@ -427,6 +438,43 @@ class Arayuz:
             return False
 
     # ====================== komutlar ========================================
+    async def _k_kanal(self, o: Olay) -> Yanit:
+        """Log kanalını Telegram API ile yeniden doğrular (kanal var mı, bot mesaj gönderebilir mi); mesaj göndermez."""
+        if self.kanal is None:
+            return Yanit(f"Notification channel: <code>{config.LOG_KANAL_ID}</code>\nVerification is not available in this process.")
+        d = await self.kanal.dogrula()
+        satirlar = [f"<b>Notification channel</b> <code>{self.kanal.kanal_id}</code>"]
+        if d.baslik:
+            satirlar.append(f"Title: {esc(d.baslik)}")
+        if d.hazir:
+            satirlar.append("✅ The channel exists and the bot can post messages there.")
+        else:
+            satirlar.append(f"⚠️ Not ready: {esc(d.neden)}")
+            satirlar.append("Tracking scans stay paused and no tracking notifications are sent until this is fixed "
+                            "(add the bot as an administrator with the 'Post messages' permission).")
+        return Yanit("\n".join(satirlar), [[Dugme("🏠 Main menu", "m")]])
+
+    async def _k_listeler(self, o: Olay) -> Yanit:
+        from .. import rapor
+
+        aktif = self._aktif_listeler() or frozenset()
+        ozet = rapor.liste_ozeti(self.conn, aktif)
+        satirlar = ["<b>Tracking lists</b> (old group IDs; data is kept, never merged automatically)"]
+        if not ozet:
+            satirlar.append("No tracking data.")
+        for x in ozet:
+            durum = "✅ ACTIVE (scanned)" if x["aktif"] else "not active"
+            satirlar.append(
+                f"<code>{x['liste_id']}</code> — {durum}; players {x['oyuncu']}, parties {x['parti']}, wars {x['savas']}"
+            )
+        if not aktif:
+            satirlar.append("⚠️ No list is active: nothing is scanned. Review the report "
+                            "(<code>python -m dipbot.rapor</code> on the server), then set TRACKING_GROUP_IDS and restart.")
+        return Yanit("\n".join(satirlar), [[Dugme("🏠 Main menu", "m")]])
+
+    def _aktif_listeler(self):
+        return getattr(self.zamanlayici, "aktif_listeler", None)
+
     async def _k_start(self, o: Olay) -> Yanit:
         return self._ana_menu(o)
 
@@ -740,7 +788,8 @@ class Arayuz:
         satirlar.append("")
         satirlar.append(
             "<i>Checks run at intervals; the time in a notification is the detection time, not the exact time of "
-            "the change. Private chat is open to the owner only. All times are Europe/Istanbul (24-hour clock).</i>"
+            "the change. Commands work only in the owner's private chat (groups are ignored). Tracking notifications "
+            "are posted to the log channel only. All times are Europe/Istanbul (24-hour clock).</i>"
         )
         return Yanit("\n".join(satirlar), [[Dugme("🏠 Main menu", "m")]])
 
@@ -1108,6 +1157,9 @@ class Arayuz:
                 "SELECT COUNT(*) FROM outbox WHERE grup_id=? AND durum='bekliyor'", (g,)
             ).fetchone()[0]
             satirlar.append(f"Pending Notifications: {bekleyen}")
+            aktif = self._aktif_listeler()
+            if aktif is not None:
+                satirlar.append(f"Tracking list status: {'ACTIVE (scanned)' if g in aktif else 'not active (not scanned)'}")
             n_bulunamayan = len(self.servis.bulunamayan_oyuncular(g))
             if n_bulunamayan:
                 satirlar.append(f"Not found (consecutive 404s): {n_bulunamayan} players")
@@ -1120,6 +1172,16 @@ class Arayuz:
             satirlar.append("No group selected (private chat): general status.")
         if not o.grup_mu:
             satirlar.append(f"Approved groups: {len(d.onayli_gruplar)}; authorized users: {len(d.yetkililer)}")
+        aktif = self._aktif_listeler()
+        if aktif is not None and not aktif:
+            satirlar.append("⚠️ No tracking list is active (TRACKING_GROUP_IDS is empty): nothing is scanned.")
+        kanal_id = self.kanal.kanal_id if self.kanal is not None else config.LOG_KANAL_ID
+        if self.kanal is None or self.kanal.durum is None:
+            satirlar.append(f"Notification channel: <code>{kanal_id}</code> (not verified yet)")
+        elif self.kanal.durum.hazir:
+            satirlar.append(f"Notification channel: <code>{kanal_id}</code> — ready")
+        else:
+            satirlar.append(f"Notification channel: <code>{kanal_id}</code> — NOT READY: {esc(self.kanal.durum.neden)}")
         baglanti = self._baglanti_metni(g, isler)
         if baglanti:
             satirlar.append(f"Diplomacia connection: {baglanti}")

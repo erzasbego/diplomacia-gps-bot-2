@@ -406,7 +406,31 @@ def _denetim_ozet(v: dict) -> str:
     )
 
 
+def _kanal_durumu(v: dict) -> str:
+    kanal = f"Channel ID: <code>{esc(v.get('kanal_id'))}</code>"
+    if v.get("hazir"):
+        return "\n".join(
+            [
+                _b("✅ Notification channel is ready again"),
+                kanal,
+                "Tracking scans have resumed; queued notifications will be delivered to the channel.",
+                f"Time: {tarih(v.get('zaman'))}",
+            ]
+        )
+    return "\n".join(
+        [
+            _b("⚠️ Notification channel is not ready"),
+            kanal,
+            f"Reason: {esc(v.get('neden'))}",
+            "Tracking scans are paused and no tracking notifications are sent until the bot can post in the channel "
+            "(add the bot as an administrator with the 'Post messages' permission).",
+            f"Time: {tarih(v.get('zaman'))}",
+        ]
+    )
+
+
 _BICIMLER = {
+    "kanal_durumu": _kanal_durumu,
     "denetim": _denetim,
     "denetim_ozet": _denetim_ozet,
     "oyuncu_degisti": _oyuncu_degisti,

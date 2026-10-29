@@ -1,7 +1,7 @@
 """Yetki katmanı: SAF fonksiyonlar. Yalnızca sayısal Telegram kimlikleriyle çalışır.
 
 Kurallar:
-- Grup kullanımı = grup onaylı VE kullanıcı yetkili (kurucu da yetkili sayılır).
+- GRUP SOHBETLERİNDE KOMUT/DÜĞME İŞLENMEZ (bildirimler yalnız log kanalına gider; yönetim yalnız kurucunun özel sohbetinde).
 - Özel sohbet yalnızca kurucuya açık (diğer yetkililere de kapalı).
 - Kurucunun yetkisi alınamaz.
 """
@@ -49,11 +49,8 @@ def karar_ver(
             return Karar(True, "ok")
         return Karar(False, "ozel_sohbet_kapali")
     if sohbet_turu in GRUP_TURLERI:
-        if sohbet_id not in d.onayli_gruplar:
-            return Karar(False, "grup_onaysiz")
-        if not yetkili_mi(d, kullanici_id):
-            return Karar(False, "kullanici_yetkisiz")
-        return Karar(True, "ok")
+        # Eski gruplar artık komut işlemez (onaylı olsalar da, yetkili kullanıcı da olsa): sessizce yok sayılır.
+        return Karar(False, "grup_komutlari_kapali")
     return Karar(False, "desteklenmeyen_sohbet")
 
 

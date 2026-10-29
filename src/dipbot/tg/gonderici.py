@@ -165,8 +165,13 @@ class TelegramGonderici:
         siniri: HizSiniri | None = None,
         goc_geri_cagrisi: Callable[[int, int], None] | None = None,
         uyku: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        izinli_hedefler=None,
+        kanal=None,
     ):
         self.bot = bot
+        # Üretimde: {kurucu özel sohbeti, log kanalı}. Outbox gönderimi bunun dışındaki hedefi REDDEDER (kalıcı hata).
+        self._izinli = None if izinli_hedefler is None else {int(x) for x in izinli_hedefler}
+        self._kanal = kanal  # KanalDogrulayici: hazır değilse kanal satırları bekletilir (hata sayılmaz)
         self.siniri = siniri or HizSiniri()
         self._goc = goc_geri_cagrisi
         self._uyku = uyku
@@ -190,6 +195,11 @@ class TelegramGonderici:
 
     # ---- outbox arayüzü
     async def gonder(self, sohbet_id: int, tur: str, veri: dict) -> None:
+        if self._izinli is not None and sohbet_id not in self._izinli:
+            raise GonderimHatasi("target is neither the owner chat nor the log channel", kalici=True)
+        if self._kanal is not None and sohbet_id == self._kanal.kanal_id and not self._kanal.hazir_mi():
+            # Kanal doğrulanamadı: satır hata/deneme sayılmadan beklemeye alınır (bekle_saniye = 429 benzeri erteleme).
+            raise GonderimHatasi("log channel is not ready", bekle_saniye=300.0)
         metin = bicim.bildirim_metni(tur, veri)
         for parca in bicim.bol(metin):
             await self._yap(

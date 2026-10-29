@@ -96,6 +96,23 @@ def grup_bekleyenlerini_iptal_et(conn: sqlite3.Connection, grup_id: int) -> int:
         return cur.rowcount
 
 
+def izinsiz_hedefleri_iptal_et(conn: sqlite3.Connection, izinli_hedefler) -> int:
+    """Bekleyen satırlardan hedefi `izinli_hedefler` (kurucu özel sohbeti + log kanalı) DIŞINDA olanları İPTAL eder
+    (silmez; durum='iptal'). Kanal geçişinden önce eski grup sohbetleri için kuyruğa alınmış bildirimler böylece
+    ne eski gruba ne de yanlışlıkla log kanalına gider. Dönüş: iptal edilen satır sayısı."""
+    izinli = sorted({int(x) for x in izinli_hedefler})
+    if not izinli:
+        raise ValueError("izinli hedef listesi boş olamaz")
+    yer = ",".join("?" * len(izinli))
+    with islem(conn):
+        cur = conn.execute(
+            f"UPDATE outbox SET durum='iptal', son_hata='hedef log kanali/kurucu degil (eski grup bildirimi)'"
+            f" WHERE durum='bekliyor' AND hedef_sohbet NOT IN ({yer})",
+            izinli,
+        )
+        return cur.rowcount
+
+
 def _onayli_mi(conn, grup_id) -> bool:
     return conn.execute("SELECT 1 FROM onayli_gruplar WHERE group_id=?", (grup_id,)).fetchone() is not None
 
@@ -115,9 +132,12 @@ def _geri_cekilme(deneme: int) -> int:
 
 
 async def bekleyenleri_gonder(
-    conn: sqlite3.Connection, gonderici: Gonderici, saat: Saat, *, limit: int = 50
+    conn: sqlite3.Connection, gonderici: Gonderici, saat: Saat, *, limit: int = 50, izinli_hedefler=None
 ) -> GonderimOzeti:
+    """`izinli_hedefler` verilirse (üretimde: kurucu + log kanalı) hedefi bunun dışındaki bekleyen satırlar
+    GÖNDERİLMEZ, 'iptal' edilir (savunma katmanı: eski grup hedefli satır asla bir sohbete gitmez)."""
     ozet = GonderimOzeti()
+    izinli = None if izinli_hedefler is None else {int(x) for x in izinli_hedefler}
     simdi = saat()
     satirlar = conn.execute(
         "SELECT id FROM outbox WHERE durum='bekliyor' AND sonraki_deneme<=? ORDER BY id LIMIT ?",
@@ -128,6 +148,14 @@ async def bekleyenleri_gonder(
         # Her gönderimden hemen önce güncel durum + grup onayı yeniden okunur.
         r = conn.execute("SELECT * FROM outbox WHERE id=?", (s["id"],)).fetchone()
         if r is None or r["durum"] != "bekliyor":
+            continue
+        if izinli is not None and r["hedef_sohbet"] not in izinli:
+            conn.execute(
+                "UPDATE outbox SET durum='iptal', son_hata='hedef log kanali/kurucu degil (eski grup bildirimi)'"
+                " WHERE id=? AND durum='bekliyor'",
+                (r["id"],),
+            )
+            ozet.iptal += 1
             continue
         if r["hedef_sohbet"] in bekleyen:
             # Aynı turda RetryAfter/hız sınırı alan sohbet: gönderme, bekleme sonuna ertele.
