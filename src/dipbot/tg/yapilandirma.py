@@ -24,9 +24,6 @@ class TelegramAyarlari:
     token_dosyasi: Path  # Diplomacia oyun hesabı token'ı (BOT_TOKEN değil); DB dışında, 0600
     dogrulama_oyuncusu: str = "72400"  # token doğrulamada sorgulanan herkese açık oyuncu (sır değil)
     kanal_id: int = config.LOG_KANAL_ID  # TÜM takip bildirimlerinin tek hedefi (Telegram kanalı)
-    # Taranacak takip LİSTELERİ (eski grup kimlikleri). Varsayılan BOŞ: kurucu verileri raporlayıp seçene kadar
-    # hiçbir liste taranmaz ve bildirim üretilmez. Listeler otomatik birleştirilmez.
-    aktif_takip_listeleri: frozenset[int] = frozenset()
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "TelegramAyarlari":
@@ -58,18 +55,4 @@ class TelegramAyarlari:
                 kanal_id = 0
             if kanal_id >= 0:
                 raise YapilandirmaHatasi("LOG_CHANNEL_ID negatif bir Telegram sohbet kimliği olmalı (ör. -100...)")
-        aktif: set[int] = set()
-        for parca in env.get("TRACKING_GROUP_IDS", "").replace(";", ",").split(","):
-            parca = parca.strip()
-            if not parca:
-                continue
-            try:
-                g = int(parca)
-            except ValueError:
-                g = 0
-            if g == 0:
-                raise YapilandirmaHatasi("TRACKING_GROUP_IDS virgülle ayrılmış sıfırdan farklı tamsayılar olmalı")
-            aktif.add(g)
-        if kanal_id in aktif:
-            pass  # kanal kimliği de bir takip listesi anahtarı olabilir (taşıma sonrası); sakıncası yok
-        return cls(bot_token, ayarlar, token_dosyasi, oyuncu, kanal_id, frozenset(aktif))
+        return cls(bot_token, ayarlar, token_dosyasi, oyuncu, kanal_id)

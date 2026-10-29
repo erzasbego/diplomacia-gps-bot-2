@@ -159,6 +159,20 @@ CREATE TABLE IF NOT EXISTS bildirim_sinirlari(
 """
 
 
+def alan_donemi(conn: sqlite3.Connection, alan_id: int) -> int | None:
+    """Takip alanının geçerli 'dönem' değeri; alan AKTİF değilse None.
+    Merkezi alan (config.MERKEZ_ID) HER ZAMAN aktiftir ve onay gerektirmez. Eski grup kimlikleri artık işleyişte kullanılmaz
+    (yalnız testler/arşiv: `onayli_gruplar` kaydı olan alan aktif sayılır)."""
+    if alan_id == config.MERKEZ_ID:
+        return config.MERKEZ_DONEM
+    r = conn.execute("SELECT donem FROM onayli_gruplar WHERE group_id=?", (alan_id,)).fetchone()
+    return None if r is None else r[0]
+
+
+def alan_aktif(conn: sqlite3.Connection, alan_id: int) -> bool:
+    return alan_donemi(conn, alan_id) is not None
+
+
 def baglan(yol: str | Path = ":memory:") -> sqlite3.Connection:
     """Bağlantı açar ve şemayı kurar. Autocommit modu; transaction'lar `islem` ile açık."""
     if str(yol) != ":memory:":

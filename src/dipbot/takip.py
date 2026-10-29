@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from . import config, outbox
-from .db import islem
+from .db import alan_aktif, islem
 from .kaynak import (
     DiplomaciaSource,
     EksikVeri,
@@ -163,10 +163,7 @@ class TakipServisi:
     # ---- yardımcılar -----------------------------------------------------
     def _onay_sart(self, group_id: int) -> None:
         """Servis katmanı yetki sınırı: onaysız grup için hiçbir değişiklik yapılmaz."""
-        if (
-            self.conn.execute("SELECT 1 FROM onayli_gruplar WHERE group_id=?", (group_id,)).fetchone()
-            is None
-        ):
+        if not alan_aktif(self.conn, group_id):
             raise GrupOnaysiz(group_id)
 
     @staticmethod
@@ -202,10 +199,7 @@ class TakipServisi:
         return r[0] if r else None
 
     def _onayli_mi(self, group_id: int) -> bool:
-        return (
-            self.conn.execute("SELECT 1 FROM onayli_gruplar WHERE group_id=?", (group_id,)).fetchone()
-            is not None
-        )
+        return alan_aktif(self.conn, group_id)
 
     def _yetki_var_mi(self, islem_yapan: int | None, kurucu_id: int | None) -> bool:
         """GÜNCEL DB durumuyla yetki denetimi. islem_yapan None: eski çağrı biçimi (denetim yok)."""
@@ -221,7 +215,7 @@ class TakipServisi:
         )
 
     def _grup_kuyruk(self, group_id, tur, idem, veri, simdi) -> bool:
-        if not self.conn.execute("SELECT 1 FROM onayli_gruplar WHERE group_id=?", (group_id,)).fetchone():
+        if not alan_aktif(self.conn, group_id):
             return False  # uçuştaki tarama sırasında onay kalktıysa bildirim üretilmez
         # Takip bildirimleri YALNIZ log kanalına gider; group_id yalnız takip LİSTESİNİN kimliğidir (onay dönemi,
         # idempotency anahtarı). Eski grup sohbetine hiçbir bildirim hedeflenmez.

@@ -22,7 +22,7 @@ from typing import Mapping
 from telegram.error import InvalidToken, TelegramError
 from telegram.ext import Application
 
-from .. import db, outbox
+from .. import config, db, outbox
 from ..diplomacia.dogrulayici import OyuncuDogrulayici
 from ..diplomacia.istemci import IstemciKaynagi, OrtamKimlik
 from ..zamanlayici import TaramaZamanlayici
@@ -108,17 +108,15 @@ async def calistir(
     token_deposu = TokenDeposu(ta.token_dosyasi)
     token_deposu.eski_gecicileri_temizle()
     # Eski gruplara bildirim YOK: bekleyen eski grup hedefli satırlar iptal edilir (silinmez); kanala GİTMEZ.
-    iptal = outbox.izinsiz_hedefleri_iptal_et(conn, {kurucu, ta.kanal_id})
-    if iptal:
-        log.warning("kanal geçişi: eski grup hedefli %d bekleyen bildirim iptal edildi (gönderilmeyecek)", iptal)
-    if not ta.aktif_takip_listeleri:
-        log.warning("TRACKING_GROUP_IDS tanımlı değil: HİÇBİR takip listesi taranmayacak (önce veriyi raporlayın: "
-                    "python -m dipbot.rapor)")
+    h = outbox.bekleyenleri_hizala(conn, kurucu, ta.kanal_id)
+    if h.eski_kapsam_iptal or h.hedef_iptal or h.kanala_yonlendirilen:
+        log.warning("bekleyen bildirimler hizalandı: eski grup kapsamlı %d iptal (gönderilmeyecek), %d kanala "
+                    "yönlendirildi, %d hedefsiz artık iptal", h.eski_kapsam_iptal, h.kanala_yonlendirilen, h.hedef_iptal)
     app = Application.builder().token(ta.bot_token).build()
     kanal = KanalDogrulayici(app.bot, ta.kanal_id)
     zamanlayici = TaramaZamanlayici(
         conn, kaynak, kurucu, token_deposu=token_deposu,
-        aktif_listeler=ta.aktif_takip_listeleri, kanal_id=ta.kanal_id, kanal=kanal,
+        kapsamlar=frozenset({config.MERKEZ_ID}), kanal_id=ta.kanal_id, kanal=kanal,
     )
     arayuz = Arayuz(
         conn,
@@ -129,9 +127,7 @@ async def calistir(
         token_deposu=token_deposu,
         kanal=kanal,
     )
-    gonderici = TelegramGonderici(
-        app.bot, goc_geri_cagrisi=arayuz.grup_goc, izinli_hedefler={kurucu, ta.kanal_id}, kanal=kanal
-    )
+    gonderici = TelegramGonderici(app.bot, izinli_hedefler={kurucu, ta.kanal_id}, kanal=kanal)
     durdur = asyncio.Event()
     sonuc = {"kod": 0}
 

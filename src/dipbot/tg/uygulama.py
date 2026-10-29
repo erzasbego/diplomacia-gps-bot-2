@@ -122,15 +122,6 @@ class Baglayici:
             d.from_user.id if d.from_user else None,
         )
 
-    async def goc_isle(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        m = update.effective_message
-        if m is None:
-            return
-        if m.migrate_to_chat_id:
-            self.arayuz.grup_goc(m.chat.id, m.migrate_to_chat_id)
-        elif m.migrate_from_chat_id:
-            self.arayuz.grup_goc(m.migrate_from_chat_id, m.chat.id)
-
     async def hata_isle(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         err = context.error
         if isinstance(err, InvalidToken):
@@ -157,5 +148,4 @@ def kayit_et(app: Application, b: Baglayici) -> None:
     app.add_handler(CallbackQueryHandler(b.buton_isle))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, b.metin_isle))
     app.add_handler(ChatMemberHandler(b.uyelik_isle, ChatMemberHandler.MY_CHAT_MEMBER))
-    app.add_handler(MessageHandler(filters.StatusUpdate.MIGRATE, b.goc_isle))
     app.add_error_handler(b.hata_isle)

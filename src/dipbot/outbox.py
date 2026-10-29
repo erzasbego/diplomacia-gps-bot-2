@@ -25,7 +25,7 @@ from datetime import timedelta
 from typing import Protocol
 
 from . import config
-from .db import islem
+from .db import alan_aktif, alan_donemi, islem
 from .maske import maskele
 from .zaman import Saat, iso, iso_coz
 
@@ -67,8 +67,7 @@ def kuyruga_ekle(
     değilse dönem 0'dır (gönderimde iptal edilir). Zaman damgasına bakılmaz (D7)."""
     donem = None
     if grup_id is not None:
-        r = conn.execute("SELECT donem FROM onayli_gruplar WHERE group_id=?", (grup_id,)).fetchone()
-        donem = r[0] if r else 0
+        donem = alan_donemi(conn, grup_id) or 0
     cur = conn.execute(
         "INSERT OR IGNORE INTO outbox(hedef_sohbet, grup_id, tur, idem_anahtari, veri,"
         " sonraki_deneme, olusturuldu, onay_donemi) VALUES(?,?,?,?,?,?,?,?)",
@@ -113,15 +112,47 @@ def izinsiz_hedefleri_iptal_et(conn: sqlite3.Connection, izinli_hedefler) -> int
         return cur.rowcount
 
 
+@dataclass
+class HizalamaOzeti:
+    eski_kapsam_iptal: int = 0  # eski grup kapsamlı satırlar (arşiv): iptal, GÖNDERİLMEZ
+    kanala_yonlendirilen: int = 0  # merkezi kapsamlı satırlar: kanal değiştiyse yeni kanala alındı
+    hedef_iptal: int = 0  # kurucu/kanal dışı hedefli artıklar: iptal
+
+
+def bekleyenleri_hizala(conn: sqlite3.Connection, kurucu_id: int, kanal_id: int) -> HizalamaOzeti:
+    """Açılışta BEKLEYEN satırları tek merkezli mimariye hizalar (silmez; yalnız durum/hedef günceller):
+    1) kapsamı (grup_id) merkezi alan OLMAYAN eski grup satırları İPTAL (ne gruba ne kanala gider);
+    2) merkezi kapsamlı satırlar başka/eski bir kanala yönelikse GÜNCEL kanala yönlendirilir (kanal değişiminde bildirim
+       kaybolmaz; takip geçmişi etkilenmez); (hedef, anahtar) çakışırsa mükerrer olduğundan iptal;
+    3) hedefi kurucu veya kanal olmayan kalan artıklar iptal. Kurucuya özel operasyonel satırlara dokunulmaz."""
+    o = HizalamaOzeti()
+    with islem(conn):
+        o.eski_kapsam_iptal = conn.execute(
+            "UPDATE outbox SET durum='iptal', son_hata='eski grup kapsami (arsiv): gonderilmez'"
+            " WHERE durum='bekliyor' AND grup_id IS NOT NULL AND grup_id<>?",
+            (config.MERKEZ_ID,),
+        ).rowcount
+        o.kanala_yonlendirilen = conn.execute(
+            "UPDATE OR IGNORE outbox SET hedef_sohbet=? WHERE durum='bekliyor' AND grup_id=? AND hedef_sohbet<>?",
+            (kanal_id, config.MERKEZ_ID, kanal_id),
+        ).rowcount
+        o.hedef_iptal = conn.execute(
+            "UPDATE outbox SET durum='iptal', son_hata='hedef log kanali/kurucu degil (mukerrer/eski)'"
+            " WHERE durum='bekliyor' AND hedef_sohbet NOT IN (?,?)",
+            (kurucu_id, kanal_id),
+        ).rowcount
+    return o
+
+
 def _onayli_mi(conn, grup_id) -> bool:
-    return conn.execute("SELECT 1 FROM onayli_gruplar WHERE group_id=?", (grup_id,)).fetchone() is not None
+    return alan_aktif(conn, grup_id)
 
 
 def _guncel_onay_donemi(conn, grup_id, satir_donemi) -> bool:
     """Grup onaylı VE satır onun GÜNCEL onay döneminde üretilmiş mi? Dönemi bilinmeyen (NULL/0) satır
     geçerliliği belirsiz sayılır: gönderilmez (fail-closed)."""
-    r = conn.execute("SELECT donem FROM onayli_gruplar WHERE group_id=?", (grup_id,)).fetchone()
-    return r is not None and bool(satir_donemi) and satir_donemi == r[0]
+    d = alan_donemi(conn, grup_id)
+    return d is not None and bool(satir_donemi) and satir_donemi == d
 
 
 def _geri_cekilme(deneme: int) -> int:
@@ -132,12 +163,14 @@ def _geri_cekilme(deneme: int) -> int:
 
 
 async def bekleyenleri_gonder(
-    conn: sqlite3.Connection, gonderici: Gonderici, saat: Saat, *, limit: int = 50, izinli_hedefler=None
+    conn: sqlite3.Connection, gonderici: Gonderici, saat: Saat, *, limit: int = 50, izinli_hedefler=None,
+    izinli_kapsamlar=None,
 ) -> GonderimOzeti:
     """`izinli_hedefler` verilirse (üretimde: kurucu + log kanalı) hedefi bunun dışındaki bekleyen satırlar
     GÖNDERİLMEZ, 'iptal' edilir (savunma katmanı: eski grup hedefli satır asla bir sohbete gitmez)."""
     ozet = GonderimOzeti()
     izinli = None if izinli_hedefler is None else {int(x) for x in izinli_hedefler}
+    kapsamlar = None if izinli_kapsamlar is None else {int(x) for x in izinli_kapsamlar}
     simdi = saat()
     satirlar = conn.execute(
         "SELECT id FROM outbox WHERE durum='bekliyor' AND sonraki_deneme<=? ORDER BY id LIMIT ?",
@@ -152,6 +185,15 @@ async def bekleyenleri_gonder(
         if izinli is not None and r["hedef_sohbet"] not in izinli:
             conn.execute(
                 "UPDATE outbox SET durum='iptal', son_hata='hedef log kanali/kurucu degil (eski grup bildirimi)'"
+                " WHERE id=? AND durum='bekliyor'",
+                (r["id"],),
+            )
+            ozet.iptal += 1
+            continue
+        if kapsamlar is not None and r["grup_id"] is not None and r["grup_id"] not in kapsamlar:
+            # Eski grup (arşiv) kapsamlı satır: ASLA gönderilmez (üretimde izinli kapsam yalnız merkezi alandır).
+            conn.execute(
+                "UPDATE outbox SET durum='iptal', son_hata='eski grup kapsami (arsiv): gonderilmez'"
                 " WHERE id=? AND durum='bekliyor'",
                 (r["id"],),
             )

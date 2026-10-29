@@ -16,7 +16,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from . import config, outbox
-from .db import islem
+from .db import alan_aktif, islem
 from .maske import maskele
 from .kaynak import (
     DiplomaciaSource,
@@ -46,14 +46,13 @@ class TaramaZamanlayici:
         istek_esler: int = config.SOURCE_MAX_CONCURRENT_REQUESTS,
         istek_zaman_asimi: float = config.SOURCE_REQUEST_TIMEOUT_SECONDS,
         token_deposu=None,
-        aktif_listeler=None,
+        kapsamlar=None,
         kanal_id: int | None = None,
         kanal=None,
     ):
-        # aktif_listeler: taranacak takip LİSTELERİ (eski grup kimlikleri). None = onaylı tüm listeler (yalnız testler);
-        # ÜRETİMDE her zaman verilir (varsayılan boş = hiçbir liste taranmaz): hangi listenin kullanılacağını kurucu
-        # veriyi raporladıktan sonra TRACKING_GROUP_IDS ile açıkça seçer. Listeler otomatik BİRLEŞTİRİLMEZ.
-        self._aktif = None if aktif_listeler is None else frozenset(int(x) for x in aktif_listeler)
+        # kapsamlar: taranacak takip ALANLARI. ÜRETİMDE yalnız merkezi alan ({config.MERKEZ_ID}); eski grup kimlikleri
+        # (arşiv) ASLA taranmaz. None = onaylı tüm alanlar (yalnız alan-yalıtımı/algoritma testleri için).
+        self._aktif = None if kapsamlar is None else frozenset(int(x) for x in kapsamlar)
         self._kanal_id = kanal_id
         self._kanal = kanal  # KanalDogrulayici (veya None): hazır değilken tarama duraklar, kanal satırları bekler
         self._kanal_bildirilen_hazir_degil = False
@@ -75,8 +74,8 @@ class TaramaZamanlayici:
 
     # ---- durum -----------------------------------------------------------
     @property
-    def aktif_listeler(self):
-        """Taranan takip listeleri (None: kısıtsız, yalnız testler)."""
+    def kapsamlar(self):
+        """Taranan takip alanları (None: kısıtsız, yalnız testler)."""
         return self._aktif
 
     @property
@@ -278,14 +277,16 @@ class TaramaZamanlayici:
             return []
         kaynak = TaramaOnbellegi(self._kaynak)  # yalnız bu turda istek paylaşımı
         gorevler = []
-        satirlar = self.conn.execute(
-            "SELECT o.group_id AS gid, a.sonraki_tarama AS sonraki FROM onayli_gruplar o"
-            " LEFT JOIN grup_ayarlari a ON a.group_id=o.group_id ORDER BY o.group_id"
-        ).fetchall()
+        if self._aktif is None:  # yalnız testler: onaylı tüm alanlar
+            alanlar = [r[0] for r in self.conn.execute("SELECT group_id FROM onayli_gruplar ORDER BY group_id")]
+        else:
+            alanlar = sorted(g for g in self._aktif if alan_aktif(self.conn, g))
+        satirlar = []
+        for gid in alanlar:
+            a_ = self.conn.execute("SELECT sonraki_tarama FROM grup_ayarlari WHERE group_id=?", (gid,)).fetchone()
+            satirlar.append({"gid": gid, "sonraki": a_[0] if a_ else None})
         for r in satirlar:
             gid = r["gid"]
-            if self._aktif is not None and gid not in self._aktif:
-                continue  # seçilmemiş liste: taranmaz, bildirim üretmez; verisi olduğu gibi korunur
             if gid in self._calisan:
                 continue  # önceki tarama bitmeden yenisi başlamaz
             if r["sonraki"] is not None and r["sonraki"] > iso(simdi):
@@ -311,11 +312,8 @@ class TaramaZamanlayici:
                 ):
                     if self._token_dur:
                         break
-                    onayli = self.conn.execute(
-                        "SELECT 1 FROM onayli_gruplar WHERE group_id=?", (gid,)
-                    ).fetchone()
-                    if onayli is None:
-                        break  # onay kaldırıldı: tarama durur
+                    if not alan_aktif(self.conn, gid):
+                        break  # alan artık aktif değil (yalnız testler: onay kaldırıldı): tarama durur
                     try:
                         sonuc = await fn(gid, kaynak)
                     except TokenGecersiz as e:
@@ -429,7 +427,8 @@ class TaramaZamanlayici:
                 bekleme = min(config.TICK_SECONDS * (2**ardisik), config.SCHEDULER_ERROR_BACKOFF_MAX_SECONDS)
             try:
                 await outbox.bekleyenleri_gonder(
-                    self.conn, gonderici, self.saat, izinli_hedefler={self.kurucu_id, self.kanal_id}
+                    self.conn, gonderici, self.saat, izinli_hedefler={self.kurucu_id, self.kanal_id},
+                    izinli_kapsamlar=self._aktif,
                 )
             except Exception:
                 log.exception("outbox gönderim turu hatası")

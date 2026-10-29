@@ -68,8 +68,8 @@ def gonderici():
 
 @pytest.fixture(autouse=True)
 def _liste_secimi(monkeypatch):
-    """Gruplar artık komut işlemez; testler 'grup_komut/grup_dugme' ile kurucunun ÖZEL sohbetinde bir takip listesi
-    seçerek çalışır (üretimde: Select Group düğmesi). Seçim, olay işlenmeden hemen önce uygulanır."""
+    """Gruplar komut işlemez; testler 'grup_komut/grup_dugme' ile kurucunun ÖZEL sohbetinde çalışır. Üretimde TEK merkezi
+    takip alanı vardır; alan-yalıtımı/algoritma testleri için olayın taşıdığı `liste` değeri Arayuz.kapsam'a atanır."""
     from dipbot.tg.arayuz import Arayuz
 
     orig_komut, orig_buton = Arayuz.komut, Arayuz.buton
@@ -77,7 +77,7 @@ def _liste_secimi(monkeypatch):
     def sec(self, o):
         liste = getattr(o, "liste", None)
         if liste is not None and o.kullanici_id is not None:
-            self._secili[o.kullanici_id] = liste
+            self.kapsam = liste  # test: alan-yalıtımı için başka takip alanı (üretimde hep merkezi alan)
 
     async def komut(self, o):
         sec(self, o)
