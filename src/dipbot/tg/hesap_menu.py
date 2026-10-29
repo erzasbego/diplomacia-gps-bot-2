@@ -435,7 +435,7 @@ class HesapMenusu:
             return Yanit(f"{sil}\nAnother verification is still running; wait for it to finish and retry from the menu. Nothing was changed.", [self._geri()])
         self._hesap_islem_suruyor = True
         try:
-            self._girdi_kaldir(o.kullanici_id)  # tek kullanımlık
+            self._girdi.pop(o.kullanici_id, None)  # tek kullanımlık; g.veri (ad/proxy) _hassas_isle'de alınıp temizlenir
             return await self._hassas_isle(o, g, metin, sil)
         finally:
             self._hesap_islem_suruyor = False

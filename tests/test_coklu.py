@@ -232,24 +232,36 @@ def test_token_gecersiz_hesap_bekler_digeri_surer_devralan_yok(o):
     assert o.h(h1)["durum"] == "hazir"
 
 
-def test_token_yenilenince_hesap_devam_eder_ve_iyilesme_bildirimi_kuyruga_alinir(o):
+def _token_yenilenmis_kur(o):
     o.oyuncu_ekle(205)
     h1, h2 = o.hesap("A1"), o.hesap("A2")
     ids2 = o.ids(h2)
     o.kaynak(h2).hatalar[("*", "*")] = TokenGecersiz("401")
     o.tick()
     cagri2 = o.cagri_sayisi(h2)
-    s = o.run(o.hy.token_guncelle(h2, T_YENI))
-    assert s.gecerli
+    assert o.run(o.hy.token_guncelle(h2, T_YENI)).gecerli
     o.kaynak(h2).hatalar.clear()
     o.tick()
+    return h1, h2, ids2, cagri2
+
+
+def test_token_yenilenince_hesap_devam_eder_ve_kendi_oyunculari_taranir(o):
+    h1, h2, ids2, cagri2 = _token_yenilenmis_kur(o)
     yeni = o.kaynak(h2).cagrilar[cagri2:]
     assert {k for t, k in yeni if t == "oyuncu"} == ids2 and len(yeni) == 55, "hesap 2 kendi 55 oyuncusunu taradı"
     assert o.h(h2)["durum"] == "hazir"
     assert o.conn.execute("SELECT COUNT(*) FROM oyuncu_atamalari WHERE hesap_id=? AND son_basari IS NOT NULL", (h2,)).fetchone()[0] == 55
-    b = o.durumlar()
-    assert [x["veri"]["durum"] for x in b] == ["token_gecersiz", "hazir"], "geçiş + iyileşme bildirimi"
-    assert all(x["hedef_sohbet"] == KURUCU and x["grup_id"] is None for x in b)
+    assert o.hy.depo.token(h2).oku() == T_YENI
+    for _ in range(2):
+        o.ilerle_tick(o.aralik + 60)
+    assert [x["veri"]["durum"] for x in o.durumlar() if x["veri"]["durum"] != "hazir"] == ["token_gecersiz"]
+    assert len([x for x in o.durumlar() if x["veri"]["durum"] == "hazir"]) <= 1, "iyileşme bildirimi yinelenmez"
+
+
+def test_token_yenilenince_iyilesme_bildirimi_kuyruga_alinir_ve_yinelenmez(o):
+    h1, h2, ids2, cagri2 = _token_yenilenmis_kur(o)
+    assert [x["veri"]["durum"] for x in o.durumlar()] == ["token_gecersiz", "hazir"]
+    assert all(x["hedef_sohbet"] == KURUCU and x["grup_id"] is None for x in o.durumlar())
     for _ in range(2):
         o.ilerle_tick(o.aralik + 60)
     assert len(o.durumlar()) == 2, "tekrarlayan turlarda yinelenen bildirim yok"
@@ -391,8 +403,6 @@ def test_okunamayan_proxy_dosyasi_istemci_fabrikasini_proxysiz_cagirmaz(o):
     assert len(o.durumlar()) == 1 and set(o.say(h1)) == o.ids(h1)
 
 
-@pytest.mark.xfail(strict=True, reason="SRC: HesapYoneticisi.egress_anahtari bozuk proxy dosyasında 'direct' döner; proxy'li hesabın "
-                   "bekleme penceresi doğrudan hesabı da duraklatır (hesaplar.py:384-386)")
 def test_okunamayan_proxy_dosyasi_dogrudan_hesabin_beklemesini_paylasmaz(o):
     o.oyuncu_ekle(205)
     h1 = o.hesap("Direct")
@@ -550,7 +560,7 @@ def test_atama_degisikligi_gecmisi_sifirlamaz_ve_tek_degisiklik_bildirimi_uretir
     # taşımadan SONRA gerçek bölge değişimi: tam bir bildirim
     o.bolge_degistir("300", "Sofia")
     o.ilerle_tick(o.aralik + 60)
-    assert 300 and "300" in o.say(h1)[150:], "300 artık hesap 1 tarafından tarandı"
+    assert "300" in o.say(h1)[150:], "300 artık hesap 1 tarafından tarandı"
     b = bildirimler(o.conn, "oyuncu_degisti")
     assert len(b) == 1
     assert b[0]["hedef_sohbet"] == config.LOG_KANAL_ID and b[0]["grup_id"] == M
@@ -658,17 +668,17 @@ def test_token_hatirlatma_hesap_basina_haftalik(o):
     assert len(b) == 1 and b[0]["veri"]["hesap_ad"] == "Eski Hesap" and b[0]["hedef_sohbet"] == KURUCU
     assert "Eski Hesap" in bicim.bildirim_metni("token_hatirlatma", b[0]["veri"])
     assert o.z.token_hatirlat() is False and len(bildirimler(o.conn, "token_hatirlatma")) == 1, "aynı hafta yinelenmez"
-    o.saat.ilerle(7 * 86400)  # 15 gün: ikinci hafta
+    o.saat.ilerle(7 * 86400)  # eski hesap 15 gün (2. hafta), taze hesap tam 7 gün (1. hafta)
     assert o.z.token_hatirlat() is True
-    b = bildirimler(o.conn, "token_hatirlatma")
-    assert len(b) == 3 or len(b) == 2
-    assert {x["veri"]["hesap_ad"] for x in b} == {"Eski Hesap", "Taze Hesap"} or {x["veri"]["hesap_ad"] for x in b} == {"Eski Hesap"}
-    # geçersiz token'lı hesaba hatırlatma gitmez
+    adlar = sorted(x["veri"]["hesap_ad"] for x in bildirimler(o.conn, "token_hatirlatma"))
+    assert adlar == ["Eski Hesap", "Eski Hesap", "Taze Hesap"]
+    # token'ı geçersiz hesaba hatırlatma gitmez
     o.conn.execute("UPDATE hesaplar SET durum='token_gecersiz' WHERE hesap_id=?", (h1,))
     o.saat.ilerle(7 * 86400)
     n = len(bildirimler(o.conn, "token_hatirlatma"))
-    o.z.token_hatirlat()
-    assert all(x["veri"]["hesap_ad"] != "Eski Hesap" for x in bildirimler(o.conn, "token_hatirlatma")[n:])
+    assert o.z.token_hatirlat() is True
+    yeni = bildirimler(o.conn, "token_hatirlatma")[n:]
+    assert [x["veri"]["hesap_ad"] for x in yeni] == ["Taze Hesap"]
 
 
 def test_token_hatirlatma_taze_tokenlar_icin_yok(o):

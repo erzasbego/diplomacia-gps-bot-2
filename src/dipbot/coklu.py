@@ -79,6 +79,7 @@ class CokluZamanlayici:
         self._hesap_calisan: set[int] = set()
         self._sem = asyncio.Semaphore(grup_esler)
         self._rl_sayac: dict[int, int] = {}
+        hesaplar.durum_geri_cagrisi = self._durum_bildirimi  # menüden (token/proxy) yapılan düzelmeler de bildirim yolundan geçer
 
     # ---- Arayüz tarafı (Arayuz/ZamanlayiciKorumali bu API'yi kullanır) ----------------------------------------------
     @property
@@ -151,18 +152,18 @@ class CokluZamanlayici:
         except Exception:
             log.exception("hesap durum bildirimi kuyruğa alınamadı")
 
-    def _durum_degisti(self, hesap_id: int, durum: str, ayrinti: str | None = None) -> None:
+    def _durum_bildirimi(self, hesap_id: int, onceki: str, yeni: str, ayrinti: str | None) -> None:
+        """Hesap durumu değişti (zamanlayıcıdan VEYA menüden): sorun başlangıcı ve düzelme kurucuya TEK kez bildirilir."""
         h = self.hesaplar.getir(hesap_id)
         if h is None:
             return
-        onceki = h["durum"]
-        degisti = self.hesaplar.durum_yaz(hesap_id, durum, ayrinti)
-        if not degisti:
-            return
-        if durum in BILDIRILEN:
-            self._bildir_hesap_durumu(hesap_id, h["ad"], durum, ayrinti)
-        elif durum == DURUM_HAZIR and onceki in BILDIRILEN:
-            self._bildir_hesap_durumu(hesap_id, h["ad"], durum, None)
+        if yeni in BILDIRILEN:
+            self._bildir_hesap_durumu(hesap_id, h["ad"], yeni, ayrinti)
+        elif yeni == DURUM_HAZIR and onceki in BILDIRILEN:
+            self._bildir_hesap_durumu(hesap_id, h["ad"], yeni, None)
+
+    def _durum_degisti(self, hesap_id: int, durum: str, ayrinti: str | None = None) -> None:
+        self.hesaplar.durum_yaz(hesap_id, durum, ayrinti)  # geçişte _durum_bildirimi tetiklenir
 
     def _hata_isle(self, hesap_id: int, e: BaseException, kusak: int | None = None) -> str:
         """Kaynak hatasını HESABIN durumuna işler (diğer hesaplara dokunmaz). Dönüş: yeni durum."""

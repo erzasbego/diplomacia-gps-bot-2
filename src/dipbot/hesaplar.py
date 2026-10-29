@@ -355,6 +355,9 @@ class HesapYoneticisi:
         self._zaman_asimi = zaman_asimi if zaman_asimi is not None else config.SOURCE_REQUEST_TIMEOUT_SECONDS
         self._kaynaklar: dict[int, HesapKaynagi] = {}
         self._token_kusaklari: dict[int, int] = {}
+        # durum geçişi dinleyicisi (zamanlayıcı kurucuya bildirim kuyruğa alır): (hesap_id, onceki, yeni, ayrinti). Menüden yapılan
+        # güncellemeler (token/proxy) de aynı geçiş yolundan geçer.
+        self.durum_geri_cagrisi = None
 
     # ---- fabrikalar (testlerde sahte)
     @staticmethod
@@ -385,7 +388,12 @@ class HesapYoneticisi:
 
     def egress_anahtari(self, hesap_id: int) -> str:
         p = self.depo.proxy_oku(hesap_id)
-        return p.egress if p else "direct"
+        if p:
+            return p.egress
+        h = self.getir(hesap_id)
+        if h is not None and h["proxy_var"]:
+            return f"proxy-okunamiyor:{hesap_id}"  # proxy'li ama dosya okunamıyor: 'doğrudan' ile PAYLAŞMAZ (kota yanlış paylaşılmasın)
+        return "direct"
 
     # ---- kaynak
     def kaynak(self, hesap_id: int) -> HesapKaynagi:
@@ -432,7 +440,16 @@ class HesapYoneticisi:
                 "UPDATE hesaplar SET durum=?, durum_ayrinti=?, durum_zamani=? WHERE hesap_id=?",
                 (durum, (ayrinti or "")[:120] or None, iso(self.saat()) if degisti else h["durum_zamani"], hesap_id),
             )
+        if degisti:
+            self._gecis(hesap_id, h["durum"], durum, ayrinti)
         return degisti
+
+    def _gecis(self, hesap_id: int, onceki: str, yeni: str, ayrinti: str | None = None) -> None:
+        if onceki != yeni and self.durum_geri_cagrisi is not None:
+            try:
+                self.durum_geri_cagrisi(hesap_id, onceki, yeni, ayrinti)
+            except Exception:
+                log.exception("hesap durum geçişi işlenemedi")
 
     def _api_basari(self, hesap_id: int) -> None:
         try:
@@ -517,6 +534,7 @@ class HesapYoneticisi:
             return sonuc
         self.depo.hazirla(hesap_id)
         self.depo.token(hesap_id).yaz(token)
+        onceki = h["durum"]
         with islem(self.conn):
             self.conn.execute(
                 "UPDATE hesaplar SET durum=?, durum_ayrinti=NULL, durum_zamani=?, token_guncelleme=?, ardisik_hata=0,"
@@ -524,6 +542,7 @@ class HesapYoneticisi:
                 (DURUM_HAZIR, iso(self.saat()), iso(self.saat()), hesap_id),
             )
         await self.kaynagi_yenile(hesap_id)
+        self._gecis(hesap_id, onceki, DURUM_HAZIR)
         return sonuc
 
     async def proxy_guncelle(self, hesap_id: int, proxy_metni: str) -> DogrulamaSonucu:
@@ -539,6 +558,7 @@ class HesapYoneticisi:
         if not sonuc.gecerli:
             return sonuc
         self.depo.proxy_yaz(hesap_id, proxy)
+        onceki = h["durum"]
         with islem(self.conn):
             self.conn.execute(
                 "UPDATE hesaplar SET proxy_var=1, proxy_sema=?, proxy_durum='calisiyor', durum=?, durum_ayrinti=NULL, durum_zamani=?,"
@@ -546,12 +566,15 @@ class HesapYoneticisi:
                 (proxy.sema, DURUM_HAZIR, iso(self.saat()), hesap_id),
             )
         await self.kaynagi_yenile(hesap_id)
+        self._gecis(hesap_id, onceki, DURUM_HAZIR)
         return sonuc
 
     async def proxy_kaldir(self, hesap_id: int) -> None:
         """Proxy'yi AÇIKÇA kaldırır (kurucu onayıyla): hesap bundan sonra doğrudan bağlanır. Otomatik geçiş DEĞİLDİR."""
-        if self.getir(hesap_id) is None:
+        h = self.getir(hesap_id)
+        if h is None:
             raise HesapHatasi("Unknown account.")
+        onceki = h["durum"]
         self.depo.proxy_sil(hesap_id)
         with islem(self.conn):
             self.conn.execute(
@@ -561,6 +584,8 @@ class HesapYoneticisi:
             )
             self.conn.execute("UPDATE hesaplar SET proxy_var=0, proxy_sema=NULL, proxy_durum='yok' WHERE hesap_id=?", (hesap_id,))
         await self.kaynagi_yenile(hesap_id)
+        yeni = self.getir(hesap_id)["durum"]
+        self._gecis(hesap_id, onceki, yeni)
 
     async def baglanti_testi(self, hesap_id: int) -> DogrulamaSonucu:
         """Kayıtlı token + kayıtlı proxy ile doğrulama isteği. Sonuç hesabın bağlantı durumuna işlenir (token yazılmaz/değişmez)."""

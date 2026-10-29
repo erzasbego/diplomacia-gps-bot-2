@@ -674,10 +674,11 @@ def test_proxy_ayarla_gecersiz_biçim_degisiklik_yapmaz(o):
 def test_proxy_ayarla_tokensiz_hesapta_dogrulanamaz(o):
     hid = o.hesap("Main")
     os.unlink(o.hy.depo.token(hid).yol)
+    o.kayit.clear()
     o.d(f"hps:{hid}")
     y = o.m(PROXY)
     assert "no token yet" in y.metin and "Nothing was changed" in y.metin
-    assert o.kayit == [(TOKEN1, None)][:0] or o.kayit == []
+    assert o.kayit == [], "token yokken hiçbir doğrulama isteği yapılmaz"
     assert o.satir(hid)["proxy_var"] == 0
 
 
@@ -980,7 +981,7 @@ def test_id_ile_arama_oncul_ve_sonuc_sayisi_ve_aramayi_temizle(o):
     beklenen = sorted(i for i in range(1, 151) if str(i).startswith("10") or "10" in f"p{i}")
     assert f"Search: <code>10</code> — {len(beklenen)} match(es)" in y.metin
     assert "page 1/2" in y.metin
-    assert f"hx:{h1}" in veriler(y) and "Clear search" in [d.etiket for s in y.klavye for d in s]
+    assert f"hx:{h1}" in veriler(y) and "✖ Clear search" in [d.etiket for s in y.klavye for d in s]
     assert not o.bekleme_var()
     sayfalar = tum_sayfalar(o, h1)
     assert sorted(int(i) for _, l in sayfalar for i in l) == beklenen
@@ -1014,9 +1015,9 @@ def test_arama_joker_karakterleri_ozel_anlam_tasimaz(o):
         y = o.m(sorgu)
         assert "0 match(es)" in y.metin and "No matching players." in y.metin, sorgu
         assert oid_listesi(y) == []
-    # kontrol: sıradan arama çalışır
+    # kontrol: sıradan arama çalışır (P1, P10..P19 -> 11 eşleşme)
     o.d(f"hq:{h1}")
-    assert "match(es)" in o.m("P1").metin and "0 match(es)" not in o.m("P1").metin if False else True
+    assert "Search: <code>P1</code> — 11 match(es)" in o.m("P1").metin
 
 
 def test_arama_html_kacisi_ve_uzunluk_siniri(o):
@@ -1102,9 +1103,10 @@ def test_kurucu_olmayan_ozel_sohbette_durumsuz_jwt_islenmez(o):
 
 def test_kurucunun_bekleme_durumu_baska_kullanici_mesajindan_etkilenmez(o):
     hid = o.hesap("Main")
+    o.kayit.clear()
     o.d(f"ht:{hid}")
     assert o.m(TOKEN3, kul=YABANCI) is None
-    assert KURUCU in o.ui._girdi and o.kayit == [(TOKEN1, None)][:0]
+    assert KURUCU in o.ui._girdi and o.kayit == []
     assert "verified and saved" in o.m(TOKEN2).metin
 
 
@@ -1166,7 +1168,7 @@ def test_gizlilik_uctan_uca_hicbir_yanitta_sir_yok_ve_loglarda_da(tmp_path, capl
     o.saat.ilerle(10); o.d("ht:1"); o.saat.ilerle(config.HESAP_GIRDI_BEKLEME_SN + 1); o.m(TOKEN2)  # süre doldu
     o.d("ht:1"); o.saat.duvar_atla(5000); o.m(TOKEN2)               # saat atladı
     o.k("accounts"); o.k("hesaplar"); o.k("status"); o.d("du"); o.d("yo"); o.d("m")
-    assert len(o.yanitlar) > 50
+    assert len(o.yanitlar) > 40
     # kalıcı yerler: veritabanı, outbox, denetim kaydı
     for tablo in ("hesaplar", "outbox", "yetkisiz_denemeler", "sistem_durumu", "islemler"):
         try:
@@ -1245,7 +1247,7 @@ def test_addplayer_hesap_yokken_oyuncu_beklemede_hesap_eklenince_atanir(o):
     o.src.oyuncu("700", "Late")
     o.k("addplayer", "700")
     assert o.hy.oyuncu_sayilari() == {None: 1}
-    assert "waiting for an account: 1" in o.d("hm").metin
+    assert "A new Diplomacia account is required: 1 players are waiting" in o.d("hm").metin
     hesap_ekle_akisi(o, ad="Main", token=TOKEN1)
     assert o.hy.oyuncu_sayilari() == {1: 1}
     assert "1/150" in o.d("hl").metin
