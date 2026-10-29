@@ -157,6 +157,22 @@ if command -v timedatectl >/dev/null 2>&1; then
   [[ "$N" == "yes" ]] && tamam "saat NTP ile senkron" || uyari "saat NTP senkronu dogrulanamadi ($N): bekleyen onay guvenligi saat atlamalarina duyarlidir"
 fi
 
+echo "== Hesap sirlari (token/proxy dosyalari; icerik YAZDIRILMAZ)"
+HESAP_DIR="$DATA_DIR/hesaplar"
+if [[ -d "$HESAP_DIR" ]]; then
+  KOTU_DIZIN="$(find "$HESAP_DIR" -type d ! -perm 0700 -print 2>/dev/null)"
+  KOTU_DOSYA="$(find "$HESAP_DIR" -type f ! -perm 0600 -print 2>/dev/null)"
+  KOTU_SAHIP="$(find "$HESAP_DIR" ! -user "$APP_USER" -print 2>/dev/null)"
+  [[ -z "$KOTU_DIZIN" ]] && tamam "$HESAP_DIR altindaki dizinler 0700" || hata "dizin izni 0700 degil: $(echo "$KOTU_DIZIN" | tr '\n' ' ')"
+  [[ -z "$KOTU_DOSYA" ]] && tamam "token/proxy dosyalari 0600" || hata "dosya izni 0600 degil: $(echo "$KOTU_DOSYA" | tr '\n' ' ')"
+  [[ -z "$KOTU_SAHIP" ]] && tamam "hesap sirlari sahibi $APP_USER" || hata "sahibi $APP_USER olmayan hesap dosyasi/dizini: $(echo "$KOTU_SAHIP" | tr '\n' ' ')"
+  if grep -rEl 'eyJ[A-Za-z0-9_-]{5,}\.' "$DATA_DIR" --include='*.db' --include='*.db-wal' 2>/dev/null | grep -q .; then
+    hata "veritabani dosyasinda JWT benzeri deger bulundu: sirlar yalniz hesap dosyalarinda olmali"
+  fi
+else
+  uyari "henuz hesap dizini yok ($HESAP_DIR): Telegram > Account Management > Add Account (veya 'Import existing token') ile hesap ekleyin; o zamana kadar tarama yapilmaz"
+fi
+
 echo
 if (( HATA )); then echo "SONUC: HATA var; duzeltmeden servisi baslatmayin."; exit 1; fi
 echo "SONUC: HATA yok (UYARI'lari inceleyin)."

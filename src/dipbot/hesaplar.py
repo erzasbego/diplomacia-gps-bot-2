@@ -341,8 +341,10 @@ def _sirali_pozisyon_anahtari(r) -> tuple:
 class HesapYoneticisi:
     def __init__(self, conn: sqlite3.Connection, saat: Saat = simdi_utc, kok: str | Path = "hesaplar", *,
                  istemci_fabrikasi=None, dogrulayici_fabrikasi=None, kapasite: int | None = None,
-                 genel_sinir: GenelSinir | None = None, hesap_aralik: float | None = None, zaman_asimi: float | None = None):
+                 genel_sinir: GenelSinir | None = None, hesap_aralik: float | None = None, zaman_asimi: float | None = None,
+                 dogrulama_oyuncusu: str = "72400"):
         self.conn = conn
+        self.dogrulama_oyuncusu = dogrulama_oyuncusu  # token/proxy doğrulamasında sorgulanan herkese açık oyuncu (DIPLOMACIA_DOGRULAMA_OYUNCU)
         self.saat = saat
         self.depo = HesapDeposu(kok)
         self.kapasite = kapasite if kapasite is not None else config.HESAP_KAPASITESI
@@ -361,12 +363,12 @@ class HesapYoneticisi:
 
         return IstemciKaynagi(OrtamKimlik(token_deposu), proxy=proxy.url if proxy else None)
 
-    @staticmethod
-    def _varsayilan_dogrulayici(proxy: ProxyAyar | None):
+    def _varsayilan_dogrulayici(self, proxy: ProxyAyar | None):
         from .diplomacia.dogrulayici import OyuncuDogrulayici
         from .diplomacia.istemci import OrtamKimlik
 
-        return OyuncuDogrulayici(OrtamKimlik(TokenDeposu(os.devnull)), proxy=proxy.url if proxy else None)
+        return OyuncuDogrulayici(OrtamKimlik(TokenDeposu(os.devnull)), proxy=proxy.url if proxy else None,
+                                 oyuncu_no=self.dogrulama_oyuncusu)
 
     # ---- okuma
     def listele(self) -> list[sqlite3.Row]:

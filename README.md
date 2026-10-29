@@ -75,6 +75,14 @@ Kod sabitleri (`src/dipbot/config.py`): tarama aralıkları `[5,10,15,20]`, dene
 
 - Kurucuya **denetim bildirimi** altyapısı (kimlik+zaman, token yok) korunur; grup/yetki komutları kaldırıldığı için artık yeni denetim olayı üretmez.
 
+## Çok hesaplı tarama ve Telegram hesap yönetimi
+
+Birden çok Diplomacia oyun hesabı, tek `dipbot.service` / tek SQLite / tek Telegram botu ile çalışır. **Hesaplar, JWT token'ları ve proxy'ler Telegram'dan yönetilir** (özel sohbet → `/accounts` veya ana menü → 🔐 Account Management; yalnız `OWNER_TELEGRAM_ID`): View Accounts · Add Account · Account Details · Update JWT Token · Proxy Settings · Test Connection · Assigned Players · Account Statistics. Ayrıntı, güvenlik ve dağıtım: [`deploy/COKLU-HESAP-PLANI.md`](deploy/COKLU-HESAP-PLANI.md).
+- **Kesin dağıtım kuralı:** her hesap **en fazla 150 oyuncudan** sorumludur (sabit görev atama kapasitesi; API kotası varsayımı DEĞİL), hesaplar **sırayla doldurulur** (205 → 150/55, 301 → 150/150 + 1 beklemede, 3. hesap eklenince 150/150/1). Kapasite dolunca oyuncular silinmez, bekler ve kurucuya “new Diplomacia account required” uyarısı gider; hesaplar **otomatik oluşturulmaz**. Kullanıcı oyuncu eklerken hesap seçmez.
+- **Arıza yalıtımı:** bir hesap arıza verirse görevleri onda **bekler**, başka hesap devralmaz; proxy'li hesap proxy'ye ulaşamazsa **doğrudan bağlantıya geçmez**. Hesap başına cooldown/rate limit durumu kalıcıdır; aynı çıkış noktasını paylaşan hesaplar ortak kotayı korur. Rate limit'i aşmaya yönelik hesap/IP değiştirme yoktur.
+- **Sırlar:** token/proxy yalnız `<veri dizini>/hesaplar/<id>/` altında **0600 dosyalarda** (dizinler 0700); SQLite'ta, loglarda, yanıtlarda ve kanalda görünmez. Gönderdiğiniz token/proxy mesajı hemen silinmeye çalışılır; silinemezse bot açıkça söyler (Telegram Bot API sohbetleri uçtan uca şifreli değildir). Aday token/proxy önce sınanır; başarısızsa önceki yapılandırma korunur.
+- Hesap başına oyuncu ekranı (Account → Players: ID, ad, son başarılı tarama, hata, takip durumu; sayfalı + arama) ve hesap istatistikleri (atanan `150/150`, başarılı, bekleyen görev, son API isteği, son rate limit, cooldown, proxy durumu, son tarama süresi) menüdedir. Komut menüsüne `/accounts` (eski ad `/hesaplar`) eklendi.
+
 ## Arayüz dili ve saat (İngilizce arayüz, Europe/Istanbul)
 Telegram arayüzünün **tamamı İngilizcedir** (tek dil; dil seçeneği yoktur): komut yanıtları, menüler, düğmeler, açılır uyarılar, hata/yetki mesajları, bildirimler. Oyuncu/parti adları ve oyun adları çevrilmez. Telegram komut menüsü İngilizcedir:
 

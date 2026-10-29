@@ -111,6 +111,7 @@ async def calistir(
     hesaplar = HesapYoneticisi(
         conn, simdi_utc, ta.ayarlar.db_path.parent / "hesaplar",
         istemci_fabrikasi=hesap_istemci_fabrikasi, dogrulayici_fabrikasi=hesap_dogrulayici_fabrikasi,
+        dogrulama_oyuncusu=ta.dogrulama_oyuncusu,
     )
     hesaplar.dagit()
     # Eski gruplara bildirim YOK: bekleyen eski grup hedefli satırlar iptal edilir (silinmez); kanala GİTMEZ.
