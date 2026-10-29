@@ -3,7 +3,9 @@ korunumu ve ID/bağlantı kabulü. MOCK; canlı Telegram doğrulaması DEĞİLD�
 import pytest
 
 from conftest import bildirimler, run, takipte
-from tg_fakes import G1, G3, KURUCU, YABANCI, YETKILI, grup_dugme, grup_komut, komut, onay_kimligi, veriler
+from tg_fakes import (
+    G1, G3, KURUCU, YABANCI, YETKILI, dugme, gercek_grup_komut, grup_dugme, grup_komut, komut, onay_kimligi, veriler,
+)
 
 from dipbot import yonetim
 from dipbot.tg.arayuz import EN_KOMUTLAR, ESKI_KOMUTLAR, KOMUTLAR, TR_KOMUTLAR, Arayuz
@@ -106,25 +108,42 @@ def test_eski_komut_adlari_ayni_sonucu_verir(ui, conn, src):
 def test_yetki_yeni_ve_eski_adlarda_ayni(ui, conn, src, ad):
     src.oyuncu("72400", "Ali"); src.oyuncu("1", "A1"); src.parti("1244", "T", [("1", "A1")])
     arg = "1244" if "parti" in ad else "72400"
-    # yetkisiz kullanıcı: onaylı grupta bile işlem yok
-    run(ui.komut(grup_komut(ad, arg, kul=YABANCI)))
+    # BİLİNÇLİ DEĞİŞİKLİK: gruplar artık hiçbir komutu işlemez -> grupta (yetkisiz/yetkili/KURUCU; onaylı/onaysız)
+    # sessiz yok sayılır: yanıt yok, denetim kaydı yok, kaynak çağrısı yok, takip değişikliği yok.
+    for kul in (YABANCI, YETKILI, KURUCU):
+        for g in (G1, G3):
+            assert run(ui.komut(gercek_grup_komut(ad, arg, grup=g, kul=kul))) is None
+    assert run(ui.komut(grup_komut(ad, arg, kul=YABANCI))) is None
     assert takipte(conn, G1) == set() and src.cagrilar == []
+    assert len(bildirimler(conn, "yetkisiz_deneme")) == 0
+    assert conn.execute("SELECT COUNT(*) FROM yetkisiz_denemeler").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM takip_oyuncular").fetchone()[0] == 0
+    # özel sohbette yetkili (kurucu değil) ve yabancı kullanamaz; kayıt düşer
+    for kul in (YETKILI, YABANCI):
+        y = run(ui.komut(komut(ad, arg, kul=kul)))
+        assert y is not None and "Usage" not in y.metin and "added" not in y.metin
+        assert src.cagrilar == []
+    assert conn.execute("SELECT COUNT(*) FROM yetkisiz_denemeler").fetchone()[0] == 2
     assert len(bildirimler(conn, "yetkisiz_deneme")) >= 1
-    # onaysız grup
-    run(ui.komut(grup_komut(ad, arg, grup=G3)))
-    assert src.cagrilar == [] and conn.execute("SELECT COUNT(*) FROM takip_oyuncular").fetchone()[0] == 0
-    # özel sohbette yetkili (kurucu değil) kullanamaz
-    run(ui.komut(komut(ad, arg, kul=YETKILI)))
-    assert src.cagrilar == []
+    assert conn.execute("SELECT COUNT(*) FROM takip_oyuncular").fetchone()[0] == 0
 
 
 def test_silme_onayi_baska_kullaniciya_veya_sohbete_bagli(ui, conn, src):
     src.oyuncu("72400", "Ali")
     run(ui.komut(grup_komut("oyuncuekle", "72400")))
-    y = run(ui.komut(grup_komut("oyuncusil", "72400", kul=YETKILI)))
+    # yetkili kullanıcı grupta silme başlatamaz (sessiz yok sayılır; BİLİNÇLİ tasarım değişikliği)
+    assert run(ui.komut(grup_komut("oyuncusil", "72400", kul=YETKILI))) is None
+    y = run(ui.komut(grup_komut("oyuncusil", "72400")))  # kurucu, özel sohbet + G1 listesi
     kid = onay_kimligi(y)
-    r = run(ui.buton(grup_dugme(f"c:e:{kid}", kul=KURUCU)))  # başka kullanıcı
-    assert r.uyari and takipte(conn, G1) == {"72400"}
+    # onay başka kullanıcıya bağlıdır: yetkili hiçbir yerden veremez
+    r = run(ui.buton(grup_dugme(f"c:e:{kid}", kul=YETKILI)))
+    assert r.sessiz and not r.uyari_goster and not r.metin
+    r = run(ui.buton(dugme(f"c:e:{kid}", kul=YETKILI)))
+    assert r.uyari and r.sessiz and takipte(conn, G1) == {"72400"}
+    # kurucu da başka kullanıcı adına açılmış bir onayı veremez
+    baskasi = ui.islemler.olustur("oyuncu_sil", KURUCU, YETKILI, G1, {"id": "72400"})
+    r = run(ui.buton(grup_dugme(f"c:e:{baskasi}", kul=KURUCU)))  # başka kullanıcı
+    assert r.uyari and "Only the user who started" in r.uyari and takipte(conn, G1) == {"72400"}
 
 
 # ------------------------------------------------------------------ ID/bağlantı çeşitleri komutlarda

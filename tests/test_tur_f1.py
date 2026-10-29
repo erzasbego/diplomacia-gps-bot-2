@@ -3,7 +3,7 @@ import pytest
 from conftest import bildirimler, run, takipte
 from tg_fakes import (
     G1, G2, KURUCU, YABANCI, YETKILI,
-    dugme, grup_dugme, grup_komut, komut, onay_kimligi, veriler,
+    dugme, gercek_grup_dugme, grup_dugme, grup_komut, komut, onay_kimligi, veriler,
 )
 
 from dipbot import yonetim
@@ -27,17 +27,29 @@ def _yetkisiz_kayit(conn, kul):
 
 # ------------------------------------------------------------ F1-1
 def test_f1_yetkili_komutla_grup_kaldiramaz(ui, conn):
-    y = run(ui.komut(grup_komut("grup_kaldir", str(G2), kul=YETKILI)))
+    """BİLİNÇLİ DEĞİŞİKLİK: yetkili kullanıcının GRUPTAKİ komutu artık tamamen yok sayılır (yanıt/kayıt/bildirim yok);
+    özel sohbette ise yetkili için sohbet kapalıdır (KAPALI_OZEL) ve kayıt + kurucu bildirimi düşer."""
+    assert run(ui.komut(grup_komut("grup_kaldir", str(G2), kul=YETKILI))) is None
+    assert G2 in _onayli(conn)
+    assert _yetkisiz_kayit(conn, YETKILI) == 0
+    assert not bildirimler(conn, "yetkisiz_deneme")
+    y = run(ui.komut(komut("grup_kaldir", str(G2), kul=YETKILI)))
     assert y is not None and not veriler(y), "onay düğmesi üretilmemeli"
-    assert y.metin == ar.YALNIZ_KURUCU
+    assert y.metin == ar.KAPALI_OZEL
     assert G2 in _onayli(conn)
     assert _yetkisiz_kayit(conn, YETKILI) == 1
     assert len(bildirimler(conn, "yetkisiz_deneme", hedef=KURUCU)) == 1
 
 
 def test_f1_yetkili_dugmeyle_grup_kaldiramaz(ui, conn):
+    """BİLİNÇLİ DEĞİŞİKLİK: gruptaki düğme sessiz yok sayılır (uyarı yok, kayıt yok); özel sohbette yetkili için
+    sohbet kapalıdır (uyarı KAPALI_OZEL) ve kayıt düşer."""
     y = run(ui.buton(grup_dugme(f"gk:{G2}", kul=YETKILI)))
-    assert y.uyari == ar.YALNIZ_KURUCU and y.uyari_goster
+    assert y.sessiz and not y.metin and y.uyari is None and not y.klavye
+    assert G2 in _onayli(conn)
+    assert _yetkisiz_kayit(conn, YETKILI) == 0
+    y = run(ui.buton(dugme(f"gk:{G2}", kul=YETKILI)))
+    assert y.uyari == ar.KAPALI_OZEL and y.uyari_goster
     assert G2 in _onayli(conn)
     assert _yetkisiz_kayit(conn, YETKILI) == 1
 
@@ -87,10 +99,14 @@ def test_f1_goc_otomatik_dusurme_calismaya_devam_eder(ui, conn):
 def test_f1_onay_islemi_sohbet_ve_kullaniciya_bagli(ui, conn):
     kid = onay_kimligi(run(ui.komut(komut("grup_kaldir", str(G2)))))
     # başka sohbetten (kurucu aynı kullanıcı ama grup sohbeti) ve başka kullanıcıdan kabul edilmez
-    y = run(ui.buton(grup_dugme(f"c:e:{kid}")))
-    assert y.uyari and G2 in _onayli(conn)
+    # BİLİNÇLİ DEĞİŞİKLİK: grup sohbetinden gelen düğme (kurucu dahil) sessizce yok sayılır: işlem uygulanmaz ve
+    # tüketilmez; başka kullanıcı özel sohbette kapalı yanıtı alır.
+    y = run(ui.buton(gercek_grup_dugme(f"c:e:{kid}")))
+    assert y.sessiz and y.uyari is None and not y.metin and G2 in _onayli(conn)
     y = run(ui.buton(grup_dugme(f"c:e:{kid}", kul=YETKILI)))
-    assert y.uyari and G2 in _onayli(conn)
+    assert y.sessiz and y.uyari is None and not y.metin and G2 in _onayli(conn)
+    y = run(ui.buton(dugme(f"c:e:{kid}", kul=YETKILI)))
+    assert y.uyari == ar.KAPALI_OZEL and G2 in _onayli(conn)
     assert "approval removed" in run(ui.buton(dugme(f"c:e:{kid}"))).metin
 
 
@@ -203,8 +219,12 @@ def test_f2_kuyruga_ekleme_hatasi_asil_islemi_geri_almaz(yconn, saat, monkeypatc
 
 
 def test_f2_bildirim_yalniz_kurucu_ozel_sohbetine_gider(ui, conn, saat):
-    run(ui.komut(grup_komut("yetki_ver", "300", kul=YETKILI)))
-    run(ui.komut(grup_komut("grup_onayla", "-4444", kul=YETKILI)))
+    """BİLİNÇLİ DEĞİŞİKLİK: yetkili kullanıcı artık Telegram'dan (grupta) işlem yapamaz; aynı yetkili-eylemleri
+    yönetim servisi doğrudan çağrılarak üretilir. Grup komutu ise denetim satırı üretmez."""
+    assert run(ui.komut(grup_komut("yetki_ver", "301", kul=YETKILI))) is None
+    assert not _denetim(conn)
+    yonetim.yetki_ver(conn, saat, KURUCU, YETKILI, 300)
+    yonetim.grup_onayla(conn, saat, KURUCU, YETKILI, -4444)
     ui.grup_goc(G2, -100999)
     b = _denetim(conn)
     assert {x["veri"]["eylem"] for x in b} == {"yetki_ver", "grup_onayla", "grup_goc_dusur"}

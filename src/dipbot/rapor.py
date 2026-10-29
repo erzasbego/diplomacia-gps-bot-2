@@ -116,9 +116,9 @@ def metin(conn: sqlite3.Connection, aktif=frozenset(), *, ayrinti: bool = False,
                 f"only {c['b']}: {c['parti']['yalniz_b']}); wars common {c['savas']['ortak']}"
             )
             if ayrinti:
-                for ad in ("oyuncu", "parti", "savas"):
+                for ad, etiket in (("oyuncu", "player"), ("parti", "party"), ("savas", "war")):
                     if c[ad]["ortak_idler"]:
-                        satirlar.append(f"    common {ad} ids: {', '.join(c[ad]['ortak_idler'][:200])}")
+                        satirlar.append(f"    common {etiket} ids: {', '.join(c[ad]['ortak_idler'][:200])}")
     hedefler = bekleyen_hedefler(conn)
     satirlar += ["", f"PENDING NOTIFICATION QUEUE by target chat (log channel = {kanal_id})"]
     if not hedefler:

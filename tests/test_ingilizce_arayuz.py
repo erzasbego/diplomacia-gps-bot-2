@@ -13,7 +13,12 @@ import pytest
 
 from conftest import bildirimler, run, takipte
 from fakes import SahteSaat
-from tg_fakes import G1, G2, G3, KURUCU, YABANCI, YETKILI, dugme, grup_dugme, grup_komut, komut, veriler
+from types import SimpleNamespace
+
+from tg_fakes import (
+    G1, G2, G3, KURUCU, YABANCI, YETKILI, dugme, gercek_grup_dugme, gercek_grup_komut, grup_dugme, grup_komut, komut,
+    veriler,
+)
 
 from dipbot import config, yonetim
 from dipbot.tg import arayuz as ar
@@ -76,7 +81,9 @@ def test_telegram_command_menu_is_english():
     assert set(adlar) == {
         "start", "help", "addplayer", "players", "removeplayer", "addparty", "parties", "removeparty",
         "wars", "scan", "status", "grant", "revoke", "approve_group", "remove_group", "move_group",
+        "channel", "lists",
     }
+    assert len(adlar) == 18
     for c in bot_komutlari():
         assert re.fullmatch(r"[a-z0-9_]{1,32}", c.command)
         assert 3 <= len(c.description) <= 256
@@ -99,7 +106,7 @@ def test_legacy_names_still_resolve():
     assert ar.komut_ic_adi("nonexistent") is None
 
 
-# (command, argument) pairs run as the owner inside approved group G1
+# (command, argument) pairs run as the owner in the private chat with tracking list G1 selected
 _KOMUT_ORNEKLERI = [
     ("start", ""), ("help", ""), ("players", ""), ("parties", ""), ("wars", ""), ("status", ""),
     ("scan", ""), ("scan", "15"), ("scan", "7"), ("scan", "abc"),
@@ -112,6 +119,7 @@ _KOMUT_ORNEKLERI = [
     ("approve_group", ""), ("approve_group", "abc"), ("approve_group", "-1005"),
     ("remove_group", ""), ("remove_group", "-1005"), ("remove_group", "-1002"),
     ("move_group", ""), ("move_group", "-1001 -1009"),
+    ("channel", ""), ("lists", ""),
 ]
 # the same commands under their legacy Turkish names
 _ESKI_ESLESME = {v: k for k, v in EN_KOMUTLAR.items()}
@@ -160,6 +168,7 @@ def test_help_lists_english_commands_only(ui):
     for ad in KOMUTLAR:
         if ad != "start":
             assert f"/{ad}" in y.metin
+    assert "Commands work only in the owner's private chat (groups are ignored)" in y.metin
     for eski in list(ESKI_KOMUTLAR) + list(TR_KOMUTLAR):
         assert f"/{eski}" not in y.metin
     yanit_ingilizce(y)
@@ -203,11 +212,25 @@ def test_confirmation_screens_and_results_are_english(ui, src):
 
 
 def test_denied_users_get_english_texts(ui, conn):
-    yanit_ingilizce(run(ui.komut(komut("players", kul=YABANCI))))  # private chat: owner only
-    yanit_ingilizce(run(ui.komut(grup_komut("players", kul=YABANCI))))  # approved group, not authorized
-    yanit_ingilizce(run(ui.buton(grup_dugme("ol:0", kul=YABANCI))))
-    yanit_ingilizce(run(ui.buton(grup_dugme("gk:-1002", kul=YETKILI))))  # owner-only action by authorized user
-    yanit_ingilizce(run(ui.komut(grup_komut("remove_group", "-1002", kul=YETKILI))))
+    y = run(ui.komut(komut("players", kul=YABANCI)))  # private chat: owner only
+    assert y.metin == ar.KAPALI_OZEL
+    yanit_ingilizce(y)
+    y = run(ui.buton(dugme("ol:0", kul=YABANCI)))
+    assert y.sessiz and y.uyari_goster
+    yanit_ingilizce(y)
+    y = run(ui.buton(dugme("gk:-1002", kul=YETKILI)))  # owner-only action by an authorized user (private)
+    assert y.sessiz and y.uyari_goster
+    yanit_ingilizce(y)
+    y = run(ui.komut(komut("remove_group", "-1002", kul=YETKILI)))
+    assert y.metin == ar.KAPALI_OZEL
+    yanit_ingilizce(y)
+    # DELIBERATE CHANGE: group events get NO text at all (no reply, no alert), so there is nothing to translate
+    assert run(ui.komut(grup_komut("players", kul=YABANCI))) is None
+    assert run(ui.komut(grup_komut("remove_group", "-1002", kul=YETKILI))) is None
+    for kul in (YABANCI, YETKILI):
+        y = run(ui.buton(grup_dugme("ol:0", kul=kul)))
+        assert y.sessiz and not y.metin and not y.uyari and not y.uyari_goster
+    assert conn.execute("SELECT COUNT(*) FROM yetkisiz_denemeler").fetchone()[0] == 4  # private attempts only
 
 
 def test_stale_button_alert_is_english(ui):
@@ -244,6 +267,10 @@ _ORNEK_BILDIRIMLER = {
     "grup_goc": {"eski": -1001, "yeni": -1009, "zaman": "2026-10-21T21:30:00.000000Z"},
     "denetim": {"eylem": "grup_onayla", "aktor_id": 1000, "hedef_id": -1001, "zaman": "2026-10-21T21:30:00.000000Z"},
     "denetim_ozet": {"sayi": 9, "zaman": "2026-10-21T21:30:00.000000Z"},
+    "kanal_durumu": {
+        "kanal_id": -1003998002227, "hazir": False, "neden": "the bot is not an administrator of the channel",
+        "zaman": "2026-10-21T21:30:00.000000Z",
+    },
 }
 
 
@@ -256,6 +283,14 @@ def test_notification_text_is_english(tur):
     m = bicim.bildirim_metni(tur, _ORNEK_BILDIRIMLER[tur])
     ingilizce_mi(m)
     assert not _AMPM.search(m)
+
+
+def test_channel_ready_again_notification_is_english():
+    m = bicim.bildirim_metni("kanal_durumu", {**_ORNEK_BILDIRIMLER["kanal_durumu"], "hazir": True})
+    ingilizce_mi(m)
+    assert "ready again" in m and "-1003998002227" in m and "Time: 22.10.2026 00:30" in m
+    n = bicim.bildirim_metni("kanal_durumu", _ORNEK_BILDIRIMLER["kanal_durumu"])
+    assert "not ready" in n and "the bot is not an administrator" in n and "Post messages" in n
 
 
 def test_unauthorized_notification_shows_english_command_names():
@@ -414,9 +449,13 @@ def test_status_never_shows_the_two_removed_diagnostics(ui, conn, src, saat, gir
             y = run(ui.komut(grup_komut("durum")))
         else:
             y = run(ui.buton(grup_dugme("du")))
+        # the NEW notification-channel line legitimately says "(not verified yet)"; it is checked on its own
+        kanal_satiri = [l for l in y.metin.splitlines() if l.startswith("Notification channel:")]
+        assert kanal_satiri == [f"Notification channel: <code>{config.LOG_KANAL_ID}</code> (not verified yet)"]
+        govde = "\n".join(l for l in y.metin.splitlines() if not l.startswith("Notification channel:"))
         for yasak in (REMOVED_1, REMOVED_2, "sayfalamasız", "pagination", "DevTools", "doğrulanmadı",
                       "not verified", "unverified", "yapılandırıldı", "Diplomacia bağlantısı"):
-            assert yasak not in y.metin, (giris, durum, yasak)
+            assert yasak not in govde, (giris, durum, yasak)
         assert "Diplomacia connection" not in y.metin  # healthy status shows no connection boilerplate
 
 
@@ -425,6 +464,68 @@ def test_status_private_chat_without_group(ui):
     ingilizce_mi(y.metin)
     assert "Approved groups: 2; authorized users: 1" in y.metin
     assert REMOVED_1 not in y.metin and REMOVED_2 not in y.metin
+
+
+class _Z:
+    """Scheduler stub exposing the active tracking lists (aktif_listeler)."""
+
+    token_duraklatildi = False
+
+    def __init__(self, aktif):
+        self.aktif_listeler = frozenset(aktif)
+
+    def calisiyor_mu(self, g):
+        return False
+
+
+def test_status_shows_tracking_list_activity_and_channel_line_in_english(conn, src, saat):
+    # without a scheduler exposing aktif_listeler the activity line is omitted (and no warning)
+    t0 = run(Arayuz(conn, src, KURUCU, saat=saat).komut(grup_komut("status"))).metin
+    assert "Tracking list status" not in t0 and "No tracking list is active" not in t0
+    # active list G1
+    t = run(Arayuz(conn, src, KURUCU, saat=saat, zamanlayici=_Z({G1})).komut(grup_komut("status", grup=G1))).metin
+    ingilizce_mi(t)
+    assert "Tracking list status: ACTIVE (scanned)" in t and "No tracking list is active" not in t
+    # G2 is not in the active set
+    t = run(Arayuz(conn, src, KURUCU, saat=saat, zamanlayici=_Z({G1})).komut(grup_komut("status", grup=G2))).metin
+    ingilizce_mi(t)
+    assert "Tracking list status: not active (not scanned)" in t
+    # nothing active: explicit warning
+    t = run(Arayuz(conn, src, KURUCU, saat=saat, zamanlayici=_Z(set())).komut(grup_komut("status"))).metin
+    ingilizce_mi(t)
+    assert "No tracking list is active" in t and "nothing is scanned" in t
+    # channel line states: not verified yet / ready / not ready
+    assert f"Notification channel: <code>{config.LOG_KANAL_ID}</code> (not verified yet)" in t
+    kanal = SimpleNamespace(kanal_id=config.LOG_KANAL_ID, durum=SimpleNamespace(hazir=True, neden="ok"))
+    ui2 = Arayuz(conn, src, KURUCU, saat=saat, kanal=kanal)
+    assert f"Notification channel: <code>{config.LOG_KANAL_ID}</code> — ready" in run(ui2.komut(grup_komut("status"))).metin
+    kanal.durum = SimpleNamespace(hazir=False, neden="the bot is not an administrator of the channel")
+    t = run(ui2.komut(grup_komut("status"))).metin
+    ingilizce_mi(t)
+    assert "NOT READY: the bot is not an administrator of the channel" in t
+
+
+def test_channel_and_lists_commands_are_english_and_owner_only(conn, src, saat):
+    async def dogrula():
+        return SimpleNamespace(hazir=False, neden="the bot is not an administrator of the channel", baslik="Log")
+
+    kanal = SimpleNamespace(kanal_id=config.LOG_KANAL_ID, durum=None, dogrula=dogrula)
+    ui2 = Arayuz(conn, src, KURUCU, saat=saat, zamanlayici=_Z({G1}), kanal=kanal)
+    yetki = yonetim.yetki_ver(conn, saat, KURUCU, KURUCU, YETKILI)  # noqa: F841
+    y = run(ui2.komut(komut("channel")))
+    yanit_ingilizce(y)
+    assert "Not ready: the bot is not an administrator of the channel" in y.metin
+    y = run(ui2.komut(komut("lists")))
+    yanit_ingilizce(y)
+    assert "Tracking lists" in y.metin and "ACTIVE (scanned)" in y.metin
+    # the legacy internal names resolve to the same handlers
+    assert ar.komut_ic_adi("channel") == "kanal" and ar.komut_ic_adi("lists") == "listeler"
+    # nobody but the owner's private chat: strangers/authorized users get the closed reply; groups stay silent
+    for ad in ("channel", "lists"):
+        for kul in (YETKILI, YABANCI):
+            assert run(ui2.komut(komut(ad, kul=kul))).metin == ar.KAPALI_OZEL
+            assert run(ui2.komut(gercek_grup_komut(ad, kul=kul))) is None
+        assert run(ui2.komut(gercek_grup_komut(ad))) is None  # owner in a group: ignored too
 
 
 def test_status_reports_real_problems_only(conn, src, saat):
@@ -449,12 +550,15 @@ def test_status_shows_failed_scan_error_in_english(ui, conn, saat):
     assert "Diplomacia connection: last scan failed (oyuncular): rate limit" in t
 
 
-# ---------------------------------------------------------------- 6. authorization and isolation unchanged
+# ---------------------------------------------------------------- 6. authorization and isolation
+# DELIBERATE DESIGN CHANGE: Telegram groups process NO command or button for anyone (owner, authorized user,
+# stranger; approved or unapproved group): silent, no reply, no audit row, no notification. The private-chat part
+# of the matrix is unchanged (owner only; others get the closed-private reply + one audit row).
 KISILER = {"owner": KURUCU, "authorized": YETKILI, "stranger": YABANCI}
 SOHBETLER = ["private", "approved_group", "unapproved_group"]
 BEKLENEN = {
     ("owner", "private"): True, ("authorized", "private"): False, ("stranger", "private"): False,
-    ("owner", "approved_group"): True, ("authorized", "approved_group"): True, ("stranger", "approved_group"): False,
+    ("owner", "approved_group"): False, ("authorized", "approved_group"): False, ("stranger", "approved_group"): False,
     ("owner", "unapproved_group"): False, ("authorized", "unapproved_group"): False,
     ("stranger", "unapproved_group"): False,
 }
@@ -473,10 +577,26 @@ def test_authorization_matrix_is_identical_for_english_and_legacy_names(ui, conn
     y = run(ui.komut(komut(cmd, **_args(KISILER[kisi], sohbet))))
     if BEKLENEN[(kisi, sohbet)]:
         assert y is not None and y.metin
-    else:
-        assert y is None or (y.metin in (ar.KAPALI_OZEL, ar.YETKISIZ))
+        assert conn.execute("SELECT COUNT(*) FROM yetkisiz_denemeler").fetchone()[0] == 0
+    elif sohbet == "private":
+        assert y is not None and y.metin == ar.KAPALI_OZEL
         n = conn.execute("SELECT COUNT(*) FROM yetkisiz_denemeler WHERE user_id=?", (KISILER[kisi],)).fetchone()[0]
         assert n == 1
+    else:
+        assert y is None  # groups: silent for everyone
+        assert conn.execute("SELECT COUNT(*) FROM yetkisiz_denemeler").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("sohbet", ["approved_group", "unapproved_group"])
+@pytest.mark.parametrize("kisi", list(KISILER))
+def test_group_buttons_are_silent_for_everyone(ui, conn, kisi, sohbet):
+    for veri in ("m", "ol:0", "du", "yo", "gl", f"gs:{G1}"):
+        y = run(ui.buton(dugme(veri, **_args(KISILER[kisi], sohbet))))
+        assert y.sessiz and not y.metin and not y.uyari and not y.uyari_goster and not y.klavye, veri
+    assert conn.execute("SELECT COUNT(*) FROM yetkisiz_denemeler").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0] == 0
+    assert ui._secili == {}
 
 
 def test_denied_messages_are_english_but_audit_names_are_unchanged(ui, conn):
@@ -489,17 +609,23 @@ def test_denied_messages_are_english_but_audit_names_are_unchanged(ui, conn):
 
 
 def test_owner_only_actions_remain_owner_only(ui, conn):
-    y = run(ui.komut(grup_komut("remove_group", str(G2), kul=YETKILI)))
-    assert y.metin == ar.YALNIZ_KURUCU
+    # group: ignored (deliberate change; was: "owner only" reply); private: closed for non-owners
+    assert run(ui.komut(grup_komut("remove_group", str(G2), kul=YETKILI))) is None
+    assert run(ui.komut(komut("remove_group", str(G2), kul=YETKILI))).metin == ar.KAPALI_OZEL
+    assert run(ui.buton(dugme(f"gk:{G2}", kul=YETKILI))).uyari_goster
     assert G2 in yonetim.durum_yukle(conn, KURUCU).onayli_gruplar  # nothing changed
+    assert conn.execute("SELECT COUNT(*) FROM yetkisiz_denemeler").fetchone()[0] == 2  # the two private attempts
 
 
 def test_ordinary_group_members_gain_no_new_privileges(ui, conn):
     for cmd in ("addplayer", "grant", "approve_group", "scan"):
-        y = run(ui.komut(grup_komut(cmd, "1", kul=YABANCI)))
-        assert y.metin == ar.YETKISIZ
+        assert run(ui.komut(grup_komut(cmd, "1", kul=YABANCI))) is None  # group: silent (deliberate change)
+        y = run(ui.komut(komut(cmd, "1", kul=YABANCI)))  # private chat: closed
+        assert y.metin == ar.KAPALI_OZEL
     assert takipte(conn, G1) == set()
     assert yonetim.durum_yukle(conn, KURUCU).yetkililer == frozenset({YETKILI})
+    assert conn.execute("SELECT COUNT(*) FROM yetkisiz_denemeler WHERE user_id=?", (YABANCI,)).fetchone()[0] == 4
+    assert conn.execute("SELECT COUNT(*) FROM yetkisiz_denemeler WHERE group_id IS NOT NULL").fetchone()[0] == 0
 
 
 def test_group_isolation_is_unchanged(ui, conn, src):

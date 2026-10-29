@@ -1,7 +1,9 @@
 """Tur F / D9: supergroup göçünde veri KURUCU ONAYLI güvenli taşınır. MOCK; canlı doğrulama DEĞİLDİR."""
 import pytest
 from conftest import bildirimler, run
-from tg_fakes import G1, G2, G3, KURUCU, YETKILI, YABANCI, dugme, grup_dugme, grup_komut, komut, onay_kimligi
+from tg_fakes import (
+    G1, G2, G3, KURUCU, YETKILI, YABANCI, dugme, gercek_grup_komut, grup_dugme, grup_komut, komut, onay_kimligi,
+)
 
 from dipbot import config, outbox, yonetim
 from dipbot.kaynak import SavasOzet
@@ -94,7 +96,13 @@ def test_goc_olayi_yalniz_kayit_uretir_yetki_vermez(ui, conn, saat):
     d = yonetim.durum_yukle(conn, KURUCU)
     assert YENI not in d.onayli_gruplar and G1 not in d.onayli_gruplar
     assert _say(conn, G1) == onceki, "eski veri silinmez"
-    assert run(ui.komut(grup_komut("oyuncular", grup=YENI))) is None  # yetki yok
+    # BİLİNÇLİ DEĞİŞİKLİK: yeni kimlik grup olarak artık yok sayılır (gruplar komut işlemez: yanıt da kayıt da yok);
+    # kurucu özel sohbette onaysız YENI'yi seçse de seçim kabul edilmez (liste YENI'ye geçmez).
+    assert run(ui.komut(gercek_grup_komut("oyuncular", grup=YENI))) is None
+    assert run(ui.komut(gercek_grup_komut("oyuncular", grup=YENI, kul=YETKILI))) is None
+    run(ui.komut(grup_komut("oyuncular", grup=YENI)))
+    assert ui._secili.get(KURUCU) != YENI
+    assert not conn.execute("SELECT 1 FROM yetkisiz_denemeler").fetchall()
 
 
 # ---------------------------------------------------------------- G2/G4
@@ -138,13 +146,13 @@ def test_yetkili_ozelde_veya_grupta_tasiyamaz_kurucu_grupta_da_tasiyamaz(ui, con
     y = run(ui.komut(komut("grup_tasi", f"{G1} {YENI}", kul=YETKILI)))
     assert y is not None and not any(v.startswith("c:e:") for v in (d.veri or "" for s in (y.klavye or []) for d in s))
     # yetkili kullanıcı onaylı yeni grubun içinden
-    y = run(ui.komut(grup_komut("grup_tasi", f"{G1} {YENI}", grup=YENI, kul=YETKILI)))
-    assert y is not None and not y.klavye
-    # kurucu bile grup içinden başlatamaz
-    y = run(ui.komut(grup_komut("grup_tasi", f"{G1} {YENI}", grup=YENI, kul=KURUCU)))
-    assert y is not None and not y.klavye
-    # yabancı
-    run(ui.komut(grup_komut("grup_tasi", f"{G1} {YENI}", grup=G2, kul=YABANCI)))
+    kayit_once = conn.execute("SELECT COUNT(*) FROM yetkisiz_denemeler").fetchone()[0]
+    # BİLİNÇLİ DEĞİŞİKLİK: grup içinden gelen komut (yetkili / kurucu / yabancı) artık YANIT bile üretmez (None)
+    # ve yetkisiz-deneme kaydı düşmez; eskiden yetkili/kurucu için 'onay düğmesiz' bir yanıt dönerdi.
+    assert run(ui.komut(grup_komut("grup_tasi", f"{G1} {YENI}", grup=YENI, kul=YETKILI))) is None
+    assert run(ui.komut(gercek_grup_komut("grup_tasi", f"{G1} {YENI}", grup=YENI, kul=KURUCU))) is None
+    assert run(ui.komut(grup_komut("grup_tasi", f"{G1} {YENI}", grup=G2, kul=YABANCI))) is None
+    assert conn.execute("SELECT COUNT(*) FROM yetkisiz_denemeler").fetchone()[0] == kayit_once
     sonra = _anlik(conn)
     # yalnız yetkisiz deneme/bildirim kayıtları artabilir; takip verisi ve göç kaydı aynı
     for t in ("takip_oyuncular", "takip_partiler", "parti_uyeleri", "engeller", "savaslar", "grup_gocleri", "grup_ayarlari"):

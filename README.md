@@ -5,7 +5,7 @@
 Python 3.11+ · `python-telegram-bot` 22.8 (long polling; alan adı/HTTPS gerekmez) · SQLite · Telegram arayüzü ve mesajlar **İngilizce** (belgeler Türkçe) · gösterilen zamanlar `Europe/Istanbul` 24 saat, kayıtlar UTC.
 
 > ## ⚠️ Doğrulama durumu — önce bunu okuyun
-> Bu bot **henüz gerçek Diplomacia'ya veya gerçek Telegram'a bağlanılarak denenmedi.** Şu an elde olan: **1217 otomatik test** (sahte veri kaynağı, `httpx.MockTransport`, sahte Telegram nesneleri; Python 3.11/3.12/3.13'te geçti). Bunlar iş kurallarını kanıtlar; **canlı entegrasyonu kanıtlamaz.** Ayrıntı için [Doğrulananlar ve doğrulanmayanlar](#doğrulananlar-ve-doğrulanmayanlar).
+> Bu bot **henüz gerçek Diplomacia'ya veya gerçek Telegram'a bağlanılarak denenmedi.** Şu an elde olan: **1301 otomatik test** (sahte veri kaynağı, `httpx.MockTransport`, sahte Telegram nesneleri; Python 3.11/3.12/3.13'te geçti). Bunlar iş kurallarını kanıtlar; **canlı entegrasyonu kanıtlamaz.** Ayrıntı için [Doğrulananlar ve doğrulanmayanlar](#doğrulananlar-ve-doğrulanmayanlar).
 
 ## İçindekiler
 1. [Nasıl çalışır](#nasıl-çalışır)
@@ -34,7 +34,7 @@ Bot olayları **dinlemez, aralıklarla yoklar.** Bu yüzden: iki kontrol arasın
 ```bash
 python3.11 -m venv .venv && . .venv/bin/activate     # Python 3.11+ (3.12 ve 3.13 de denendi)
 pip install -r requirements.txt
-python -m pytest -q                                  # beklenen: 1217 passed (MOCK)
+python -m pytest -q                                  # beklenen: 1301 passed (MOCK)
 ```
 Paket `src/` altındadır ve pip ile **kurulmaz**; çalıştırırken `PYTHONPATH=src` verilir (testler için `pytest.ini` bunu zaten yapar):
 ```bash
@@ -59,18 +59,26 @@ Kod sabitleri (`src/dipbot/config.py`): tarama aralıkları `[5,10,15,20]`, dene
 
 Çıkış kodları: `0` normal, `2` yapılandırma hatası, `3` Telegram `BOT_TOKEN` reddedildi veya `Conflict` (aynı token'la ikinci örnek), `130` Ctrl-C (yalnız geliştirmede).
 
-## Yetki modeli
-Üç ayrı kavram vardır; kontroller kullanıcı **adıyla değil sayısal Telegram kimlikleriyle** yapılır.
+## Bildirim kanalı, takip listeleri ve yetki modeli
+
+> **Kanal geçişi (güncel davranış):** tüm otomatik takip bildirimleri (oyuncu, parti, savaş) **yalnız** Telegram log kanalına gider (`config.LOG_KANAL_ID` = `-1003998002227`; `LOG_CHANNEL_ID` ile değiştirilebilir). **Eski gruplara hiçbir bildirim gönderilmez ve gruplarda hiçbir komut/düğme işlenmez** (onaylı grup ve yetkili kullanıcı olsa da; sessizce yok sayılır, kayıt ve yanıt üretmez). **Yönetim yalnız kurucunun özel sohbetindedir.** Ayrıntı ve geçiş adımları: [`deploy/KANAL-GECISI-PLANI.md`](deploy/KANAL-GECISI-PLANI.md).
+
+- **Kanal doğrulaması:** açılışta (ve `/channel` ile) Telegram API'siyle kanalın var olduğu, türünün `channel` olduğu ve botun orada yönetici + "Post messages" yetkisine sahip olduğu **mesaj göndermeden** doğrulanır. Hazır değilse **tarama duraklar** (değişiklik bildirimsiz yutulmasın), kanal satırları bekletilir (hata/deneme sayılmaz) ve kurucuya özel sohbette tek bildirim gider; düzelince tek "hazır" bildirimi gider.
+- **Takip listeleri:** takip verisi hâlâ eski grup kimliği başına tutulur ("liste"). Üç eski grubun listesi **otomatik birleştirilmez** ve **silinmez**. Hangi listenin kullanılacağını kurucu `TRACKING_GROUP_IDS` ile seçer; **varsayılan boştur: hiçbir liste taranmaz.** Seçmeden önce veriyi raporlayın: `python -m dipbot.rapor <db>` (salt okunur; listeler, sayılar, ortak kimlikler, bekleyen kuyruk). Telegram'da `/lists` kısa özet verir.
+- **Bekleyen eski grup mesajları:** açılışta hedefi kurucu/log kanalı dışında olan bekleyen outbox satırları **iptal edilir** (silinmez; `durum='iptal'`), ne gruba ne kanala gider. Gönderici ayrıca kurucu/kanal dışındaki hedefi reddeder.
+- Kurucuya (özel sohbet) giden **operasyonel** bildirimler (denetim, yetkisiz özel sohbet denemesi, token uyarıları, kanal durumu) değişmedi; bunlar takip bildirimi değildir.
+
+Yetki kavramları (kontroller **adla değil sayısal Telegram kimlikleriyle** yapılır):
 
 | Kavram | Ne demek |
 |---|---|
-| **Kurucu** | `OWNER_TELEGRAM_ID` ile tanımlanan asıl sahip. Yetkisi başkaları tarafından alınamaz. **Yalnız kurucu:** özel sohbeti kullanır, token'ı yenileyebilir, `/grup_kaldir` ve `/grup_tasi` yapar. |
-| **Yetkili kullanıcı** | Kurucunun `/yetki_ver` ile yetki verdiği kişiler. Onaylı gruplarda takip yönetimi, ayar, yetki verme/alma ve grup **onaylama** dahil normal yönetim işlemlerini yapar. Özel sohbette botu kullanamaz. |
-| **Onaylı grup** | `/grup_onayla` ile izin verilen Telegram grubu. Grup onaylı olmak **gruptaki herkese yetki vermez**: işlemi yapan kişi de yetkili olmalıdır. |
+| **Kurucu** | `OWNER_TELEGRAM_ID` ile tanımlanan asıl sahip. **Yalnız kurucu** botu özel sohbetinde kullanır: takip yönetimi, ayarlar, token yenileme, `/grup_kaldir`, `/grup_tasi`, `/channel`, `/lists`. |
+| **Yetkili kullanıcı** | `/yetki_ver` ile verilen kayıt hâlâ saklanır, ancak gruplar komut işlemediği ve özel sohbet yalnız kurucuya açık olduğu için bu kullanıcılar bot üzerinde işlem **yapamaz**. |
+| **Onaylı grup** | Artık "komut izni" değil, **taranabilir takip listesi** anlamındadır (`/grup_onayla`); bir listenin taranması ayrıca `TRACKING_GROUP_IDS` ile seçilmelidir. |
 
-- Onaysız grupta veya yetkisiz kişiden gelen **her komut ve buton** reddedilir ve kurucuya (hız sınırlı) bildirilir. Yetkisi alınan kullanıcı eski mesajlardaki butonlarla işlem yapamaz.
+- Özel sohbette kurucu dışındaki her komut/buton reddedilir ve kurucuya (hız sınırlı) bildirilir.
 - Kurucuya **denetim bildirimi** gider: yetki verme/alma, grup onaylama/kaldırma, grup göçü/taşıma (yalnız kimlikler ve zaman; token yok). Kurucunun kendi eylemleri bildirilmez; aynı eylem 10 dk içinde tek bildirim, saatte en çok 5, fazlası tek özet.
-- Bir grubun onayı kaldırılınca o grubun taramaları ve **bekleyen bildirimleri durur** (veri silinmez; yeniden onayda korunur).
+- Bir listenin onayı kaldırılınca o listenin taramaları ve **bekleyen bildirimleri durur** (veri silinmez; yeniden onayda korunur).
 
 ## Arayüz dili ve saat (İngilizce arayüz, Europe/Istanbul)
 Telegram arayüzünün **tamamı İngilizcedir** (tek dil; dil seçeneği yoktur): komut yanıtları, menüler, düğmeler, açılır uyarılar, hata/yetki mesajları, bildirimler. Oyuncu/parti adları ve oyun adları çevrilmez. Telegram komut menüsü İngilizcedir:
@@ -81,6 +89,7 @@ Telegram arayüzünün **tamamı İngilizcedir** (tek dil; dil seçeneği yoktur
 | `/addplayer`, `/players`, `/removeplayer` | `/oyuncuekle`, `/oyuncular`, `/oyuncusil`, `/oyuncu_ekle`, `/oyuncu_sil` |
 | `/addparty`, `/parties`, `/removeparty` | `/partiekle`, `/partiler`, `/partisil`, `/parti_ekle`, `/parti_sil` |
 | `/wars`, `/scan`, `/status` | `/savaslar`, `/tarama`, `/durum` |
+| `/channel`, `/lists` | `/kanal`, `/listeler` |
 | `/grant`, `/revoke` | `/yetki_ver`, `/yetki_al` |
 | `/approve_group`, `/remove_group`, `/move_group` | `/grup_onayla`, `/grup_kaldir`, `/grup_tasi` |
 
@@ -89,7 +98,7 @@ Eski ve yeni adlar **aynı işleyiciye, aynı yetki ve onay kurallarına** gider
 **Saat:** kullanıcıya gösterilen tüm tarih/saatler **Europe/Istanbul** (`zoneinfo`), 24 saat, `DD.MM.YYYY HH:mm` (ör. `22.10.2026 21:56`; AM/PM yoktur). Bu **yalnız gösterim** dönüşümüdür: veritabanı, zamanlayıcı ve API zaman damgaları UTC ve sabit biçimli ISO olarak kalır; dönüşüm yalnız metin üretilirken yapılır. Sunucunun saat dilimi değiştirilmez (gösterim ondan bağımsızdır).
 
 ## Komutlar ve butonlar
-Aşağıdaki tabloda komutlar eski (Türkçe) adlarıyla yazılıdır; İngilizce menü adları yukarıdaki eşleme tablosundadır (ikisi de çalışır). Gruplarda komutlar yalnız **onaylı grupta yetkili kullanıcıya** açıktır. Kurucu özel sohbette önce **Grup Seç** ile bir onaylı grup seçer, sonra aynı komutları/butonları kullanır. `/start` ana menüyü açar.
+Aşağıdaki tabloda komutlar eski (Türkçe) adlarıyla yazılıdır; İngilizce menü adları yukarıdaki eşleme tablosundadır (ikisi de çalışır). **Gruplarda hiçbir komut işlenmez**; komutlar yalnız kurucunun özel sohbetindedir. Kurucu önce **Grup Seç** ile bir takip listesini (eski grup) seçer, sonra aynı komutları/butonları kullanır. `/start` ana menüyü açar.
 
 | Komut | Ne yapar |
 |---|---|
@@ -105,6 +114,8 @@ Aşağıdaki tabloda komutlar eski (Türkçe) adlarıyla yazılıdır; İngilizc
 | `/grup_kaldir <grup_id>` | Grup onayını kaldırır — **yalnız kurucu** (komut ve düğme aynı kural). |
 | `/grup_tasi <eski_id> <yeni_id>` | Supergroup'a yükselen grubun verisini yeni kimliğe taşır — **yalnız kurucu, yalnız özel sohbet**, düğmeyle onay. |
 | `/yardim` | Komut özeti. |
+| `/channel` (`/kanal`) | Log kanalını Telegram API'siyle yeniden doğrular (mesaj göndermez). |
+| `/lists` (`/listeler`) | Takip listeleri ve hangisinin taranmakta olduğu. |
 
 **Eski komut adları** (`/oyuncu_ekle`, `/oyuncu_sil`, `/parti_ekle`, `/parti_sil`) geriye dönük uyumluluk için çalışır, aynı yetki ve onay kurallarına tabidir; ancak Telegram komut listesinde, yardımda ve menülerde yalnız yeni kısa adlar gösterilir. **Bağlantı kuralı:** yalnız `diplomacia.com.tr` / `www.diplomacia.com.tr` alan adı ve `/player/ID`, `/party/ID` yolları (başına `profile/` veya `press/` gelebilir); başka alan adı, port, kullanıcı bilgisi, ek yol parçası veya yanlış tür (oyuncu komutuna parti bağlantısı) reddedilir.
 
@@ -167,7 +178,7 @@ Hedef: **Ubuntu 24.04 LTS** (Python 3.12), tek VPS, tek bot süreci, systemd. Ad
 
 ## Doğrulananlar ve doğrulanmayanlar
 **Doğrulandı (otomatik test / araç ile; hepsi MOCK ya da yerel):**
-- 1217 test: ilk ekleme bildirimsiz, kimlik üzerinden değişiklik, bölge/vatandaşlık bağımsızlığı, tekrar bildirim yok, eksik cevap veriyi bozmaz, parti ilk kayıt/giriş/çıkış/kaldırma kuralları, grup izolasyonu, yetki matrisi (komut+buton), eski buton reddi, yeniden başlatmada veri korunumu, ilk savaş taramasında bildirim yok, outbox yeniden deneme/iptal, token doğrulama/`.prev`/maskeleme, D7 saat güvenliği, göç taşıma.
+- 1301 test: ilk ekleme bildirimsiz, kimlik üzerinden değişiklik, bölge/vatandaşlık bağımsızlığı, tekrar bildirim yok, eksik cevap veriyi bozmaz, parti ilk kayıt/giriş/çıkış/kaldırma kuralları, grup izolasyonu, yetki matrisi (komut+buton), eski buton reddi, yeniden başlatmada veri korunumu, ilk savaş taramasında bildirim yok, outbox yeniden deneme/iptal, token doğrulama/`.prev`/maskeleme, D7 saat güvenliği, göç taşıma.
 - Python 3.11, 3.12 ve 3.13'te test paketi geçti (Ubuntu 24.04 tabanlı bulut ortamında).
 - `deploy/dipbot.service` için `systemd-analyze verify` (systemd 255, **statik**; yollar sahte düzende) hatasız; `backup.sh`/`restore.sh` gerçek WAL veritabanı ve **sahte** `systemctl` ile çalıştı; `onkontrol.sh` sahte dizin düzeniyle çalıştı.
 - Kullanıcı DevTools'ta doğruladı (ben bağımsız doğrulamadım): `Authorization: Bearer <JWT>` + `X-Client-Platform: web` ile `GET /api/players/72400` → 200; savaş bağlantısı biçimi `…/wars/war/{numara}`; oturum token'ı JWT'dir.

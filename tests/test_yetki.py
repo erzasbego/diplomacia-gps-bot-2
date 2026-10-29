@@ -17,19 +17,19 @@ def _d(yetkililer=(), gruplar=(G1,)):
 
 
 def test_k12_onaysiz_grup_veya_yetkisiz_kullanici_islem_yapamaz():
+    """BİLİNÇLİ DEĞİŞİKLİK: Telegram GRUPLARI artık hiçbir komut/düğme işlemez. Onaylı grup + yetkili kullanıcı ve
+    kurucu dahil her grup kararı 'grup_komutlari_kapali'dır (eskiden yetkili/onaylı grupta 'ok' idi). Özel sohbet:
+    yalnız kurucu."""
     d = _d(yetkililer=[KULLANICI])
-    ok = yetki.karar_ver(d, sohbet_id=G1, sohbet_turu="supergroup", kullanici_id=KULLANICI)
-    assert ok and ok.neden == "ok"
-    # Onaylı grup + yetkisiz kullanıcı (grup onayı herkese yetki vermez)
-    k = yetki.karar_ver(d, sohbet_id=G1, sohbet_turu="group", kullanici_id=YABANCI)
-    assert not k and k.neden == "kullanici_yetkisiz"
-    # Yetkili kullanıcı + onaysız grup
-    k = yetki.karar_ver(d, sohbet_id=G2, sohbet_turu="group", kullanici_id=KULLANICI)
-    assert not k and k.neden == "grup_onaysiz"
-    # Kurucu bile onaysız grupta işlem yapamaz
-    assert not yetki.karar_ver(d, sohbet_id=G2, sohbet_turu="group", kullanici_id=KURUCU)
-    # Kullanıcı adı değil sayısal kimlik; None kimlik reddedilir
-    assert not yetki.karar_ver(d, sohbet_id=G1, sohbet_turu="group", kullanici_id=None)
+    for tur in ("group", "supergroup"):
+        for grup in (G1, G2):  # G1 onaylı, G2 onaysız: fark yok
+            for kul in (KULLANICI, YABANCI, KURUCU, None):
+                k = yetki.karar_ver(d, sohbet_id=grup, sohbet_turu=tur, kullanici_id=kul)
+                assert not k and k.neden == "grup_komutlari_kapali", (tur, grup, kul)
+    # Özel sohbet: yetkili kullanıcı dahil kurucu dışı kapalı
+    assert yetki.karar_ver(d, sohbet_id=KURUCU, sohbet_turu="private", kullanici_id=KURUCU).neden == "ok"
+    k = yetki.karar_ver(d, sohbet_id=KULLANICI, sohbet_turu="private", kullanici_id=KULLANICI)
+    assert not k and k.neden == "ozel_sohbet_kapali"
     # Kanal vb. desteklenmez
     assert not yetki.karar_ver(d, sohbet_id=G1, sohbet_turu="channel", kullanici_id=KURUCU)
 
@@ -49,11 +49,18 @@ def test_k14_yetkisi_alinan_kullanici_eski_butonla_islem_yapamaz(conn, saat):
     assert yonetim.yetki_ver(conn, saat, KURUCU, KURUCU, KULLANICI)
     # buton basıldığında karar GÜNCEL DB durumundan verilir
     d1 = yonetim.durum_yukle(conn, KURUCU)
-    assert yetki.karar_ver(d1, sohbet_id=G1, sohbet_turu="group", kullanici_id=KULLANICI)
+    # BİLİNÇLİ DEĞİŞİKLİK: grup artık hiçbir kullanıcıya karar_ver'de izin vermez (önce yetkili grupta 'ok' idi);
+    # yetki kaydı (yetkili listesi) ise güncel DB durumundan okunmaya devam eder.
+    assert yetki.yetkili_mi(d1, KULLANICI)
+    k = yetki.karar_ver(d1, sohbet_id=G1, sohbet_turu="group", kullanici_id=KULLANICI)
+    assert not k and k.neden == "grup_komutlari_kapali"
     assert yonetim.yetki_al(conn, saat, KURUCU, KURUCU, KULLANICI)
     d2 = yonetim.durum_yukle(conn, KURUCU)  # eski buton aynı kullanıcıyla tekrar basılır
+    assert not yetki.yetkili_mi(d2, KULLANICI)
     k = yetki.karar_ver(d2, sohbet_id=G1, sohbet_turu="group", kullanici_id=KULLANICI)
-    assert not k and k.neden == "kullanici_yetkisiz"
+    assert not k and k.neden == "grup_komutlari_kapali"
+    k = yetki.karar_ver(d2, sohbet_id=KULLANICI, sohbet_turu="private", kullanici_id=KULLANICI)
+    assert not k and k.neden == "ozel_sohbet_kapali"
     # yönetim işlemleri de güncel yetkiyi yeniden denetler
     with pytest.raises(yonetim.YetkiHatasi):
         yonetim.yetki_ver(conn, saat, KURUCU, KULLANICI, YABANCI)

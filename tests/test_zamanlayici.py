@@ -5,7 +5,7 @@ import pytest
 
 from conftest import G1, G2, KURUCU, bildirimler, run
 
-from dipbot import yonetim
+from dipbot import config, yonetim
 from dipbot.kaynak import (
     AgZamanAsimi,
     IstekSiniri,
@@ -190,7 +190,8 @@ def test_tick_istekleri_gruplar_arasinda_paylasir_ama_durum_ayri(conn, src, saat
     run(z.tick_ve_bekle())
     assert src.cagri_say("oyuncu") == 1  # paylaşılan tek istek
     b = bildirimler(conn, "oyuncu_degisti")
-    assert sorted(x["hedef_sohbet"] for x in b) == sorted([G1, G2])
+    assert sorted(x["grup_id"] for x in b) == sorted([G1, G2])  # her liste kendi bildirimini üretir
+    assert {x["hedef_sohbet"] for x in b} == {config.LOG_KANAL_ID}  # takip bildirimleri log kanalına gider
     assert len(b) == 2
 
 

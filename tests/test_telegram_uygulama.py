@@ -97,8 +97,15 @@ def test_komut_update_html_ve_tuslarla_yanitlanir(b, bot):
 
 
 def test_komut_arguman_botadi_ile(b, bot, conn, src):
+    """Bilinçli değişiklik: gruplar komut işlemez; @botadi'lı komut kurucunun ÖZEL sohbetinde (seçili liste G1) çalışır,
+    aynı komut GRUPTA tamamen yok sayılır (yanıt yok, kayıt yok)."""
     src.oyuncu("72400", "Ali <b>")
-    komut_calistir(b, "/oyuncu_ekle@dipbot https://diplomacia.com.tr/player/72400", KURUCU, G1, "supergroup")
+    url = "https://diplomacia.com.tr/player/72400"
+    komut_calistir(b, "/oyuncu_ekle@dipbot " + url, KURUCU, G1, "supergroup")  # grupta yok sayılır
+    assert bot.say("send_message") == 0
+    assert "72400" not in {r[0] for r in conn.execute("SELECT oyuncu_id FROM takip_oyuncular WHERE group_id=?", (G1,))}
+    b.arayuz._secili[KURUCU] = G1
+    komut_calistir(b, "/oyuncu_ekle@dipbot " + url, KURUCU, KURUCU, "private")
     assert "72400" in {r[0] for r in conn.execute("SELECT oyuncu_id FROM takip_oyuncular WHERE group_id=?", (G1,))}
     assert "Ali &lt;b&gt;" in bot.son("send_message")["text"]
 
@@ -110,9 +117,11 @@ def test_yetkisiz_komut_ve_kurucu_bildirimi(b, bot, conn):
 
 
 def test_onaysiz_grupta_komut_yanitsiz(b, bot, conn):
+    """Bilinçli değişiklik: onaysız grup artık yetkisiz-deneme kaydı da ÜRETMEZ (tüm gruplar sessizce yok sayılır)."""
     komut_calistir(b, "/oyuncular", KURUCU, G3, "supergroup")
     assert bot.say("send_message") == 0
-    assert bildirimler(conn, "yetkisiz_deneme")
+    assert not bildirimler(conn, "yetkisiz_deneme")
+    assert not conn.execute("SELECT 1 FROM yetkisiz_denemeler").fetchall()
 
 
 def test_dugme_update_callback_yanitlanir_ve_mesaj_duzenlenir(b, bot):
@@ -125,8 +134,17 @@ def test_dugme_update_callback_yanitlanir_ve_mesaj_duzenlenir(b, bot):
 
 
 def test_yetkisiz_dugme_uyari_ile_yanitlanir_menu_acilmaz(b, bot, conn):
+    """Bilinçli değişiklik: gruptaki düğme (yetkisiz kullanıcı DAHİL) uyarısız yanıtlanır: Baglayici callback'i
+    metinsiz kapatır (spinner durur), mesaj/menü yok, yetkisiz kaydı/bildirimi yok. Özel sohbette yabancı kullanıcı
+    eskisi gibi uyarı alır ve kayıt düşer."""
     run(b.buton_isle(update_dugme("ol:0", YABANCI, G1, "supergroup"), Ctx()))
     assert bot.say("answer_callback_query") == 1
+    a = bot.son("answer_callback_query")
+    assert a["show_alert"] is False and a["text"] is None
+    assert bot.say("edit_message_text") == 0 and bot.say("send_message") == 0
+    assert not bildirimler(conn, "yetkisiz_deneme")
+    bot.cagrilar.clear()
+    run(b.buton_isle(update_dugme("ol:0", YABANCI, YABANCI, "private"), Ctx()))  # özel sohbet: değişmedi
     a = bot.son("answer_callback_query")
     assert a["show_alert"] is True and a["text"]
     assert bot.say("edit_message_text") == 0 and bot.say("send_message") == 0
@@ -141,16 +159,23 @@ def test_eski_dugme_anlasilir_cevap(b, bot):
 
 def test_her_callbackte_tam_bir_answer(b, bot, src, conn):
     src.oyuncu("1", "A")
-    komut_calistir(b, "/oyuncu_ekle 1", KURUCU, G1, "supergroup")
+    b.arayuz._secili[KURUCU] = G1  # yönetim yalnız kurucunun özel sohbetinde; takip listesi = G1
+    komut_calistir(b, "/oyuncu_ekle 1", KURUCU, KURUCU, "private")
     for veri in ("m", "ol:0", "od:1", "du", "yo", "ta", "tv:15", "sl:0", "yd", "nop", "yok", "pl:0", "os:1"):
+        bot.cagrilar.clear()
+        run(b.buton_isle(update_dugme(veri, KURUCU, KURUCU, "private"), Ctx()))
+        assert bot.say("answer_callback_query") == 1, veri
+    for veri in ("m", "ol:0", "sl:0", "yok"):  # gruptaki düğme: yine tam bir (metinsiz) answer, mesaj yok
         bot.cagrilar.clear()
         run(b.buton_isle(update_dugme(veri, KURUCU, G1, "supergroup"), Ctx()))
         assert bot.say("answer_callback_query") == 1, veri
+        assert bot.say("edit_message_text") == 0 and bot.say("send_message") == 0, veri
 
 
 def test_ag_cagrisi_oncesi_erken_ack_tek_answer(b, bot, src):
     # savaşlar kaynak çağrısı yapar: callback önce hemen yanıtlanır, sonra tekrar yanıtlanmaz
-    run(b.buton_isle(update_dugme("sl:0", KURUCU, G1, "supergroup"), Ctx()))
+    b.arayuz._secili[KURUCU] = G1
+    run(b.buton_isle(update_dugme("sl:0", KURUCU, KURUCU, "private"), Ctx()))
     assert bot.say("answer_callback_query") == 1
     sira = [a for a, _ in bot.cagrilar]
     assert sira.index("answer_callback_query") < sira.index("edit_message_text")
@@ -200,7 +225,7 @@ def test_my_chat_member_onayli_grup_bildirim_yok(b, conn):
     assert not bildirimler(conn, "yetkisiz_deneme")
 
 
-def test_migrate_mesaji_yeni_kimligi_yetkili_saymaz(b, conn):
+def test_migrate_mesaji_yeni_kimligi_yetkili_saymaz(b, conn, bot):
     yeni = -1009876543210
     u_eski = Update.de_json({"update_id": 5, "message": {
         "message_id": 1, "date": 1760000000, "chat": _sohbet(G1, "group"), "migrate_to_chat_id": yeni}}, None)
@@ -210,8 +235,11 @@ def test_migrate_mesaji_yeni_kimligi_yetkili_saymaz(b, conn):
     run(b.goc_isle(u_yeni, Ctx()))
     assert len(bildirimler(conn, "grup_goc", hedef=KURUCU)) == 1  # iki servis mesajı, tek bildirim
     assert yeni not in yonetim.durum_yukle(conn, KURUCU).onayli_gruplar
-    komut_calistir(b, "/oyuncular", KURUCU, yeni, "supergroup")  # yeni kimlik reddedilir
-    assert bildirimler(conn, "yetkisiz_deneme")
+    # Bilinçli değişiklik: yeni kimlik artık reddedilmez-kaydedilmez; gruplar tamamen sessizce yok sayılır.
+    bot.cagrilar.clear()
+    komut_calistir(b, "/oyuncular", KURUCU, yeni, "supergroup")
+    assert bot.say("send_message") == 0
+    assert not bildirimler(conn, "yetkisiz_deneme")
 
 
 # ---------------------------------------------------------------- kayıt / allowed_updates
