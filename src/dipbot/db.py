@@ -174,6 +174,7 @@ CREATE TABLE IF NOT EXISTS hesaplar(
     son_tarama_zamani TEXT,
     son_tarama_sn REAL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS ux_hesap_ad ON hesaplar(lower(ad));
 -- Merkezi oyuncuların hesaplara atanması (görev). hesap_id NULL = kapasite yok, BEKLEMEDE (oyuncu silinmez). Oyuncu geçmişi/karşılaştırma
 -- verisi takip_oyuncular'dadır; atama değişince SIFIRLANMAZ.
 CREATE TABLE IF NOT EXISTS oyuncu_atamalari(

@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from . import config, outbox
 from .db import islem
 from .hesaplar import (
+    BeklemeAktif,
     BirincilKaynak,
     DURUM_ERISIM_REDDI,
     DURUM_HAZIR,
@@ -79,6 +80,7 @@ class CokluZamanlayici:
         self._hesap_calisan: set[int] = set()
         self._sem = asyncio.Semaphore(grup_esler)
         self._rl_sayac: dict[int, int] = {}
+        self._er_sayac: dict[int, int] = {}
         hesaplar.durum_geri_cagrisi = self._durum_bildirimi  # menüden (token/proxy) yapılan düzelmeler de bildirim yolundan geçer
 
     # ---- Arayüz tarafı (Arayuz/ZamanlayiciKorumali bu API'yi kullanır) ----------------------------------------------
@@ -153,14 +155,33 @@ class CokluZamanlayici:
             log.exception("hesap durum bildirimi kuyruğa alınamadı")
 
     def _durum_bildirimi(self, hesap_id: int, onceki: str, yeni: str, ayrinti: str | None) -> None:
-        """Hesap durumu değişti (zamanlayıcıdan VEYA menüden): sorun başlangıcı ve düzelme kurucuya TEK kez bildirilir."""
+        """Hesap durumu değişti (zamanlayıcıdan VEYA menüden): sorun başlangıcı ve düzelme kurucuya bildirilir. Dalgalanan bir hesap
+        kurucuyu boğmasın diye aynı (hesap, durum) sorunu saatte en çok BİR kez bildirilir; düzelme bildirimi yalnız bildirilmiş bir
+        sorunun ardından bir kez gider."""
         h = self.hesaplar.getir(hesap_id)
         if h is None:
             return
+        simdi = self.saat()
+        acik = f"hesap_bildirim:{hesap_id}"
         if yeni in BILDIRILEN:
+            anahtar = f"hesap_durumu:{hesap_id}:{yeni}"
+            r = self.conn.execute("SELECT son_bildirim FROM bildirim_sinirlari WHERE anahtar=?", (anahtar,)).fetchone()
+            if r is not None:
+                try:
+                    if (simdi - iso_coz(r[0])).total_seconds() < config.HESAP_BILDIRIM_ARALIGI:
+                        return
+                except ValueError:
+                    pass
+            with islem(self.conn):
+                self.conn.execute("INSERT OR REPLACE INTO bildirim_sinirlari(anahtar, son_bildirim) VALUES(?,?)", (anahtar, iso(simdi)))
+                self.conn.execute("INSERT OR REPLACE INTO sistem_durumu(anahtar, deger) VALUES(?, 'sorun')", (acik,))
             self._bildir_hesap_durumu(hesap_id, h["ad"], yeni, ayrinti)
         elif yeni == DURUM_HAZIR and onceki in BILDIRILEN:
-            self._bildir_hesap_durumu(hesap_id, h["ad"], yeni, None)
+            r = self.conn.execute("SELECT deger FROM sistem_durumu WHERE anahtar=?", (acik,)).fetchone()
+            if r is not None and r[0] == "sorun":
+                with islem(self.conn):
+                    self.conn.execute("DELETE FROM sistem_durumu WHERE anahtar=?", (acik,))
+                self._bildir_hesap_durumu(hesap_id, h["ad"], yeni, None)
 
     def _durum_degisti(self, hesap_id: int, durum: str, ayrinti: str | None = None) -> None:
         self.hesaplar.durum_yaz(hesap_id, durum, ayrinti)  # geçişte _durum_bildirimi tetiklenir
@@ -184,16 +205,22 @@ class CokluZamanlayici:
             hy.cooldown_ayarla(hesap_id, bekle)
             self._durum_degisti(hesap_id, DURUM_PROXY_HATASI, "proxy unreachable (no direct connection)")
             return DURUM_PROXY_HATASI
+        if isinstance(e, BeklemeAktif):
+            h = hy.getir(hesap_id)
+            return h["durum"] if h else DURUM_HAZIR  # istek atılmadı: pencere uzatılmaz, durum/son_rate_limit değişmez
         if isinstance(e, IstekSiniri):
             n = self._rl_sayac.get(hesap_id, 0) + 1
             self._rl_sayac[hesap_id] = n
             bekle = e.bekle_saniye if e.bekle_saniye is not None else config.RATE_LIMIT_DEFAULT_WAIT_SECONDS * (2 ** min(n - 1, 20))
-            bekle = min(max(bekle, 0.0), config.RATE_LIMIT_MAX_WAIT_SECONDS)
+            bekle = min(max(bekle, config.HESAP_COOLDOWN_ALT_SN), config.RATE_LIMIT_MAX_WAIT_SECONDS)
             hy.cooldown_ayarla(hesap_id, bekle, rate_limit=True)
             self._durum_degisti(hesap_id, DURUM_RATE_LIMIT, f"rate limit; cooldown {int(bekle)} s")
             return DURUM_RATE_LIMIT
         if isinstance(e, ErisimReddedildi):
-            hy.cooldown_ayarla(hesap_id, config.ERISIM_REDDI_BEKLEME_SECONDS)
+            n = self._er_sayac.get(hesap_id, 0) + 1
+            self._er_sayac[hesap_id] = n
+            bekle = min(config.ERISIM_REDDI_BEKLEME_SECONDS * (2 ** min(n - 1, 10)), config.HESAP_ERISIM_REDDI_UST_SN)
+            hy.cooldown_ayarla(hesap_id, bekle)
             self._durum_degisti(hesap_id, DURUM_ERISIM_REDDI, "access denied (403)")
             return DURUM_ERISIM_REDDI
         if isinstance(e, TokenYok):
@@ -205,6 +232,7 @@ class CokluZamanlayici:
     def _basari(self, hesap_id: int) -> None:
         h = self.hesaplar.getir(hesap_id)
         self._rl_sayac.pop(hesap_id, None)
+        self._er_sayac.pop(hesap_id, None)
         with islem(self.conn):
             self.conn.execute(
                 "UPDATE hesaplar SET ardisik_hata=0, cooldown_bitis=NULL, proxy_durum=CASE WHEN proxy_var=1 THEN 'calisiyor' ELSE 'yok' END"
@@ -337,32 +365,33 @@ class CokluZamanlayici:
         sonuc: TaramaSonucu | None = None
         durum_ok = False
         try:
-            async with self._sem:
-                idler = self.hesaplar.atanan_idler(hesap_id)
-                if not idler:
-                    durum_ok = True  # görev yok: tarama gerekmez
-                    return None
-                try:
-                    kaynak = self.hesaplar.kaynak(hesap_id)
-                except KaynakHatasi as e:  # ör. proxy dosyası okunamıyor: doğrudan bağlantıya DÜŞME
-                    self._hata_isle(hesap_id, e)
-                    return None
-                try:
-                    sonuc = await self.takip.oyuncular_tara(M, kaynak, oyuncu_idleri=idler, oyuncu_sonucu=self.hesaplar.oyuncu_sonucu)
-                except KaynakHatasi as e:
-                    self._hata_isle(hesap_id, e, getattr(e, "kusak", None))
-                    return None
-                except Exception:
-                    log.exception("beklenmeyen hesap tarama hatası (hesap=%s)", hesap_id)
-                    self._durum_degisti(hesap_id, DURUM_HATA, "unexpected error")
-                    return None
-                if sonuc.yapilandirma:
-                    self._durum_degisti(hesap_id, DURUM_TOKEN_YOK, "no usable token")
-                    return sonuc
-                durum_ok = sonuc.ok
-                if durum_ok:
-                    self._basari(hesap_id)
+            # Hesap taramaları ortak bir semaforla SIRALANMAZ: yavaş/arızalı bir hesap diğerlerini bekletmesin. Hız/kota koruması istek
+            # düzeyindedir (HesapKaynagi: hesap + genel eşzamanlılık, pacing, bekleme pencereleri).
+            idler = self.hesaplar.atanan_idler(hesap_id)
+            if not idler:
+                durum_ok = True  # görev yok: tarama gerekmez
+                return None
+            try:
+                kaynak = self.hesaplar.kaynak(hesap_id)
+            except KaynakHatasi as e:  # ör. proxy dosyası okunamıyor: doğrudan bağlantıya DÜŞME
+                self._hata_isle(hesap_id, e)
+                return None
+            try:
+                sonuc = await self.takip.oyuncular_tara(M, kaynak, oyuncu_idleri=idler, oyuncu_sonucu=self.hesaplar.oyuncu_sonucu)
+            except KaynakHatasi as e:
+                self._hata_isle(hesap_id, e, getattr(e, "kusak", None))
+                return None
+            except Exception:
+                log.exception("beklenmeyen hesap tarama hatası (hesap=%s)", hesap_id)
+                self._durum_degisti(hesap_id, DURUM_HATA, "unexpected error")
+                return None
+            if sonuc.yapilandirma:
+                self._durum_degisti(hesap_id, DURUM_TOKEN_YOK, "no usable token")
                 return sonuc
+            durum_ok = sonuc.ok
+            if sonuc.ok or sonuc.gozlenen > 0:  # en az bir oyuncu başarıyla gözlendi: hesap/proxy çalışıyor (tek kötü oyuncu durumu tutmaz)
+                self._basari(hesap_id)
+            return sonuc
         finally:
             self._hesap_calisan.discard(hesap_id)
             sure = time.monotonic() - baslangic

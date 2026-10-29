@@ -122,3 +122,6 @@ HESAP_PROXY_GERI_CEKILME_SN = 60.0  # proxy/bağlantı hatasında ilk bekleme; h
 HESAP_PROXY_GERI_CEKILME_UST_SN = 900.0
 HESAP_GIRDI_BEKLEME_SN = 300  # token/proxy/arama girdisi bekleme ömrü (kurucu menüden başlatır)
 HESAP_ARAMA_UST = 40  # arama sonucu en çok bu kadar satır gösterilir (sayfalı)
+HESAP_COOLDOWN_ALT_SN = 5.0  # Retry-After: 0 gibi değerlerde bile en az bu kadar bekle
+HESAP_ERISIM_REDDI_UST_SN = 900.0  # 403 geri çekilmesi (üstel) üst sınırı
+HESAP_BILDIRIM_ARALIGI = 3600  # aynı hesap için aynı sorun bildirimi en sık bu aralıkta (saniye)

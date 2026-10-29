@@ -19,8 +19,8 @@ _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}
 _CALISMA_SIRLARI: set[str] = set()
 
 
-def sir_kaydet(deger: str | None) -> None:
-    if deger and len(deger) >= 8:
+def sir_kaydet(deger: str | None, min_uzunluk: int = 8) -> None:
+    if deger and len(deger) >= min_uzunluk:
         _CALISMA_SIRLARI.add(deger)
 
 

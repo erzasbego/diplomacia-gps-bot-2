@@ -1027,7 +1027,7 @@ def test_arama_html_kacisi_ve_uzunluk_siniri(o):
     y = o.m("<b>x</b>")
     assert "&lt;b&gt;x&lt;/b&gt;" in y.metin and "<b>x</b>" not in y.metin
     o.d(f"hq:{h1}")
-    y = o.m("x" * 41)
+    y = o.m("ab " * 14)  # 42 karakter, boşluklu: sır gibi değil, yalnız fazla uzun
     assert "Send up to 40 characters" in y.metin and not o.bekleme_var()
     assert "&lt;b&gt;" in o.d(f"hy:{h1}:0").metin, "önceki arama değişmedi"
     o.d(f"hq:{h1}")
@@ -1260,3 +1260,20 @@ def test_oyuncu_silinince_hesap_sayilari_menude_guncel(o):
     o.d(f"c:e:{onay_kimligi(y)}")
     t = o.d("hl").metin
     assert "Main — 150/150" in t and "Backup — 54/150" in t, "boşalan yer sonraki hesaptan minimum taşımayla dolduruldu"
+
+
+def test_yanlis_adimda_gonderilen_sir_gibi_metin_silinir_islenmez_yansitilmaz(o):
+    """Opus bulgusu: 'ad'/'ara' adımında yapıştırılan JWT / kimlikli proxy / uzun dizi sohbette kalmasın, saklanmasın, geri gösterilmesin."""
+    h1 = o.hesap("Main")
+    o.oyuncular(3)
+    sirlar = ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl", "http://pu:pp@10.7.7.7:3128", "x" * 41]
+    for sir in sirlar:
+        o.d(f"hq:{h1}")
+        y = o.m(sir)
+        assert "I did not process or store it" in y.metin and sir not in y.metin and "10.7.7.7" not in y.metin
+        assert o.bekleme_var(), "bekleme sürer; kullanıcı doğru değeri gönderebilir veya iptal eder"
+    o.d("hz")
+    o.d("ha")
+    y = o.m("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl")
+    assert "did not process" in y.metin and "eyJhbGci" not in y.metin
+    assert o.conn.execute("SELECT COUNT(*) FROM hesaplar").fetchone()[0] == 1

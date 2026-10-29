@@ -18,6 +18,9 @@
 - **Devralma yok:** bir hesap arıza verirse (token reddi, proxy erişimi yok, rate limit, 403, ağ) **yalnız o hesabın görevleri bekler**; başka hesap onun oyuncularını **taramaz**. Hesap düzelince kaldığı yerden devam eder. Durum ve bekleme süreleri kalıcıdır.
 - **Proxy:** proxy yapılandırılmış hesapta proxy erişimi kesilirse **doğrudan bağlantıya otomatik geçilmez**; hesap bekler (üstel geri çekilme 60 sn → 15 dk), proxy dönünce devam eder. Doğrudan bağlantıya yalnız siz *Proxy Settings → Remove proxy* ile (onay düğmesiyle) geçebilirsiniz.
 - **Token reddi (401):** yalnız o hesap duraklar, kurucuya özel sohbette **tek** uyarı gider; *Update JWT Token* ile yeni token **önce sınanır**, geçerliyse kaydedilir ve hesap devam eder.
+- **Bildirim sıklığı:** aynı hesap + aynı sorun için saatte en fazla 1 bildirim; “düzeldi” bildirimi yalnız daha önce sorun bildirimi gönderildiyse gelir (dalgalanma durumunda spam yok).
+- **Birleşik değişiklik:** token ve proxy birlikte değişecekse *Proxy Settings → Replace proxy and token together* kullanın; ikisi birlikte doğrulanır, biri başarısızsa eski token VE eski proxy korunur.
+- **Yeniden dağıtım:** boşalan yer yalnız *sağlıklı (ready)* hesaplar arasında minimum taşımayla doldurulur; arızalı hesabın oyuncularına dokunulmaz.
 - Parti/savaş taramaları ve komutlardaki etkileşimli istekler **birincil hesapla** (hesap kimliği en küçük olan) yapılır; birincil hesap bozuksa bunlar bekler (oyuncu taramaları diğer hesaplarda sürer).
 
 ## 4. Gizlilik ve güvenlik
@@ -30,7 +33,7 @@
 
 ## 5. Hız ve kota koruması (aşma sistemi YOKTUR)
 - Genel eşzamanlılık sınırı **tüm hesaplar için ortaktır** (`config.GENEL_ESZAMANLI`): hesap eklemek genel kotayı artırmaz. Hesap başına eşzamanlılık `HESAP_ESZAMANLI`, istekler arası bekleme `HESAP_ISTEK_ARALIGI_SN` (hesap) ve `GENEL_ISTEK_ARALIGI_SN` (genel). Bu sabitler canlı gözleme göre ayarlanmalıdır (**gerçek API sınırları bilinmiyor/doğrulanmadı**).
-- **429:** hesap için bekleme penceresi (Retry-After veya üstel varsayılan); **aynı çıkış noktasını paylaşan hesaplar** (ikisi de doğrudan bağlantı veya aynı proxy host:port) da bekler. **403:** kısa geri çekilme. Rate limit/erişim kontrollerini aşmaya yönelik otomatik hesap/IP değiştirme **yoktur**.
+- **429:** hesap için bekleme penceresi (Retry-After veya üstel varsayılan); **aynı çıkış noktasını paylaşan hesaplar** (ikisi de doğrudan bağlantı veya aynı proxy host:port) da bekler. **403:** üstel geri çekilme (tavan `HESAP_ERISIM_REDDI_UST_SN`); `Retry-After: 0` bile en az `HESAP_COOLDOWN_ALT_SN` bekletir. Rate limit/erişim kontrollerini aşmaya yönelik otomatik hesap/IP değiştirme **yoktur**.
 - Bir hesap ne kadar uzun sürede tarayabildiği gerçek gecikmeye bağlıdır; 150 görev tek turda bitmek zorunda değildir (tarama sırayla, hesap başına tek istek). Başlangıçta aralığı kısa tutmayın; `/status` ve hesap istatistiklerinden “son tarama süresi”ni izleyin.
 
 ## 6. Dağıtım adımları (siz uygularsınız; otomatik dağıtım YOKTUR)

@@ -222,7 +222,8 @@ class SinirliKaynak:
             except asyncio.TimeoutError as e:
                 raise AgZamanAsimi("request timed out") from e
             except TokenGecersiz as e:
-                e.kusak = kusak  # type: ignore[attr-defined]
+                if kusak is not None or getattr(e, "kusak", None) is None:  # iç kaynağın (hesap) kuşağı varsa EZİLMEZ
+                    e.kusak = kusak  # type: ignore[attr-defined]
                 raise
 
     async def fetch_player(self, oyuncu_id):

@@ -113,6 +113,7 @@ async def calistir(
         istemci_fabrikasi=hesap_istemci_fabrikasi, dogrulayici_fabrikasi=hesap_dogrulayici_fabrikasi,
         dogrulama_oyuncusu=ta.dogrulama_oyuncusu,
     )
+    hesaplar.acilis_temizligi()  # çökmeden kalan '.token-*' geçici dosyalar (token/proxy içerebilir) silinir
     hesaplar.dagit()
     # Eski gruplara bildirim YOK: bekleyen eski grup hedefli satırlar iptal edilir (silinmez); kanala GİTMEZ.
     h = outbox.bekleyenleri_hizala(conn, kurucu, ta.kanal_id)

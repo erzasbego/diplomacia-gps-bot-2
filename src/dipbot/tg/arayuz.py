@@ -29,7 +29,7 @@ from ..zaman import (
 from . import bicim
 from .baglanti import BaglantiHatasi, kimlik_coz_ayrintili
 from .bicim import esc
-from .hesap_menu import GirdiBekleme, HesapMenusu
+from .hesap_menu import GirdiBekleme, HesapMenusu, sir_gibi_mi
 from .islemler import IslemDeposu
 from .kaynak_yok import KaynakYapilandirilmadi, yapilandirildi_mi
 from .modeller import Dugme, Klavye, Olay, Yanit
@@ -146,7 +146,7 @@ def _dg(etiket: str, veri: str) -> Dugme | None:
         return None
 
 
-_HESAP_DUGMELERI = frozenset({"hm", "hl", "ha", "hz", "hn", "hi", "hd", "hs", "hy", "hq", "hx", "hp", "ht", "hps", "hpr", "hc"})
+_HESAP_DUGMELERI = frozenset({"hm", "hl", "ha", "hz", "hn", "hi", "hd", "hs", "hy", "hq", "hx", "hp", "ht", "hps", "hpr", "hpt", "hc"})
 _JWT_BICIMI = re.compile(r"^eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}$")
 _SAYFALAMA_NOTU = "<i>Note: the list is assumed to be unpaginated (unverified).</i>"
 _GUC_NOTU = "<i>Note: it has not been verified that the 'Power' value represents damage.</i>"
@@ -363,7 +363,8 @@ class Arayuz(HesapMenusu):
                     self._kaydet_yetkisiz(o, "hesap_girdisi")
                     return Yanit(KAPALI_OZEL)
                 return await self._hesap_girdi(o, g)
-            if k and _JWT_BICIMI.match(o.metin or ""):  # bekleme yokken gelen JWT: sohbette kalmasın, işlenmesin
+            if k and (_JWT_BICIMI.match(o.metin or "") or sir_gibi_mi(o.metin or "")):  # bekleme yokken gelen JWT/proxy/uzun dizi: kalmasın, işlenmesin
+                sir_kaydet(o.metin)
                 return Yanit(f"{await self._mesaji_sil_notu(o)}\nTo set a token, open Account Management → an account → Update JWT Token first; "
                              "this message was not processed.")
             return None

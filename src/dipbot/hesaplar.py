@@ -70,6 +70,10 @@ HESAP_AZAMI = 12
 _AD_DESENI = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,31}")
 
 
+class BeklemeAktif(IstekSiniri):
+    """Hesap (veya aynı çıkış noktasını paylaşan hesap) bekleme penceresinde: istek ATILMADI. Pencereyi uzatmaz/yeniden kaydetmez."""
+
+
 class HesapHatasi(Exception):
     """Kullanıcıya gösterilebilir, SIR İÇERMEYEN hesap/yapılandırma hatası."""
 
@@ -120,7 +124,10 @@ def proxy_ayristir(metin: str) -> ProxyAyar:
     except Exception:
         raise hata from None
     if u.password:
-        sir_kaydet(unquote(u.password))
+        sir_kaydet(unquote(u.password), 4)
+    if u.username:
+        sir_kaydet(unquote(u.username), 4)
+    sir_kaydet(u.hostname, 4)
     sir_kaydet(url)
     egress = hashlib.sha256(f"{u.hostname.lower()}:{port}".encode()).hexdigest()[:12]
     return ProxyAyar(url, u.scheme, egress)
@@ -242,6 +249,7 @@ class HesapKaynagi:
         self._kilit = asyncio.Lock()
         self._zaman_asimi = zaman_asimi
         self.token_kusagi = 0
+        self.aktif_istek = 0  # uçuştaki çağrılar (emekli istemci yalnız boşalınca kapatılır)
 
     def __repr__(self) -> str:
         return f"HesapKaynagi({self.hesap_id})"
@@ -261,7 +269,17 @@ class HesapKaynagi:
 
     async def _cagir(self, ad: str, *args):
         kusak = self.token_kusagi
-        async with self._genel.sem, self._sem:
+        kalan = self._yon.cooldown_kalan(self.hesap_id)
+        if kalan > 0:  # hesap veya aynı çıkış noktasını paylaşan hesap bekleme penceresinde: İSTEK ATILMAZ
+            raise BeklemeAktif("account cooldown is active", kalan)
+        self.aktif_istek += 1
+        try:
+            return await self._cagir_ic(ad, args, kusak)
+        finally:
+            self.aktif_istek -= 1
+
+    async def _cagir_ic(self, ad: str, args, kusak: int):
+        async with self._sem, self._genel.sem:  # önce HESAP sınırı, sonra genel (bir hesap tüm genel yuvaları bekleyerek tutamaz)
             async with self._kilit:
                 bekle = self._son + self._aralik - time.monotonic()
                 if bekle > 0:
@@ -358,6 +376,7 @@ class HesapYoneticisi:
         # durum geçişi dinleyicisi (zamanlayıcı kurucuya bildirim kuyruğa alır): (hesap_id, onceki, yeni, ayrinti). Menüden yapılan
         # güncellemeler (token/proxy) de aynı geçiş yolundan geçer.
         self.durum_geri_cagrisi = None
+        self._emekli: list[HesapKaynagi] = []  # token/proxy değişince eski istemci: uçuştaki istekler bitince kapatılır
 
     # ---- fabrikalar (testlerde sahte)
     @staticmethod
@@ -411,22 +430,41 @@ class HesapYoneticisi:
         return k
 
     async def kaynagi_yenile(self, hesap_id: int) -> None:
-        """Token/proxy değişti: eski istemci kapatılır, sonraki istekte yenisi kurulur (token kuşağı artar)."""
+        """Token/proxy değişti: eski istemci EMEKLİYE ayrılır (uçuştaki taramayı bozmamak için hemen kapatılmaz; boşalınca kapanır),
+        sonraki istekte yenisi kurulur ve token kuşağı artar (uçuştaki eski 401 yenisini duraklatmaz)."""
         self._token_kusaklari[hesap_id] = self._token_kusaklari.get(hesap_id, 0) + 1
         k = self._kaynaklar.pop(hesap_id, None)
         if k is not None:
+            self._emekli.append(k)
+        await self.emekli_temizle()
+
+    async def emekli_temizle(self) -> None:
+        kalan = []
+        for k in self._emekli:
+            if k.aktif_istek > 0:
+                kalan.append(k)
+                continue
             try:
                 await k.aclose()
             except Exception:
                 log.warning("hesap istemcisi kapatılamadı")
+        self._emekli = kalan
 
     async def kapat(self) -> None:
-        for hid in list(self._kaynaklar):
-            k = self._kaynaklar.pop(hid)
+        for k in [*self._kaynaklar.values(), *self._emekli]:
             try:
                 await k.aclose()
             except Exception:
                 pass
+        self._kaynaklar.clear()
+        self._emekli.clear()
+
+    def acilis_temizligi(self) -> int:
+        """Açılışta her hesap dizinindeki yarım kalmış '.token-*' geçici dosyalarını (içinde token/proxy olabilir) siler."""
+        n = 0
+        for h in self.listele():
+            n += self.depo.token(h["hesap_id"]).eski_gecicileri_temizle()
+        return n
 
     # ---- durum yazımı
     def durum_yaz(self, hesap_id: int, durum: str, ayrinti: str | None = None) -> bool:
@@ -569,6 +607,41 @@ class HesapYoneticisi:
         self._gecis(hesap_id, onceki, DURUM_HAZIR)
         return sonuc
 
+    async def birlikte_guncelle(self, hesap_id: int, token: str, proxy_metni: str) -> DogrulamaSonucu:
+        """Token VE proxy'yi BİRLİKTE değiştirir (süresi dolmuş token + erişilemeyen proxy kilidini doğrudan bağlantıya geçmeden çözer):
+        aday token aday proxy üzerinden sınanır; ikisi de ancak başarıdan sonra yazılır, başarısızsa hiçbir şey değişmez."""
+        h = self.getir(hesap_id)
+        if h is None:
+            raise HesapHatasi("Unknown account.")
+        token = token_biçimi_dogrula(token)
+        proxy = proxy_ayristir(proxy_metni)
+        sonuc = await self._dogrulayici_fabrikasi(proxy).dogrula(token)
+        sir_kaydet(token)
+        if not sonuc.gecerli:
+            return sonuc
+        self.depo.hazirla(hesap_id)
+        eski_proxy = self.depo.proxy_yolu(hesap_id)
+        yedek = eski_proxy.read_bytes() if eski_proxy.is_file() else None
+        try:
+            self.depo.proxy_yaz(hesap_id, proxy)
+            self.depo.token(hesap_id).yaz(token)
+        except BaseException:
+            if yedek is not None:  # token yazılamadıysa eski proxy geri konur (tutarsız yarım durum bırakılmaz)
+                TokenDeposu(eski_proxy)._atomik_yaz(eski_proxy, yedek)
+            else:
+                self.depo.proxy_sil(hesap_id)
+            raise
+        onceki = h["durum"]
+        with islem(self.conn):
+            self.conn.execute(
+                "UPDATE hesaplar SET proxy_var=1, proxy_sema=?, proxy_durum='calisiyor', durum=?, durum_ayrinti=NULL, durum_zamani=?,"
+                " token_guncelleme=?, ardisik_hata=0, sonraki_tarama=NULL, cooldown_bitis=NULL WHERE hesap_id=?",
+                (proxy.sema, DURUM_HAZIR, iso(self.saat()), iso(self.saat()), hesap_id),
+            )
+        await self.kaynagi_yenile(hesap_id)
+        self._gecis(hesap_id, onceki, DURUM_HAZIR)
+        return sonuc
+
     async def proxy_kaldir(self, hesap_id: int) -> None:
         """Proxy'yi AÇIKÇA kaldırır (kurucu onayıyla): hesap bundan sonra doğrudan bağlanır. Otomatik geçiş DEĞİLDİR."""
         h = self.getir(hesap_id)
@@ -653,11 +726,14 @@ class HesapYoneticisi:
             beklemede = sorted((r[0] for r in self.conn.execute("SELECT oyuncu_id FROM oyuncu_atamalari WHERE hesap_id IS NULL")),
                                key=lambda o: sira.get(o, ("", 0, o)))
             # 1) kompaktlama: boş yer olan en erken hesabı, SONRAKİ hesapların en son atananlarıyla doldur (en az taşıma)
+            saglikli = {r[0] for r in self.conn.execute("SELECT hesap_id FROM hesaplar WHERE durum=?", (DURUM_HAZIR,))}
             for i, h in enumerate(hesaplar):
                 bos = self.kapasite - sayac[h]
-                if bos <= 0:
-                    continue
+                if bos <= 0 or h not in saglikli:
+                    continue  # sorunlu hesaba görev TAŞINMAZ (devralma/yük aktarma yok)
                 for h2 in reversed(hesaplar[i + 1:]):
+                    if h2 not in saglikli:
+                        continue  # sorunlu hesabın görevleri bulunduğu hesapta BEKLER
                     if bos <= 0:
                         break
                     if sayac[h2] <= 0:

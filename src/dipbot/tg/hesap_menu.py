@@ -9,6 +9,7 @@ GİZLİLİK
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import timedelta
 
@@ -38,6 +39,14 @@ class GirdiBekleme:
     hesap_id: int | None
     damga: object
     veri: dict = field(default_factory=dict, repr=False)  # SIR içerebilir (yalnız bellek, kısa ömürlü)
+
+
+_SIR_GIBI = re.compile(r"eyJ[A-Za-z0-9_-]{5,}\.|://[^\s]*@|[A-Za-z0-9._~+/=-]{40,}")
+
+
+def sir_gibi_mi(metin: str) -> bool:
+    """JWT, kimlikli proxy URL'si veya uzun boşluksuz dizi: sır olabilir (yanlış adımda gönderilse bile silinir, işlenmez, yansıtılmaz)."""
+    return bool(_SIR_GIBI.search(metin or ""))
 
 
 def _dg(etiket: str, veri: str) -> Dugme:
@@ -251,7 +260,8 @@ class HesapMenusu:
             "becomes unreachable the account waits — it never falls back to a direct connection on its own.",
             "<i>The proxy address, username and password are never displayed.</i>",
         ]
-        klavye = [[_dg("✏️ Set / update proxy", f"hps:{hesap_id}")]]
+        klavye = [[_dg("✏️ Set / update proxy", f"hps:{hesap_id}")],
+                  [_dg("🔁 Replace proxy + token together", f"hpt:{hesap_id}")]]
         if h["proxy_var"]:
             klavye.append([_dg("🗑 Remove proxy", f"hpr:{hesap_id}")])
         klavye.append([_dg("🔌 Test Connection", f"hc:{hesap_id}"), _dg("⬅ Account", f"hd:{hesap_id}")])
@@ -262,9 +272,18 @@ class HesapMenusu:
     def _sonuc_metni(sonuc) -> str:
         return f"{esc(sonuc.aciklama)}"
 
-    def _bekleme_istemi(self, tur: str, hesap_id: int | None = None) -> Yanit:
+    def _bekleme_istemi(self, tur: str, hesap_id: int | None = None, guncelle: bool = False) -> Yanit:
         iptal = [[_dg("Cancel", "hz")]]
         sn = config.HESAP_GIRDI_BEKLEME_SN // 60
+        if guncelle and tur == "proxy_yeni":
+            return Yanit(
+                f"<b>Replace proxy + token — step 1/2</b>\nUse this when the token expired and the current proxy is unreachable (or vice versa). "
+                f"Send the new proxy as <code>http://user:password@host:port</code> in <b>one message</b> (within {sn} minutes). Nothing is saved "
+                "until the new token also works through the new proxy; the account never switches to a direct connection by itself.", iptal)
+        if guncelle and tur == "token_yeni":
+            return Yanit(
+                "<b>Replace proxy + token — step 2/2</b>\nSend the new Diplomacia JWT token in <b>one message</b>. It is tested through the new proxy; "
+                "only if that works are both saved, otherwise the current proxy and token are kept. I try to delete your message and never echo it.", iptal)
         if tur == "ad":
             return Yanit(f"<b>Add Account — step 1/3</b>\nSend a name for the new account (e.g. <code>Account 2</code>). Valid within {sn} minutes.", iptal)
         if tur == "proxy_yeni":
@@ -321,7 +340,7 @@ class HesapMenusu:
             return self._bekleme_istemi("ad")
         if a == "hn":  # 'No proxy'
             g = self._girdi.get(o.kullanici_id)
-            if g is None or g.tur != "proxy_yeni":
+            if g is None or g.tur != "proxy_yeni" or g.veri.get("mod") == "guncelle":
                 return None
             g.veri["proxy"] = None
             g.tur = "token_yeni"
@@ -331,10 +350,15 @@ class HesapMenusu:
             await self._ack(o)
             if self.eski_token_yolu is None:
                 return None
+            if self._hesap_islem_suruyor:
+                return Yanit(uyari="Another account operation is still running.", uyari_goster=True, sessiz=True)
+            self._hesap_islem_suruyor = True
             try:
                 hesap_id, sonuc = await self.hesaplar.eski_token_ice_aktar(self.eski_token_yolu)
             except HesapHatasi as e:
                 return Yanit(f"Could not import: {esc(str(e))}", [self._geri()])
+            finally:
+                self._hesap_islem_suruyor = False
             if hesap_id is None:
                 return Yanit(f"The previous token could not be verified: {self._sonuc_metni(sonuc)}. Nothing was imported.", [self._geri()])
             return Yanit("✅ The previous token was verified and imported as <b>Account 1</b> (a copy; the old file is left in place).",
@@ -365,6 +389,9 @@ class HesapMenusu:
         if a == "hps":
             self._girdi_ayarla(o, "proxy", hid)
             return self._bekleme_istemi("proxy", hid)
+        if a == "hpt":
+            self._girdi_ayarla(o, "proxy_yeni", hid, mod="guncelle")
+            return self._bekleme_istemi("proxy_yeni", hid, guncelle=True)
         if a == "hpr":
             return self._onay_yaniti(
                 o, "proxy_sil", None, {"hesap": hid},
@@ -398,7 +425,11 @@ class HesapMenusu:
                              [self._geri()])
             return Yanit(f"{not_}\nThe waiting time expired; your message was not processed. Nothing was changed. Start again from Account Management.".strip(),
                          [self._geri()])
-        # ---- hassas olmayan adımlar
+        # ---- hassas olmayan adımlar: yanlış adımda gönderilen SIR (JWT / kimlikli proxy / uzun dizi) silinir, işlenmez, yansıtılmaz
+        if g.tur in ("ad", "ara") and sir_gibi_mi(metin):
+            sir_kaydet(metin)
+            return Yanit(f"{await self._mesaji_sil_notu(o)}\nThat looked like a credential, not a {'name' if g.tur == 'ad' else 'search term'}; I did not process or "
+                         "store it. Send the requested value or cancel.", [[_dg("Cancel", "hz")]])
         if g.tur == "ad":
             from ..hesaplar import ad_dogrula
 
@@ -430,7 +461,7 @@ class HesapMenusu:
             g.veri["proxy"] = metin
             g.tur = "token_yeni"
             g.damga = damga_al(self.saat, self._mono)
-            return Yanit(f"{sil}\n" + self._bekleme_istemi("token_yeni").metin, [[_dg("Cancel", "hz")]])
+            return Yanit(f"{sil}\n" + self._bekleme_istemi("token_yeni", guncelle=g.veri.get("mod") == "guncelle").metin, [[_dg("Cancel", "hz")]])
         if self._hesap_islem_suruyor:
             return Yanit(f"{sil}\nAnother verification is still running; wait for it to finish and retry from the menu. Nothing was changed.", [self._geri()])
         self._hesap_islem_suruyor = True
@@ -443,10 +474,16 @@ class HesapMenusu:
     async def _hassas_isle(self, o: Olay, g: GirdiBekleme, metin: str, sil: str) -> Yanit:
         proxy_metni = g.veri.get("proxy")
         ad = g.veri.get("ad")
+        guncelle_modu = g.veri.get("mod") == "guncelle"
         tur, hid = g.tur, g.hesap_id
         g.veri.clear()
         hy = self.hesaplar
         try:
+            if tur == "token_yeni" and guncelle_modu:
+                sonuc = await hy.birlikte_guncelle(hid, metin, proxy_metni)
+                if not sonuc.gecerli:
+                    return Yanit(f"{sil}\n⚠️ {self._sonuc_metni(sonuc)}. The current proxy and token were <b>NOT changed</b>.", [self._geri(hid)])
+                return Yanit(f"{sil}\n✅ The new token worked through the new proxy; both were saved. This account's scans resume.", [self._geri(hid)])
             if tur == "token_yeni":
                 hesap_id, sonuc = await hy.hesap_olustur(ad, metin, proxy_metni)
                 if hesap_id is None:

@@ -261,7 +261,7 @@ def test_veritabani_semasi_parmak_izi_degisiklik_bilincli_olmali():
     tests/test_xp_filtresi.py migration testleri)."""
     import hashlib
     assert db.SEMA_SURUMU == 7
-    assert hashlib.sha256(db._sema().encode()).hexdigest() == "1bed69e3061f0c1996982de98b6dcdae48c8c1abe9b8c543bbdfe11b8d1a2f9e"
+    assert hashlib.sha256(db._sema().encode()).hexdigest() == "7fcdcefd7fca9f37accd4aa146891b7a72ff932f55da55e3764637c87ea57f21"
 
 
 def test_mevcut_veri_yeni_surumle_acilinca_korunur(tmp_path):
