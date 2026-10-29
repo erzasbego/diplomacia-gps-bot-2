@@ -61,11 +61,17 @@ def test_calistir_kapanista_istemciyi_kapatir(monkeypatch, tmp_path):
 
     from test_telegram_uygulama import Ctx, _SahteUygulama, _calistir_hazirla
 
-    class Kapanabilir(YapilandirilmamisKaynak):
-        kapandi = 0
+    # DELIBERATE CHANGE (multi-account): calistir artık tek 'kaynak' almaz; her hesabın istemcisi HesapYoneticisi.kapat() ile kapanır.
+    kapandi = {"n": 0}
+    from dipbot.hesaplar import HesapYoneticisi
 
-        async def aclose(self):
-            Kapanabilir.kapandi += 1
+    gercek_kapat = HesapYoneticisi.kapat
+
+    async def kapat(self):
+        kapandi["n"] += 1
+        await gercek_kapat(self)
+
+    monkeypatch.setattr(HesapYoneticisi, "kapat", kapat)
 
     async def polling(app):
         ctx = Ctx()
@@ -74,8 +80,8 @@ def test_calistir_kapanista_istemciyi_kapatir(monkeypatch, tmp_path):
 
     app = _SahteUygulama(polling_sirasinda=polling)
     cm, ta, _ = _calistir_hazirla(monkeypatch, tmp_path, app)
-    assert asyncio.run(asyncio.wait_for(cm.calistir(ta, kaynak=Kapanabilir()), 20)) == 3
-    assert Kapanabilir.kapandi == 1
+    assert asyncio.run(asyncio.wait_for(cm.calistir(ta), 20)) == 3
+    assert kapandi["n"] == 1
 
 
 # ---- savaş şeması doğrulanmadı: zamanlayıcıda yapılandırma/geçici hata ----
