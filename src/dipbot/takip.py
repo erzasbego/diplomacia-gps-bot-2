@@ -27,6 +27,7 @@ from .kaynak import (
     OyuncuAnlik,
     ErisimReddedildi,
     OzellikUygulanmadi,
+    ProxyErisilemez,
     PartiAnlik,
     SavasDetay,
     SavasTaraf,
@@ -404,7 +405,11 @@ class TakipServisi:
             )
             return "degisti"
 
-    async def oyuncular_tara(self, group_id: int, kaynak: DiplomaciaSource) -> TaramaSonucu:
+    async def oyuncular_tara(
+        self, group_id: int, kaynak: DiplomaciaSource, *, oyuncu_idleri=None, oyuncu_sonucu=None
+    ) -> TaramaSonucu:
+        """`oyuncu_idleri` verilirse YALNIZ bu oyuncular taranır (çok hesaplı mimaride hesabın atanmış görevleri; takipte olmayan id
+        yok sayılır). `oyuncu_sonucu(oyuncu_id, durum, aciklama)` her oyuncu için çağrılır: durum 'ok' | 'yok' (404) | 'hata'."""
         sonuc = TaramaSonucu("oyuncular")
         ids = [
             r[0]
@@ -412,26 +417,37 @@ class TakipServisi:
                 "SELECT oyuncu_id FROM takip_oyuncular WHERE group_id=? ORDER BY oyuncu_id", (group_id,)
             )
         ]
+        if oyuncu_idleri is not None:
+            kume = set(oyuncu_idleri)
+            ids = [i for i in ids if i in kume]
+
+        def bildir(pid, durum, aciklama=""):
+            if oyuncu_sonucu is not None:
+                oyuncu_sonucu(pid, durum, aciklama)
+
         bulunamayan: list[str] = []
         gozlenen: list[str] = []
         for pid in ids:
             sonuc.istenen += 1
             try:
                 snap = self._oyuncu_temiz(await kaynak.fetch_player(pid), pid)
-            except (TokenGecersiz, IstekSiniri, ErisimReddedildi):
+            except (TokenGecersiz, IstekSiniri, ErisimReddedildi, ProxyErisilemez):
                 raise  # tüm taramayı ilgilendirir; zamanlayıcı karar verir
             except VarlikBulunamadi:
                 bulunamayan.append(pid)
                 sonuc.uyarilar.append(f"{pid}: not found at the source (record was not deleted)")
+                bildir(pid, "yok", "not found (404)")
             except OzellikUygulanmadi as e:  # token yok / kaynak yapılandırılmadı: tek hata, geri çekilme yok
                 sonuc.hatalar.append(hata_aciklamasi(e))
                 sonuc.yapilandirma = True
                 return sonuc
             except KaynakHatasi as e:
                 sonuc.hatalar.append(f"{pid}: {hata_aciklamasi(e)}")
+                bildir(pid, "hata", hata_aciklamasi(e))
             else:
                 sonuc.gozlenen += 1
                 gozlenen.append(pid)
+                bildir(pid, "ok")
                 if snap.bolge is None or snap.vatandaslik_ulkesi is None:
                     sonuc.eksik += 1
                     sonuc.uyarilar.append(f"{pid}: region/citizenship came back missing (old value kept)")
@@ -586,6 +602,8 @@ class TakipServisi:
                     durum["dur"] = "rate limit"
                 except ErisimReddedildi:
                     durum["dur"] = "access denied"
+                except ProxyErisilemez:
+                    durum["dur"] = "proxy problem"
                 except (KaynakHatasi, EksikVeri):
                     pass  # bu üye ilk taramaya kalır
                 except Exception:  # beklenmeyen: komutu düşürme, üye ilk taramaya kalsın (ayrıntı günlükte, sır yok)
@@ -786,7 +804,7 @@ class TakipServisi:
                 self._tam_liste(snap, tid)
                 sonuc.degisiklik += self._parti_uygula(group_id, tid, snap)
                 sonuc.gozlenen += 1
-            except (TokenGecersiz, IstekSiniri, ErisimReddedildi):
+            except (TokenGecersiz, IstekSiniri, ErisimReddedildi, ProxyErisilemez):
                 raise
             except VarlikBulunamadi:
                 bulunamayan += 1
@@ -914,7 +932,7 @@ class TakipServisi:
         try:
             liste = await kaynak.list_active_wars()
             savaslar = liste.savaslar
-        except (TokenGecersiz, IstekSiniri, ErisimReddedildi):
+        except (TokenGecersiz, IstekSiniri, ErisimReddedildi, ProxyErisilemez):
             raise
         except OzellikUygulanmadi as e:
             sonuc.hatalar.append(str(e)[:120] or "war support is not implemented")

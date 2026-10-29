@@ -335,10 +335,10 @@ def _yetkisiz_ozet(v: dict) -> str:
 def _token_hatirlatma(v: dict) -> str:
     return "\n".join(
         [
-            _b("🔑 Weekly Diplomacia token reminder"),
+            _b("🔑 Weekly Diplomacia token reminder" + (f" — {esc(v.get('hesap_ad'))}" if v.get("hesap_ad") else "")),
             f"{esc(v.get('gun', '?'))} days have passed since the last token update.",
             "The token's actual validity period has not been verified; you may want to renew it from the "
-            "Administration > Token menu before it becomes invalid. If the token becomes invalid, scans stop and you will be notified separately.",
+            "Account Management → Update JWT Token before it becomes invalid. If the token becomes invalid, that account's scans stop and you will be notified separately.",
         ]
     )
 
@@ -391,6 +391,41 @@ def _denetim_ozet(v: dict) -> str:
     )
 
 
+_HESAP_DURUM = {
+    "token_yok": "has no token",
+    "token_gecersiz": "token was rejected (401); its scans are paused",
+    "proxy_hatasi": "cannot reach its proxy; its scans are paused and NO direct connection is used",
+    "hazir": "is working again",
+}
+
+
+def _hesap_durumu(v: dict) -> str:
+    durum = str(v.get("durum") or "")
+    ad = esc(v.get("hesap_ad") or f"#{v.get('hesap_id')}")
+    if durum == "hazir":
+        satirlar = [_b("✅ Diplomacia account recovered"), f"Account: {ad} {_HESAP_DURUM['hazir']}."]
+    else:
+        satirlar = [_b("⚠️ Diplomacia account problem"), f"Account: {ad} {_HESAP_DURUM.get(durum, 'has a problem')}."]
+        if v.get("ayrinti"):
+            satirlar.append(f"Detail: {esc(v.get('ayrinti'))}")
+        satirlar.append("Its assigned players wait; no other account takes them over. Fix it in Account Management.")
+    satirlar.append(f"Time: {tarih(v.get('zaman'))}")
+    return "\n".join(satirlar)
+
+
+def _hesap_gerekli(v: dict) -> str:
+    return "\n".join(
+        [
+            _b("⚠️ A new Diplomacia account is required"),
+            f"{esc(v.get('bekleyen'))} tracked players are waiting: all {esc(v.get('hesap_sayisi'))} account(s) are at the "
+            f"{esc(v.get('kapasite'))}-player assignment capacity.",
+            "They are kept (nothing is lost) and will be assigned automatically once you add an account in Account Management → Add Account. "
+            "No account is created automatically.",
+            f"Time: {tarih(v.get('zaman'))}",
+        ]
+    )
+
+
 def _kanal_durumu(v: dict) -> str:
     kanal = f"Channel ID: <code>{esc(v.get('kanal_id'))}</code>"
     if v.get("hazir"):
@@ -415,6 +450,8 @@ def _kanal_durumu(v: dict) -> str:
 
 
 _BICIMLER = {
+    "hesap_durumu": _hesap_durumu,
+    "hesap_gerekli": _hesap_gerekli,
     "kanal_durumu": _kanal_durumu,
     "denetim": _denetim,
     "denetim_ozet": _denetim_ozet,

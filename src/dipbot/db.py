@@ -11,9 +11,10 @@ from pathlib import Path
 
 from . import config
 
-SEMA_SURUMU = 6  # 2: takip_oyuncular.uid; 3: grup_gocleri; 4: onayli_gruplar.donem + outbox.onay_donemi (D7);
+SEMA_SURUMU = 7  # 2: takip_oyuncular.uid; 3: grup_gocleri; 4: onayli_gruplar.donem + outbox.onay_donemi (D7);
 #                 5: takip_partiler.kismi/toplam_uye/xp_sirali (büyük parti: ilk 100 üye);
 #                 6: parti_uyeleri.xp + takip_oyuncular.xp_alti_sayac/xp_onayli (XP süzgeci)
+#                 7: hesaplar + oyuncu_atamalari (çok hesaplı tarama; SIRLAR veritabanında DEĞİL, 0600 dosyalarda)
 
 
 def _sema() -> str:
@@ -152,6 +153,38 @@ CREATE TABLE IF NOT EXISTS yetkisiz_denemeler(
     group_id INTEGER,
     islem TEXT NOT NULL
 );
+-- ÇOK HESAPLI TARAMA. Burada YALNIZ sır olmayan bilgi vardır: token ve proxy (adres/kullanıcı/parola) `<veri dizini>/hesaplar/<id>/` altındaki
+-- 0600 dosyalardadır, ASLA bu veritabanında. hesap_id artan sırası = doldurma sırası.
+CREATE TABLE IF NOT EXISTS hesaplar(
+    hesap_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ad TEXT NOT NULL,                           -- kurucunun verdiği etiket (sır değil)
+    olusturuldu TEXT NOT NULL,
+    proxy_var INTEGER NOT NULL DEFAULT 0,       -- proxy dosyası var mı (adres/parola dosyada)
+    proxy_sema TEXT,                            -- 'http' | 'https' (gizli değil)
+    durum TEXT NOT NULL DEFAULT 'token_yok',    -- hazir | token_yok | token_gecersiz | proxy_hatasi | erisim_reddi | rate_limit | hata
+    durum_ayrinti TEXT,                         -- kısa, sır içermeyen açıklama
+    durum_zamani TEXT,
+    proxy_durum TEXT NOT NULL DEFAULT 'yok',    -- yok | calisiyor | hata | bilinmiyor
+    token_guncelleme TEXT,
+    son_api_basari TEXT,
+    son_rate_limit TEXT,
+    cooldown_bitis TEXT,                        -- aktif bekleme (429/403/proxy geri çekilmesi) bitişi
+    ardisik_hata INTEGER NOT NULL DEFAULT 0,
+    sonraki_tarama TEXT,
+    son_tarama_zamani TEXT,
+    son_tarama_sn REAL
+);
+-- Merkezi oyuncuların hesaplara atanması (görev). hesap_id NULL = kapasite yok, BEKLEMEDE (oyuncu silinmez). Oyuncu geçmişi/karşılaştırma
+-- verisi takip_oyuncular'dadır; atama değişince SIFIRLANMAZ.
+CREATE TABLE IF NOT EXISTS oyuncu_atamalari(
+    oyuncu_id TEXT PRIMARY KEY,
+    hesap_id INTEGER,
+    atandi TEXT,
+    son_deneme TEXT,
+    son_basari TEXT,
+    son_hata TEXT                               -- kısa, sır içermeyen kod/açıklama; NULL = son denemede hata yok
+);
+CREATE INDEX IF NOT EXISTS ix_atama_hesap ON oyuncu_atamalari(hesap_id);
 CREATE TABLE IF NOT EXISTS bildirim_sinirlari(
     anahtar TEXT PRIMARY KEY,
     son_bildirim TEXT NOT NULL

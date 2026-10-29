@@ -40,12 +40,14 @@ class OyuncuDogrulayici:
         transport: httpx.AsyncBaseTransport | None = None,
         zaman_asimi: float = VARSAYILAN_ZAMAN_ASIMI,
         oyuncu_no: str = DOGRULAMA_OYUNCU_NO,
+        proxy: str | None = None,
     ):
         self._oyuncu_no = numara_dogrula(oyuncu_no)  # DIPLOMACIA_DOGRULAMA_OYUNCU
         self._kimlik = kimlik
         self._taban = taban
         self._transport = transport
         self._zaman_asimi = zaman_asimi
+        self._proxy = proxy  # hesabın proxy'si: varsa doğrulama da onun üzerinden yapılır; HİÇBİR zaman doğrudan bağlantıya düşülmez
 
     def __repr__(self) -> str:
         return "OyuncuDogrulayici(...)"
@@ -63,6 +65,7 @@ class OyuncuDogrulayici:
             return DogrulamaSonucu("gecersiz", "token format is invalid")
         durum: int | None = None
         govde = None
+        proxy_hatasi = False
         try:
             async with httpx.AsyncClient(
                 base_url=self._taban,
@@ -70,6 +73,7 @@ class OyuncuDogrulayici:
                 timeout=httpx.Timeout(self._zaman_asimi),
                 follow_redirects=False,
                 trust_env=False,
+                proxy=self._proxy if self._transport is None else None,
             ) as http:
                 r = await http.get(f"/api/players/{self._oyuncu_no}", headers=basliklar)
                 durum = r.status_code
@@ -78,8 +82,11 @@ class OyuncuDogrulayici:
                         govde = r.json()
                     except ValueError:
                         govde = None
+        except (httpx.ProxyError, httpx.ConnectError, httpx.ConnectTimeout) as e:
+            durum = None  # istisna metni (token/proxy parolası içerebilir) aktarılmaz
+            proxy_hatasi = bool(self._proxy) and not isinstance(e, httpx.ReadTimeout)
         except httpx.HTTPError:
-            durum = None  # istisna metni (token içerebilir) aktarılmaz
+            durum = None
         if durum == 200:
             if not isinstance(govde, dict):
                 return DogrulamaSonucu("hata", "returned 200 but the body is not a JSON object; could not be verified")
@@ -98,6 +105,8 @@ class OyuncuDogrulayici:
                 "verification player not found; this does not mean the token is invalid "
                 "(provide a different player via DIPLOMACIA_DOGRULAMA_OYUNCU)",
             )
+        if durum is None and proxy_hatasi:
+            return DogrulamaSonucu("proxy_hatasi", "could not connect through the configured proxy (no direct connection was attempted)")
         if durum is None:
             return DogrulamaSonucu("hata", "could not reach the site for verification")
         return DogrulamaSonucu("hata", f"unexpected response code ({durum}); could not be verified")
