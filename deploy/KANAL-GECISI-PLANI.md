@@ -1,5 +1,7 @@
 # Merkezi takip mimarisine ve log kanalına geçiş planı
 
+> Çok hesaplı tarama ve Telegram hesap yönetimi için bkz. [`COKLU-HESAP-PLANI.md`](COKLU-HESAP-PLANI.md).
+
 **Durum:** PLAN. Bu belge hazırlanırken canlı VPS'e, Telegram'a veya Diplomacia'ya dokunulmadı; gerçek veritabanı üzerinde HİÇBİR migration çalıştırılmadı ve servis yeniden başlatılmadı. Gerçek migration ve canlıya geçiş **kurucunun açık onayıyla** yapılır. Ayrı PM2 servisi `takip-bot`a hiçbir adımda dokunulmaz.
 
 ## 1. Yeni mimari (özet)

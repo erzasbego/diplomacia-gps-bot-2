@@ -35,6 +35,7 @@ from ..kaynak import (
     OyuncuAnlik,
     OzellikUygulanmadi,
     PartiAnlik,
+    ProxyErisilemez,
     SavasDetay,
     SavasListesi,
     SiteErisilemez,
@@ -183,14 +184,20 @@ class IstemciKaynagi:
         taban: str = TABAN_ADRES,
         transport: httpx.AsyncBaseTransport | None = None,
         zaman_asimi: float = VARSAYILAN_ZAMAN_ASIMI,
+        proxy: str | None = None,
     ):
+        """`proxy`: bu hesabın proxy URL'si (sır: kullanıcı adı/parola içerebilir; loga/repr'e girmez). Proxy varken bağlantı
+        kurulamazsa ProxyErisilemez fırlatılır ve ASLA doğrudan bağlantıya geçilmez (trust_env=False; tek istemci tek yol).
+        `transport` verilirse (yalnız testler) httpx proxy'si kurulmaz ama hata sınıflandırması proxy'li hesap gibi çalışır."""
         self._kimlik = kimlik
+        self._proxy_var = bool(proxy)
         self._http = httpx.AsyncClient(
             base_url=taban,
             transport=transport,
             timeout=httpx.Timeout(zaman_asimi),
             follow_redirects=False,
             trust_env=False,
+            proxy=proxy if transport is None else None,
         )
         self._uuidler: dict[tuple[str, str], str] = {}  # yalnız bellek; yeniden başlatmada silinir
 
@@ -217,8 +224,14 @@ class IstemciKaynagi:
         hata = None
         try:
             r = await self._http.get(yol, headers=basliklar)
+        except httpx.ProxyError:
+            hata = ProxyErisilemez("proxy bağlantısı kurulamadı")
+        except httpx.ConnectTimeout:
+            hata = ProxyErisilemez("proxy bağlantısı zaman aşımı") if self._proxy_var else AgZamanAsimi("istek zaman aşımına uğradı")
         except httpx.TimeoutException:
             hata = AgZamanAsimi("istek zaman aşımına uğradı")
+        except httpx.ConnectError:
+            hata = ProxyErisilemez("proxy bağlantısı kurulamadı") if self._proxy_var else SiteErisilemez("site bağlantısı kurulamadı")
         except httpx.HTTPError:
             hata = SiteErisilemez("site bağlantısı kurulamadı")
         if hata is not None:  # except dışında: __context__ zinciri httpx istisnasını taşımaz

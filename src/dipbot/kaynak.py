@@ -43,6 +43,10 @@ class ErisimReddedildi(SiteErisilemez):
     Geri çekilme uygulanır; global token duraklatması ve 'token geçersiz' bildirimi YOK."""
 
 
+class ProxyErisilemez(KaynakHatasi):
+    """Hesabın yapılandırılmış proxy'si üzerinden bağlantı kurulamadı. ASLA doğrudan bağlantıya geçilmez; hesap bekler."""
+
+
 class IstekSiniri(KaynakHatasi):
     """Site istek sınırı (429 benzeri)."""
 
@@ -75,6 +79,7 @@ class VarlikBulunamadi(KaynakHatasi):
 _ACIKLAMA = {
     TokenYok: "token file is missing or invalid (no request was made)",
     ErisimReddedildi: "access denied (403): the ID format or a site block may be the cause",
+    ProxyErisilemez: "proxy connection failed (no direct connection was attempted)",
     TokenGecersiz: "the site rejected the token (401)",
     AgZamanAsimi: "network timeout",
     SiteErisilemez: "the site is temporarily unavailable",
@@ -217,7 +222,8 @@ class SinirliKaynak:
             except asyncio.TimeoutError as e:
                 raise AgZamanAsimi("request timed out") from e
             except TokenGecersiz as e:
-                e.kusak = kusak  # type: ignore[attr-defined]
+                if kusak is not None or getattr(e, "kusak", None) is None:  # iç kaynağın (hesap) kuşağı varsa EZİLMEZ
+                    e.kusak = kusak  # type: ignore[attr-defined]
                 raise
 
     async def fetch_player(self, oyuncu_id):

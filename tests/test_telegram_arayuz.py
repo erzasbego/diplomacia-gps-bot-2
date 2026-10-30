@@ -353,9 +353,10 @@ def test_komut_adlari_telegram_kuralina_uyar():
     istenen = {
         "addplayer", "players", "removeplayer", "addparty", "parties", "removeparty", "wars",
         "scan", "status", "help", "start",
+        "accounts",  # Account Management (Diplomacia accounts, tokens, proxies; owner only)
         "channel", "lists",  # notification-channel re-verification and central tracking-list overview (owner only)
     }
-    assert len(KOMUTLAR) == 13
+    assert len(KOMUTLAR) == 14
     assert istenen == set(KOMUTLAR)
     # DELIBERATE CHANGE (single central area): the group-administration commands are no longer offered at all
     assert not {"grant", "revoke", "approve_group", "remove_group", "move_group"} & set(KOMUTLAR)

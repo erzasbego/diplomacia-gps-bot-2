@@ -381,7 +381,7 @@ def test_v5_veritabani_v6ya_gecerken_kayitlar_korunur(tmp_path):
     c.execute("PRAGMA user_version=5")
     c.close()
     c = db.baglan(yol)
-    assert c.execute("PRAGMA user_version").fetchone()[0] == db.SEMA_SURUMU == 6
+    assert c.execute("PRAGMA user_version").fetchone()[0] == db.SEMA_SURUMU == 7
     assert takipte(c, G1) == {"1", "2"}
     r = c.execute("SELECT * FROM takip_oyuncular WHERE oyuncu_id='1'").fetchone()
     assert (r["xp_alti_sayac"], r["xp_onayli"]) == (0, 0), "mevcut kayıtlar korunur; XP kuralına henüz tabi değil"

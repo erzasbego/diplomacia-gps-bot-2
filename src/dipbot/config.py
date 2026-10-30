@@ -107,3 +107,21 @@ class Ayarlar:
         db = env.get("DB_PATH", "").strip()
         return cls(int(raw), Path(db) if db else DEFAULT_DB_PATH)
 ERISIM_REDDI_BEKLEME_SECONDS = 60.0  # 403 sonrası arayüz isteklerinin kısa geri çekilmesi
+
+
+# ---- ÇOK HESAPLI TARAMA ----------------------------------------------------------------------------------------
+# Her Diplomacia hesabı EN FAZLA bu kadar oyuncudan SORUMLUDUR (SABİT GÖREV ATAMA KAPASİTESİ). Bu, API'nin bu kadar oyuncuyu belirli bir
+# sürede sorgulamaya izin verdiği anlamına GELMEZ: gerçek hız/kota sınırları aşağıdaki pacing + hesap/genel eşzamanlılık + 429/403 geri
+# çekilmesiyle ayrıca korunur. Hesaplar SIRAYLA doldurulur; kapasite dolunca yeni oyuncular veritabanında BEKLER (silinmez).
+HESAP_KAPASITESI = 150
+HESAP_ESZAMANLI = 2  # bir hesabın aynı anda en çok bu kadar isteği (arayüz + tarama toplamı)
+GENEL_ESZAMANLI = SOURCE_MAX_CONCURRENT_REQUESTS  # TÜM hesapların toplam eşzamanlı isteği (hesap eklemek genel kotayı artırmaz)
+HESAP_ISTEK_ARALIGI_SN = 0.25  # aynı hesabın ardışık istekleri arası en az bu kadar saniye
+GENEL_ISTEK_ARALIGI_SN = 0.10  # tüm hesapların ardışık istekleri arası en az bu kadar saniye (genel kota koruması)
+HESAP_PROXY_GERI_CEKILME_SN = 60.0  # proxy/bağlantı hatasında ilk bekleme; her ardışık hatada ikiye katlanır
+HESAP_PROXY_GERI_CEKILME_UST_SN = 900.0
+HESAP_GIRDI_BEKLEME_SN = 300  # token/proxy/arama girdisi bekleme ömrü (kurucu menüden başlatır)
+HESAP_ARAMA_UST = 40  # arama sonucu en çok bu kadar satır gösterilir (sayfalı)
+HESAP_COOLDOWN_ALT_SN = 5.0  # Retry-After: 0 gibi değerlerde bile en az bu kadar bekle
+HESAP_ERISIM_REDDI_UST_SN = 900.0  # 403 geri çekilmesi (üstel) üst sınırı
+HESAP_BILDIRIM_ARALIGI = 3600  # aynı hesap için aynı sorun bildirimi en sık bu aralıkta (saniye)

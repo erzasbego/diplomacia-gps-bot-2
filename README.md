@@ -5,7 +5,7 @@
 Python 3.11+ · `python-telegram-bot` 22.8 (long polling; alan adı/HTTPS gerekmez) · SQLite · Telegram arayüzü ve mesajlar **İngilizce** (belgeler Türkçe) · gösterilen zamanlar `Europe/Istanbul` 24 saat, kayıtlar UTC.
 
 > ## ⚠️ Doğrulama durumu — önce bunu okuyun
-> Bu bot **henüz gerçek Diplomacia'ya veya gerçek Telegram'a bağlanılarak denenmedi.** Şu an elde olan: **1382 otomatik test** (sahte veri kaynağı, `httpx.MockTransport`, sahte Telegram nesneleri; Python 3.11/3.12/3.13'te geçti). Bunlar iş kurallarını kanıtlar; **canlı entegrasyonu kanıtlamaz.** Ayrıntı için [Doğrulananlar ve doğrulanmayanlar](#doğrulananlar-ve-doğrulanmayanlar).
+> Bu bot **henüz gerçek Diplomacia'ya veya gerçek Telegram'a bağlanılarak denenmedi.** Şu an elde olan: **1605 otomatik test** (sahte veri kaynağı, `httpx.MockTransport`, sahte Telegram nesneleri; Python 3.11/3.12/3.13'te geçti). Bunlar iş kurallarını kanıtlar; **canlı entegrasyonu kanıtlamaz.** Ayrıntı için [Doğrulananlar ve doğrulanmayanlar](#doğrulananlar-ve-doğrulanmayanlar).
 
 ## İçindekiler
 1. [Nasıl çalışır](#nasıl-çalışır)
@@ -34,7 +34,7 @@ Bot olayları **dinlemez, aralıklarla yoklar.** Bu yüzden: iki kontrol arasın
 ```bash
 python3.11 -m venv .venv && . .venv/bin/activate     # Python 3.11+ (3.12 ve 3.13 de denendi)
 pip install -r requirements.txt
-python -m pytest -q                                  # beklenen: 1382 passed (MOCK)
+python -m pytest -q                                  # beklenen: 1605 passed (MOCK)
 ```
 Paket `src/` altındadır ve pip ile **kurulmaz**; çalıştırırken `PYTHONPATH=src` verilir (testler için `pytest.ini` bunu zaten yapar):
 ```bash
@@ -74,6 +74,14 @@ Kod sabitleri (`src/dipbot/config.py`): tarama aralıkları `[5,10,15,20]`, dene
 | **Kurucu** | `OWNER_TELEGRAM_ID` ile tanımlanan tek yönetici. Botu yalnız **özel sohbetinde** kullanır: oyuncu/parti ekle-sil, tarama ayarı, token yenileme, durum, `/channel`, `/lists`. Kurucu dışındaki herkes reddedilir ve kurucuya (hız sınırlı) bildirilir. |
 
 - Kurucuya **denetim bildirimi** altyapısı (kimlik+zaman, token yok) korunur; grup/yetki komutları kaldırıldığı için artık yeni denetim olayı üretmez.
+
+## Çok hesaplı tarama ve Telegram hesap yönetimi
+
+Birden çok Diplomacia oyun hesabı, tek `dipbot.service` / tek SQLite / tek Telegram botu ile çalışır. **Hesaplar, JWT token'ları ve proxy'ler Telegram'dan yönetilir** (özel sohbet → `/accounts` veya ana menü → 🔐 Account Management; yalnız `OWNER_TELEGRAM_ID`): View Accounts · Add Account · Account Details · Update JWT Token · Proxy Settings · Test Connection · Assigned Players · Account Statistics. Ayrıntı, güvenlik ve dağıtım: [`deploy/COKLU-HESAP-PLANI.md`](deploy/COKLU-HESAP-PLANI.md).
+- **Kesin dağıtım kuralı:** her hesap **en fazla 150 oyuncudan** sorumludur (sabit görev atama kapasitesi; API kotası varsayımı DEĞİL), hesaplar **sırayla doldurulur** (205 → 150/55, 301 → 150/150 + 1 beklemede, 3. hesap eklenince 150/150/1). Kapasite dolunca oyuncular silinmez, bekler ve kurucuya “new Diplomacia account required” uyarısı gider; hesaplar **otomatik oluşturulmaz**. Kullanıcı oyuncu eklerken hesap seçmez.
+- **Arıza yalıtımı:** bir hesap arıza verirse görevleri onda **bekler**, başka hesap devralmaz; proxy'li hesap proxy'ye ulaşamazsa **doğrudan bağlantıya geçmez**. Hesap başına cooldown/rate limit durumu kalıcıdır; aynı çıkış noktasını paylaşan hesaplar ortak kotayı korur. Rate limit'i aşmaya yönelik hesap/IP değiştirme yoktur.
+- **Sırlar:** token/proxy yalnız `<veri dizini>/hesaplar/<id>/` altında **0600 dosyalarda** (dizinler 0700); SQLite'ta, loglarda, yanıtlarda ve kanalda görünmez. Gönderdiğiniz token/proxy mesajı hemen silinmeye çalışılır; silinemezse bot açıkça söyler (Telegram Bot API sohbetleri uçtan uca şifreli değildir). Aday token/proxy önce sınanır; başarısızsa önceki yapılandırma korunur.
+- Hesap başına oyuncu ekranı (Account → Players: ID, ad, son başarılı tarama, hata, takip durumu; sayfalı + arama) ve hesap istatistikleri (atanan `150/150`, başarılı, bekleyen görev, son API isteği, son rate limit, cooldown, proxy durumu, son tarama süresi) menüdedir. Komut menüsüne `/accounts` (eski ad `/hesaplar`) eklendi.
 
 ## Arayüz dili ve saat (İngilizce arayüz, Europe/Istanbul)
 Telegram arayüzünün **tamamı İngilizcedir** (tek dil; dil seçeneği yoktur): komut yanıtları, menüler, düğmeler, açılır uyarılar, hata/yetki mesajları, bildirimler. Oyuncu/parti adları ve oyun adları çevrilmez. Telegram komut menüsü İngilizcedir:
@@ -165,7 +173,7 @@ Hedef: **Ubuntu 24.04 LTS** (Python 3.12), tek VPS, tek bot süreci, systemd. Ad
 
 ## Doğrulananlar ve doğrulanmayanlar
 **Doğrulandı (otomatik test / araç ile; hepsi MOCK ya da yerel):**
-- 1382 test: ilk ekleme bildirimsiz, kimlik üzerinden değişiklik, bölge/vatandaşlık bağımsızlığı, tekrar bildirim yok, eksik cevap veriyi bozmaz, parti ilk kayıt/giriş/çıkış/kaldırma kuralları, grup izolasyonu, yetki matrisi (komut+buton), eski buton reddi, yeniden başlatmada veri korunumu, ilk savaş taramasında bildirim yok, outbox yeniden deneme/iptal, token doğrulama/`.prev`/maskeleme, D7 saat güvenliği, göç taşıma.
+- 1605 test: ilk ekleme bildirimsiz, kimlik üzerinden değişiklik, bölge/vatandaşlık bağımsızlığı, tekrar bildirim yok, eksik cevap veriyi bozmaz, parti ilk kayıt/giriş/çıkış/kaldırma kuralları, grup izolasyonu, yetki matrisi (komut+buton), eski buton reddi, yeniden başlatmada veri korunumu, ilk savaş taramasında bildirim yok, outbox yeniden deneme/iptal, token doğrulama/`.prev`/maskeleme, D7 saat güvenliği, göç taşıma.
 - Python 3.11, 3.12 ve 3.13'te test paketi geçti (Ubuntu 24.04 tabanlı bulut ortamında).
 - `deploy/dipbot.service` için `systemd-analyze verify` (systemd 255, **statik**; yollar sahte düzende) hatasız; `backup.sh`/`restore.sh` gerçek WAL veritabanı ve **sahte** `systemctl` ile çalıştı; `onkontrol.sh` sahte dizin düzeniyle çalıştı.
 - Kullanıcı DevTools'ta doğruladı (ben bağımsız doğrulamadım): `Authorization: Bearer <JWT>` + `X-Client-Platform: web` ile `GET /api/players/72400` → 200; savaş bağlantısı biçimi `…/wars/war/{numara}`; oturum token'ı JWT'dir.

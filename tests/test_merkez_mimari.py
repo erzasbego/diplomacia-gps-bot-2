@@ -324,7 +324,10 @@ def test_calistir_merkezi_alani_tarar_eski_kuyrugu_iptal_eder_kanali_dogrular(mo
     for g in ESKI:
         assert durum[f"eski-{g}"] == "iptal"
     assert durum["merkezi-eski-kanal"] == "gonderildi", "merkezi satır kanala alındı ve bir kez gönderildi"
-    assert [m["chat_id"] for m in app.mesajlar] == [KANAL] and not [m for m in app.mesajlar if m["chat_id"] in ESKI]
+    kanal_mesajlari = [m["chat_id"] for m in app.mesajlar if m["chat_id"] != 1000]
+    assert kanal_mesajlari == [KANAL] and not [m for m in app.mesajlar if m["chat_id"] in ESKI]
+    # kurucuya (özel sohbet) yalnız operasyonel uyarı gider: hesap olmadığı için bekleyen oyuncular -> 'yeni hesap gerekli'
+    assert [m["chat_id"] for m in app.mesajlar if m["chat_id"] == 1000] == [1000]
     # merkezi alan tarandı (grup kimliği/onayı gerekmeden); eski gruplar taranmadı
     assert {r[0] for r in c2.execute("SELECT DISTINCT group_id FROM tarama_isleri")} <= {M}
     assert c2.execute("SELECT COUNT(*) FROM takip_oyuncular").fetchone()[0] == 4, "hiçbir takip kaydı silinmedi"

@@ -80,9 +80,9 @@ def test_telegram_command_menu_is_english():
     assert adlar == list(KOMUTLAR)
     assert set(adlar) == {
         "start", "help", "addplayer", "players", "removeplayer", "addparty", "parties", "removeparty",
-        "wars", "scan", "status", "channel", "lists",
+        "wars", "scan", "status", "accounts", "channel", "lists",
     }
-    assert len(adlar) == 13
+    assert len(adlar) == 14
     for c in bot_komutlari():
         assert re.fullmatch(r"[a-z0-9_]{1,32}", c.command)
         assert 3 <= len(c.description) <= 256
@@ -114,7 +114,7 @@ _KOMUT_ORNEKLERI = [
     ("removeplayer", ""), ("removeplayer", "99999"), ("removeplayer", "72400"),
     ("addparty", ""), ("addparty", "zzz"), ("addparty", "1244"), ("addparty", "9999"),
     ("removeparty", ""), ("removeparty", "1244"), ("removeparty", "5555"),
-    ("channel", ""), ("lists", ""),
+    ("accounts", ""), ("channel", ""), ("lists", ""),
 ]
 # the same commands under their legacy Turkish names
 _ESKI_ESLESME = {v: k for k, v in EN_KOMUTLAR.items()}
@@ -266,6 +266,9 @@ _ORNEK_BILDIRIMLER = {
     "token_hatirlatma": {"gun": 7, "zaman": "2026-10-21T21:30:00.000000Z"},
     "denetim": {"eylem": "grup_onayla", "aktor_id": 1000, "hedef_id": -1001, "zaman": "2026-10-21T21:30:00.000000Z"},
     "denetim_ozet": {"sayi": 9, "zaman": "2026-10-21T21:30:00.000000Z"},
+    "hesap_durumu": {"hesap_id": 2, "hesap_ad": "Account 2", "durum": "token_gecersiz", "ayrinti": "token rejected (401)",
+                     "zaman": "2026-10-21T21:30:00.000000Z"},
+    "hesap_gerekli": {"bekleyen": 1, "kapasite": 150, "hesap_sayisi": 2, "zaman": "2026-10-21T21:30:00.000000Z"},
     "kanal_durumu": {
         "kanal_id": -1003998002227, "hazir": False, "neden": "the bot is not an administrator of the channel",
         "zaman": "2026-10-21T21:30:00.000000Z",

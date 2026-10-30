@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 
 from .. import config, outbox, yetki, yonetim
 from ..db import alan_aktif, islem as db_islem
+from ..hesaplar import HesapHatasi
 from ..kaynak import EksikVeri, KaynakHatasi, ZamanlayiciKorumali, hata_aciklamasi
 from ..takip import GrupOnaysiz, TakipServisi
 from ..maske import sir_kaydet
@@ -28,6 +29,7 @@ from ..zaman import (
 from . import bicim
 from .baglanti import BaglantiHatasi, kimlik_coz_ayrintili
 from .bicim import esc
+from .hesap_menu import GirdiBekleme, HesapMenusu, sir_gibi_mi
 from .islemler import IslemDeposu
 from .kaynak_yok import KaynakYapilandirilmadi, yapilandirildi_mi
 from .modeller import Dugme, Klavye, Olay, Yanit
@@ -54,6 +56,7 @@ KOMUTLAR: dict[str, str] = {
     "wars": "List active wars",
     "scan": "Set the scan interval: 5, 10, 15 or 20 minutes",
     "status": "Show bot status",
+    "accounts": "Account Management: Diplomacia accounts, tokens, proxies, assigned players",
     "channel": "Verify the notification channel (exists and the bot can post)",
     "lists": "Show the central tracking list summary",
 }
@@ -71,6 +74,7 @@ EN_KOMUTLAR: dict[str, str] = {
     "wars": "savaslar",
     "scan": "tarama",
     "status": "durum",
+    "accounts": "hesaplar",
     "channel": "kanal",
     "lists": "listeler",
 }
@@ -142,12 +146,13 @@ def _dg(etiket: str, veri: str) -> Dugme | None:
         return None
 
 
+_HESAP_DUGMELERI = frozenset({"hm", "hl", "ha", "hz", "hn", "hi", "hd", "hs", "hy", "hq", "hx", "hp", "ht", "hps", "hpr", "hpt", "hc"})
 _JWT_BICIMI = re.compile(r"^eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}$")
 _SAYFALAMA_NOTU = "<i>Note: the list is assumed to be unpaginated (unverified).</i>"
 _GUC_NOTU = "<i>Note: it has not been verified that the 'Power' value represents damage.</i>"
 
 
-class Arayuz:
+class Arayuz(HesapMenusu):
     def __init__(
         self,
         conn,
@@ -160,7 +165,16 @@ class Arayuz:
         token_deposu: TokenDeposu | None = None,
         kanal=None,
         kapsam: int = config.MERKEZ_ID,
+        hesaplar=None,
+        eski_token_yolu=None,
     ):
+        # hesaplar: HesapYoneticisi (üretim: ÇOK HESAPLI mod; token/proxy yönetimi 'Account Management' menüsündedir). None: eski tek-token modu
+        # (yalnız testler/geri uyumluluk).
+        self.hesaplar = hesaplar
+        self.eski_token_yolu = eski_token_yolu
+        self._girdi: dict[int, GirdiBekleme] = {}
+        self._hesap_arama: dict[tuple, str] = {}
+        self._hesap_islem_suruyor = False
         # kapsam: takip verisinin TEK alan kimliği (merkezi alan; Telegram kimliği DEĞİL). Üretimde hep config.MERKEZ_ID;
         # yalnız alan-yalıtımı testleri başka değer verir. Grup seçimi/grup onayı YOKTUR.
         self.kapsam = kapsam
@@ -305,7 +319,9 @@ class Arayuz:
         if not k:
             return self._red(o, k)
         try:
-            return await getattr(self, f"_k_{ad}")(o)
+            sonuc = await getattr(self, f"_k_{ad}")(o)
+            self._dagit()
+            return sonuc
         except GrupOnaysiz:  # servis katmanı onaysız grubu reddetti (ör. işlem sırasında onay kalktı)
             return Yanit(GRUP_ONAYSIZ_YANIT)
         except Exception:
@@ -320,6 +336,7 @@ class Arayuz:
         parca = veri.split(":", 2)
         try:
             y = await self._buton_yonlendir(o, parca)
+            self._dagit()
         except GrupOnaysiz:
             y = Yanit(GRUP_ONAYSIZ_YANIT, uyari="Tracking area is not active.", uyari_goster=True)
         except Exception:
@@ -334,6 +351,22 @@ class Arayuz:
     async def metin(self, o: Olay) -> Yanit | None:
         """Düz metin: yalnız kurucunun özel sohbetinde, token bekleniyorsa işlenir."""
         if o.sohbet_turu != "private" or o.kullanici_id is None:
+            return None
+        if self.hesaplar is not None:
+            g = self._girdi.get(o.kullanici_id)
+            k = yetki.token_yonetimi_izinli_mi(
+                self._durum(), sohbet_id=o.sohbet_id, sohbet_turu=o.sohbet_turu, kullanici_id=o.kullanici_id
+            )
+            if g is not None:
+                if not k:
+                    self._girdi_kaldir(o.kullanici_id)
+                    self._kaydet_yetkisiz(o, "hesap_girdisi")
+                    return Yanit(KAPALI_OZEL)
+                return await self._hesap_girdi(o, g)
+            if k and (_JWT_BICIMI.match(o.metin or "") or sir_gibi_mi(o.metin or "")):  # bekleme yokken gelen JWT/proxy/uzun dizi: kalmasın, işlenmesin
+                sir_kaydet(o.metin)
+                return Yanit(f"{await self._mesaji_sil_notu(o)}\nTo set a token, open Account Management → an account → Update JWT Token first; "
+                             "this message was not processed.")
             return None
         damga = self._token_bekleyen.get(o.kullanici_id)
         if damga is None:
@@ -383,6 +416,19 @@ class Arayuz:
             return False
 
     # ====================== komutlar ========================================
+    async def _k_hesaplar(self, o: Olay) -> Yanit:
+        if self.hesaplar is None:
+            return Yanit("Account Management is not enabled in this process.")
+        return self._hesap_ana_ekran(o)
+
+    def _dagit(self) -> None:
+        """Oyuncu eklendi/silindi: görev atamasını hemen güncelle (zamanlayıcı da her turda yapar)."""
+        if self.hesaplar is not None:
+            try:
+                self.hesaplar.dagit()
+            except Exception:
+                log.exception("görev dağıtımı başarısız")
+
     async def _k_kanal(self, o: Olay) -> Yanit:
         """Log kanalını Telegram API ile yeniden doğrular (kanal var mı, bot mesaj gönderebilir mi); mesaj göndermez."""
         if self.kanal is None:
@@ -580,7 +626,11 @@ class Arayuz:
             return self._yonetim_ekrani(o)
         if a == "c":
             return await self._b_onay(o, p)
+        if self.hesaplar is not None and a in _HESAP_DUGMELERI:
+            return await self._hesap_buton(o, a, p)
         if a in ("tk", "tn", "tc"):
+            if self.hesaplar is not None:  # çok hesaplı mod: eski tek-token akışı yerine hesap menüsü
+                return self._hesap_ana_ekran(o)
             return await self._b_token(o, a)
 
         # Buradan sonrası takip ekranları (merkezi alan; bilinmeyen/eski düğmeler yok sayılır)
@@ -651,6 +701,8 @@ class Arayuz:
             [Dugme("📊 Bot Status", "du"), Dugme("⚙️ Administration", "yo")],
             [Dugme("❓ Help", "yd")],
         ]
+        if self.hesaplar is not None:
+            klavye.insert(3, [Dugme("🔐 Account Management", "hm")])
         return Yanit("\n".join(satirlar), klavye)
 
     # ---- oyuncular
@@ -948,11 +1000,15 @@ class Arayuz:
             return "not configured"
         ic = getattr(self.kaynak, "_ic", self.kaynak)
         if getattr(ic, "token_hazir", True) is False:
+            if self.hesaplar is not None:
+                return "no usable Diplomacia account token (no requests are sent; see Account Management)"
             return "no token file (no Diplomacia requests are sent; provide a token via Administration > Token)"
         return self._tarama_metni(g, isler)
 
     def _tarama_metni(self, g: int | None, isler: dict) -> str | None:
         if self._token_duraklatildi():
+            if self.hesaplar is not None:
+                return "the primary account's token was rejected (401); party/war scans are paused (see Account Management)"
             return "the site rejected the token (401); scans are paused"
         hatali = [t for t, r in isler.items() if r["son_hata"]]
         if hatali:
@@ -990,6 +1046,11 @@ class Arayuz:
             "SELECT COUNT(*) FROM outbox WHERE grup_id=? AND durum='bekliyor'", (g,)
         ).fetchone()[0]
         satirlar.append(f"Pending Notifications: {bekleyen}")
+        if self.hesaplar is not None:
+            hs = self.hesaplar.listele()
+            oz = self.hesaplar.kapasite_ozeti()
+            hazir = sum(1 for h in hs if h["durum"] == "hazir")
+            satirlar.append(f"Diplomacia Accounts: {len(hs)} ({hazir} ready)" + (f"; players waiting for an account: {oz['bekleyen']}" if oz["bekleyen"] else ""))
         n_bulunamayan = len(self.servis.bulunamayan_oyuncular(g))
         if n_bulunamayan:
             satirlar.append(f"Not found (consecutive 404s): {n_bulunamayan} players")
@@ -1018,7 +1079,10 @@ class Arayuz:
             "all tracking notifications are posted to the log channel.",
             "Use /channel to verify the log channel and /lists for the central tracking summary.",
         ]
-        klavye: Klavye = [[Dugme("🔑 Renew Token", "tk")], [Dugme("🏠 Main menu", "m")]]
+        if self.hesaplar is not None:
+            klavye: Klavye = [[Dugme("🔐 Account Management", "hm")], [Dugme("🏠 Main menu", "m")]]
+        else:
+            klavye = [[Dugme("🔑 Renew Token", "tk")], [Dugme("🏠 Main menu", "m")]]
         return Yanit("\n".join(satirlar), klavye)
 
     # ====================== onay işleme =====================================
@@ -1077,6 +1141,15 @@ class Arayuz:
             if s.durum == "tekrar_onay" and s.onizleme is not None:
                 return self._parti_onay_ekrani(o, op.grup_id, s.onizleme, tekrar=True)
             return Yanit(f"Could not remove party: {esc(s.neden or s.durum)}. No players were removed.", geri)
+        if op.tur == "proxy_sil":
+            if self.hesaplar is None:
+                return Yanit("Unknown action type.", geri)
+            try:
+                await self.hesaplar.proxy_kaldir(v["hesap"])
+            except HesapHatasi as e:
+                return Yanit(esc(str(e)), geri)
+            return Yanit("The proxy was removed; this account now connects directly (as you confirmed).",
+                         [[Dugme("⬅ Account", f"hd:{v['hesap']}"), Dugme("🏠 Main menu", "m")]])
         return Yanit("Unknown action type.", geri)
 
     # ====================== token yenileme (yalnız kurucu, özel sohbet) =====

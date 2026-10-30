@@ -25,7 +25,8 @@ from telegram.ext import Application
 from .. import config, db, outbox
 from ..diplomacia.dogrulayici import OyuncuDogrulayici
 from ..diplomacia.istemci import IstemciKaynagi, OrtamKimlik
-from ..zamanlayici import TaramaZamanlayici
+from ..coklu import CokluZamanlayici
+from ..hesaplar import HesapYoneticisi
 from ..zaman import simdi_utc
 from .arayuz import Arayuz
 from .gonderici import TelegramGonderici
@@ -99,14 +100,21 @@ def dogrulayici_olustur(
 async def calistir(
     ta: TelegramAyarlari,
     *,
-    kaynak=None,
-    dogrulayici: TokenDogrulayici | None = None,
+    hesap_istemci_fabrikasi=None,
+    hesap_dogrulayici_fabrikasi=None,
 ) -> int:
+    """TEK süreç / TEK SQLite / TEK bot: çok hesaplı tarama. Token ve proxy sırları `<veri dizini>/hesaplar/` altında 0600 dosyalardadır ve
+    Telegram 'Account Management' menüsünden yönetilir. Eski tek-token dosyası (ta.token_dosyasi) yalnız kurucunun AÇIK isteğiyle
+    'Account 1' olarak içe aktarılabilir; hesaplar kendiliğinden oluşturulmaz. (hesap_*_fabrikasi: yalnız testler.)"""
     conn = db.baglan(ta.ayarlar.db_path)
     kurucu = ta.ayarlar.owner_telegram_id
-    kaynak = kaynak if kaynak is not None else kaynak_olustur(ta.token_dosyasi)
-    token_deposu = TokenDeposu(ta.token_dosyasi)
-    token_deposu.eski_gecicileri_temizle()
+    hesaplar = HesapYoneticisi(
+        conn, simdi_utc, ta.ayarlar.db_path.parent / "hesaplar",
+        istemci_fabrikasi=hesap_istemci_fabrikasi, dogrulayici_fabrikasi=hesap_dogrulayici_fabrikasi,
+        dogrulama_oyuncusu=ta.dogrulama_oyuncusu,
+    )
+    hesaplar.acilis_temizligi()  # çökmeden kalan '.token-*' geçici dosyalar (token/proxy içerebilir) silinir
+    hesaplar.dagit()
     # Eski gruplara bildirim YOK: bekleyen eski grup hedefli satırlar iptal edilir (silinmez); kanala GİTMEZ.
     h = outbox.bekleyenleri_hizala(conn, kurucu, ta.kanal_id)
     if h.eski_kapsam_iptal or h.hedef_iptal or h.kanala_yonlendirilen:
@@ -114,18 +122,15 @@ async def calistir(
                     "yönlendirildi, %d hedefsiz artık iptal", h.eski_kapsam_iptal, h.kanala_yonlendirilen, h.hedef_iptal)
     app = Application.builder().token(ta.bot_token).build()
     kanal = KanalDogrulayici(app.bot, ta.kanal_id)
-    zamanlayici = TaramaZamanlayici(
-        conn, kaynak, kurucu, token_deposu=token_deposu,
-        kapsamlar=frozenset({config.MERKEZ_ID}), kanal_id=ta.kanal_id, kanal=kanal,
-    )
+    zamanlayici = CokluZamanlayici(conn, hesaplar, kurucu, kanal_id=ta.kanal_id, kanal=kanal)
     arayuz = Arayuz(
         conn,
-        zamanlayici.kaynak,  # zamanlayıcıyla AYNI SinirliKaynak (tek eşzamanlılık sınırı)
+        zamanlayici.kaynak,  # etkileşimli istekler: BİRİNCİL hesap (zamanlayıcıyla aynı paylaşılan kaynak)
         kurucu,
         zamanlayici=zamanlayici,
-        dogrulayici=dogrulayici or dogrulayici_olustur(ta.token_dosyasi, oyuncu_no=ta.dogrulama_oyuncusu),
-        token_deposu=token_deposu,
         kanal=kanal,
+        hesaplar=hesaplar,
+        eski_token_yolu=ta.token_dosyasi,
     )
     gonderici = TelegramGonderici(app.bot, izinli_hedefler={kurucu, ta.kanal_id}, kanal=kanal)
     durdur = asyncio.Event()
@@ -155,9 +160,8 @@ async def calistir(
         await app.updater.start_polling(allowed_updates=IZINLI_GUNCELLEMELER, drop_pending_updates=False)
         polling = True
         tarama = asyncio.create_task(zamanlayici.calis(gonderici, tarama_durdur), name="tarama")
-        log.info("Bot çalışıyor (Diplomacia bağlantısı: %s)",
-                 "yapılandırılmadı" if isinstance(kaynak, YapilandirilmamisKaynak)
-                 else "yapılandırıldı (Bearer + X-Client-Platform; kimlik biçimi kullanıcı DevTools'ta doğruladı, canlı bağlantı test edilmedi; token dosyası her istekte okunur)")
+        log.info("Bot çalışıyor (Diplomacia hesabı: %d; Bearer + X-Client-Platform; token ve proxy her hesapta ayrı 0600 dosyada)",
+                 len(hesaplar.listele()))
         await durdur.wait()
     except InvalidToken:
         log.critical("BOT_TOKEN geçersiz (Telegram reddetti)")
@@ -175,12 +179,10 @@ async def calistir(
         except Exception:
             log.exception("kapanış sırasında hata")
         finally:
-            kapat = getattr(kaynak, "aclose", None)
-            if kapat is not None:
-                try:
-                    await kapat()
-                except Exception:
-                    log.warning("kaynak istemcisi kapatılamadı")
+            try:
+                await hesaplar.kapat()
+            except Exception:
+                log.warning("hesap istemcileri kapatılamadı")
             conn.close()
             log.info("Kapandı")
     return sonuc["kod"]
